@@ -1,0 +1,27 @@
+node_modules/
+dist/
+target/
+.env
+.env.local
+.env.*
+!.env.example
+*.tsbuildinfo
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+*.pfx
+*.p12
+*.key
+*.pem
+# Local third-party reference copies are not project source.
+References/
+*.log
+.DS_Store
+.vscode/
+/coverage/
+apps/*/coverage/
+services/*/coverage/
+tmp/
+test-results/
+playwright-report/

@@ -1,0 +1,4 @@
+* text=auto
+*.ps1 text eol=crlf
+# Applied SQLx migration checksums include their exact original bytes.
+services/api/migrations/*.sql -text

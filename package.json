@@ -1,0 +1,27 @@
+{
+  "name": "scoutnews",
+  "private": true,
+  "version": "0.2.0",
+  "workspaces": [
+    "apps/web",
+    "services/copilot-gateway",
+    "services/source-access"
+  ],
+  "scripts": {
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1",
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-local.ps1",
+    "dev:web": "npm run dev -w @scoutnews/web",
+    "dev:gateway": "npm run dev -w @scoutnews/copilot-gateway",
+    "build": "npm run build -w @scoutnews/web && npm run build -w @scoutnews/copilot-gateway",
+    "typecheck": "npm run typecheck -w @scoutnews/web && npm run typecheck -w @scoutnews/copilot-gateway",
+    "test:e2e": "playwright test",
+    "ui:review": "node scripts/capture-ui-review.cjs",
+    "test:e2e:live": "powershell -ExecutionPolicy Bypass -File scripts/test-e2e-live.ps1 -BootstrapPostgres"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0-alpha-2026-07-20"
+  }
+}

@@ -1,0 +1,15 @@
+[
+  { "id": "agents", "label": "Agent 与工具" },
+  { "id": "memory", "label": "记忆与检索" },
+  { "id": "coding", "label": "AI 编程" },
+  { "id": "models", "label": "模型与多模态" },
+  { "id": "engineering", "label": "工程与开源" },
+  { "id": "research", "label": "研究论文" },
+  { "id": "evaluation", "label": "评测与安全" },
+  { "id": "hardware", "label": "芯片与硬件" },
+  { "id": "design", "label": "设计与交互" },
+  { "id": "psychology", "label": "心理与认知" },
+  { "id": "business", "label": "产业与商业" },
+  { "id": "governance", "label": "治理与政策" },
+  { "id": "podcasts", "label": "播客与访谈" }
+]

@@ -1,0 +1,94 @@
+:root {
+  --ns-control-height: 36px;
+  --ns-control-radius: 10px;
+  --ns-surface-radius: 16px;
+  --ns-space-1: 4px;
+  --ns-space-2: 8px;
+  --ns-space-3: 12px;
+  --ns-space-4: 16px;
+  --ns-space-6: 24px;
+  --ns-space-8: 32px;
+}
+
+.ns-reader-shell .ns-reader-button {
+  min-height: var(--ns-control-height);
+  border-radius: var(--ns-control-radius);
+  padding: 8px 12px;
+  gap: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  box-shadow: none;
+}
+.ns-reader-shell .ns-reader-button[data-size=small] { padding: 6px 8px; }
+.ns-reader-shell .ns-reader-button[data-variant=primary] { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+.ns-reader-shell .ns-reader-button[data-variant=secondary] { background: var(--cp-surface); color: var(--cp-text); border-color: var(--cp-border); }
+.ns-reader-shell .ns-reader-button[data-variant=ghost] { background: none; color: var(--cp-text-muted); border-color: transparent; }
+.ns-reader-shell .ns-reader-button[data-variant=danger] { background: var(--cp-danger); color: var(--cp-accent-fg); border-color: var(--cp-danger); }
+.ns-reader-shell .ns-reader-button:not(:disabled):hover { background: var(--cp-surface-soft); color: var(--cp-text); border-color: var(--cp-border-strong); }
+.ns-reader-shell .ns-reader-button[data-variant=primary]:not(:disabled):hover { background: var(--cp-accent-hover); color: var(--cp-accent-fg); border-color: var(--cp-accent-hover); }
+.ns-reader-shell .ns-reader-button[data-variant=danger]:not(:disabled):hover { background: var(--cp-danger); color: var(--cp-accent-fg); border-color: var(--cp-danger); }
+.ns-reader-shell .ns-reader-button:disabled { cursor: not-allowed; opacity: .55; }
+.ns-reader-shell .ns-reader-button[aria-busy=true] { cursor: progress; }
+.ns-reader-shell .ns-reader-button[aria-pressed=true] { color: var(--cp-accent); background: var(--cp-accent-soft); }
+.ns-reader-shell .ns-reader-button:focus-visible { outline: 3px solid var(--cp-accent); outline-offset: 3px; }
+.ns-reader-shell .ns-reader-button .fui-Button__icon { font-size: 20px; }
+
+/* Keep the select focus stroke independent of the shared 10px corner radius. */
+.ns-reader-shell .fui-Select::after {
+  background-image: none;
+  border-bottom: 2px solid var(--cp-accent);
+  clip-path: inset(calc(100% - 2px) 0 0);
+}
+
+.ns-reader-shell .ns-reader-tabs { gap: 4px; border-bottom: 1px solid var(--cp-border); padding-bottom: 0; }
+.ns-reader-shell .ns-reader-tabs [role=tab] {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--cp-text-muted);
+  font: inherit;
+  font-size: 14px;
+}
+.ns-reader-shell .ns-reader-tabs [role=tab][aria-selected=true] { background: none; color: var(--cp-accent); }
+.ns-reader-tab-panel { padding-top: 16px; min-width: 0; }
+.ns-reader-position { color: var(--cp-text-muted); font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ns-reader-return { display: flex; align-items: center; gap: 8px; }
+.ns-reader-problem { display: flex; align-items: flex-start; gap: 12px; margin: 16px 0; padding: 16px; border: 1px solid var(--cp-border); border-left: 3px solid var(--cp-danger); border-radius: 10px; background: var(--cp-surface); color: var(--cp-text); font-size: 14px; line-height: 1.6; }
+.ns-reader-problem>svg { flex: 0 0 20px; font-size: 20px; color: var(--cp-danger); margin-top: 2px; }
+.ns-reader-problem>div { flex: 1; min-width: 0; }
+.ns-reader-problem p { margin: 4px 0 0; color: var(--cp-text-muted); overflow-wrap: anywhere; }
+.ns-reader-problem details { margin-top: 8px; font-size: 13px; color: var(--cp-text-muted); }
+.ns-reader-problem summary { cursor: pointer; }
+.ns-reader-problem>button { flex: 0 0 auto; }
+.ns-reader-start {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0 16px;
+  margin: 0;
+  border: 0;
+  background: none;
+  color: var(--cp-text);
+}
+.ns-reader-start>svg { flex: 0 0 auto; font-size: 28px; color: var(--cp-accent); }
+.ns-reader-start>div { flex: 1; min-width: 0; }
+.ns-reader-start h2 { margin: 0 0 4px; font-size: 16px; line-height: 1.4; }
+.ns-reader-start p { margin: 0; color: var(--cp-text-muted); font-size: 13px; line-height: 1.6; }
+.ns-reader-start>button { flex: 0 0 auto; }
+@media (max-width: 860px) {
+  :root { --ns-control-height: 44px; }
+  .ns-reader-shell .fui-Select,.ns-reader-shell .fui-Input,.ns-reader-shell .fui-Checkbox { min-height: 44px; }
+  .ns-reader-shell .fui-Select select { min-height: 44px; }
+  .ns-reader-start { padding: 8px 0 16px; gap: 12px; }
+  .ns-reader-start>svg { display: none; }
+  .ns-reader-start h2 { font-size: 16px; }
+  .ns-reader-start p { display: none; }
+}
+@media (max-width: 1199px) {
+  .ns-reader-back-label,.ns-reader-refresh-label,.ns-reader-sequence-label { display: none; }
+  .ns-reader-shell .ns-reader-button:has(.ns-reader-back-label,.ns-reader-refresh-label,.ns-reader-sequence-label) { min-width: 44px; }
+}

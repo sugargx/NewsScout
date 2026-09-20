@@ -1,0 +1,346 @@
+use std::collections::{BTreeSet, HashSet};
+
+use chrono::{DateTime, Duration, Utc};
+use uuid::Uuid;
+
+use super::Record;
+use crate::models::CoverageMember;
+
+pub(super) const WINDOW_HOURS: i64 = 24;
+
+#[derive(Clone)]
+pub(super) struct Release {
+    pub key: String,
+    pub target: String,
+    pub version: String,
+    product: Option<String>,
+    repository: String,
+    family_label: &'static str,
+    target_key: String,
+    client: bool,
+    changes: BTreeSet<String>,
+    subjects: BTreeSet<Subject>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Subject {
+    ClientIdentity,
+    InstallAccounting,
+    Telemetry,
+}
+
+impl Subject {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ClientIdentity => "调用来源标识",
+            Self::InstallAccounting => "安装统计",
+            Self::Telemetry => "遥测",
+        }
+    }
+}
+
+fn subjects(text: &str) -> BTreeSet<Subject> {
+    let text = text.to_ascii_lowercase();
+    let mut result = BTreeSet::new();
+    if text.contains("surface-identity headers")
+        || (text.contains("x-mem0-source") && text.contains("x-mem0-client"))
+    {
+        result.insert(Subject::ClientIdentity);
+    }
+    if text.contains("keyfingerprint") && text.contains("install") {
+        result.insert(Subject::InstallAccounting);
+    }
+    if text.contains("telemetry") {
+        result.insert(Subject::Telemetry);
+    }
+    result
+}
+
+fn normalized(value: &str) -> String {
+    value
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+fn version(value: &str) -> bool {
+    let core = value.split(['-', '+']).next().unwrap_or_default();
+    let parts: Vec<_> = core.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
+        && !value.ends_with(['-', '+', '.'])
+}
+
+fn client_target(value: &str) -> String {
+    match normalized(value).as_str() {
+        "node" | "nodejs" | "javascript" | "typescript" | "js" | "ts" => "node".into(),
+        "py" | "python" => "python".into(),
+        _ => normalized(value),
+    }
+}
+
+fn client_tag_matches(tag: &str, target: &str, family: &str) -> bool {
+    if (family == "sdk" && tag.is_empty()) || (family == "cli" && tag == "cli") {
+        return true;
+    }
+    let tag = normalized(tag);
+    let tag_target = tag
+        .strip_prefix(family)
+        .or_else(|| tag.strip_suffix(family))
+        .unwrap_or(&tag);
+    client_target(tag_target) == client_target(target)
+}
+
+pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
+    if member.event_type != "release"
+        || member.material_kind != "official"
+        || member.publication_precision.as_deref() != Some("time")
+    {
+        return None;
+    }
+    let mut result: Option<Release> = None;
+    for evidence in &member.evidence {
+        if !evidence.is_official || evidence.original_published_at.is_none() {
+            return None;
+        }
+        let url = url::Url::parse(&evidence.url).ok()?;
+        if url.scheme() != "https"
+            || url.host_str() != Some("github.com")
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return None;
+        }
+        let segments: Vec<_> = url.path_segments()?.collect();
+        let [owner, repository, "releases", "tag", tag] = segments.as_slice() else {
+            return None;
+        };
+        let (target_tag, release_version) = tag
+            .rsplit_once("-v")
+            .or_else(|| tag.strip_prefix('v').map(|version| ("", version)))?;
+        if !version(release_version) {
+            return None;
+        }
+        let suffix = format!("(v{release_version})");
+        let title = evidence.title.trim().strip_suffix(&suffix)?.trim();
+        let mut words: Vec<_> = title.split_whitespace().collect();
+        let family = words.pop()?.to_ascii_lowercase();
+        let family_label = match family.as_str() {
+            "plugin" => "插件",
+            "extension" => "扩展",
+            "adapter" => "适配器",
+            "integration" => "集成",
+            "cli" | "sdk" => "客户端",
+            "provider" if words.last().is_some_and(|word| word.eq_ignore_ascii_case("sdk")) => {
+                words.pop();
+                "客户端"
+            }
+            _ => return None,
+        };
+        let client = matches!(family.as_str(), "cli" | "sdk" | "provider");
+        let prefix = (1..words.len())
+            .find(|length| normalized(&words[..*length].join(" ")) == normalized(repository));
+        // A named SDK provider may identify its host instead of the repository product,
+        // but its release tag must still identify that same host.
+        if prefix.is_none() && family != "provider" {
+            return None;
+        }
+        let product = prefix.map(|length| words[..length].join(" "));
+        let target = words[prefix.unwrap_or(0)..].join(" ");
+        if target.is_empty() {
+            return None;
+        }
+        let tag_target = normalized(target_tag);
+        let matches_tag = if client {
+            client_tag_matches(target_tag, &target, &family)
+        } else {
+            tag_target == normalized(&target)
+                || tag_target == normalized(&format!("{target}{family}"))
+        };
+        if !matches_tag {
+            return None;
+        }
+        let repo = format!("github.com/{owner}/{repository}").to_ascii_lowercase();
+        let mut changes = BTreeSet::new();
+        for word in evidence.excerpt.split_whitespace() {
+            let word = word.trim_matches(['(', ')', '[', ']', ',', '.', ';', '。']);
+            if let Some(number) = word
+                .strip_prefix('#')
+                .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            {
+                changes.insert(format!("{repo}/change/{number}"));
+            } else if let Ok(link) = url::Url::parse(word) {
+                if link.scheme() == "https" && link.host_str() == Some("github.com") {
+                    let path: Vec<_> = link.path_segments()?.collect();
+                    if let [link_owner, link_repo, "pull" | "issues", number] = path.as_slice() {
+                        if link_owner.eq_ignore_ascii_case(owner)
+                            && link_repo.eq_ignore_ascii_case(repository)
+                            && !number.is_empty()
+                            && number.bytes().all(|b| b.is_ascii_digit())
+                        {
+                            changes.insert(format!("{repo}/change/{number}"));
+                        }
+                    }
+                }
+            }
+        }
+        if client && changes.is_empty() {
+            return None;
+        }
+        let target_key = if client {
+            format!("{}:{family}", client_target(&target))
+        } else {
+            normalized(&target)
+        };
+        let release = Release {
+            key: format!("{repo}:{}", if client { "client" } else { &family }),
+            product,
+            repository: (*repository).into(),
+            family_label,
+            target: match family.as_str() {
+                "cli" => format!("{target} CLI"),
+                "sdk" => format!("{target} SDK"),
+                "provider" => format!("{target} SDK Provider"),
+                _ => target,
+            },
+            target_key,
+            client,
+            version: format!("v{release_version}"),
+            changes,
+            subjects: subjects(&evidence.excerpt),
+        };
+        if let Some(previous) = &mut result {
+            if previous.key != release.key
+                || previous.target != release.target
+                || previous.version != release.version
+            {
+                return None;
+            }
+            previous.changes.extend(release.changes);
+            previous.subjects = previous.subjects.intersection(&release.subjects).copied().collect();
+        } else {
+            result = Some(release);
+        }
+    }
+    result
+}
+
+pub(super) fn label(members: &[&Record]) -> String {
+    let releases: Vec<_> = members.iter().filter_map(|record| record.release.as_ref()).collect();
+    let first = releases[0];
+    let product = releases
+        .iter()
+        .filter_map(|release| release.product.as_deref())
+        .min()
+        .unwrap_or(&first.repository);
+    let common = releases.iter().skip(1).fold(first.subjects.clone(), |subjects, release| {
+        subjects.intersection(&release.subjects).copied().collect()
+    });
+    let subject = if let Some(subject) = common.first() {
+        subject.label().to_owned()
+    } else {
+        let targets: BTreeSet<_> = releases.iter().map(|release| release.target.as_str()).collect();
+        let names = targets.iter().take(2).copied().collect::<Vec<_>>().join(" / ");
+        if targets.len() > 2 {
+            format!("{names} 等{}项", targets.len())
+        } else {
+            names
+        }
+    };
+    format!("{product} {}更新：{subject}", first.family_label)
+}
+
+pub(super) fn cohorts<'a>(candidates: &[&'a Record], cutoff: DateTime<Utc>) -> Vec<Vec<&'a Record>> {
+    let mut ordered = candidates.to_vec();
+    ordered.sort_by(|a, b| {
+        b.freshness_at.cmp(&a.freshness_at)
+            .then(a.member.event_id.cmp(&b.member.event_id))
+    });
+    let mut assigned = HashSet::new();
+    let mut result = Vec::new();
+    for lead in ordered {
+        if assigned.contains(&lead.member.event_id) {
+            continue;
+        }
+        let members = select(lead, candidates, &assigned, cutoff);
+        assigned.extend(members.iter().map(|record| record.member.event_id));
+        if !members.is_empty() {
+            result.push(members);
+        }
+    }
+    result
+}
+
+fn select<'a>(
+    lead: &'a Record,
+    candidates: &[&'a Record],
+    assigned: &HashSet<Uuid>,
+    cutoff: DateTime<Utc>,
+) -> Vec<&'a Record> {
+    let Some(release) = &lead.release else {
+        return Vec::new();
+    };
+    let Some(date) = lead.freshness_at.filter(|d| *d <= cutoff) else {
+        return Vec::new();
+    };
+    let mut candidates = candidates.to_vec();
+    candidates.sort_by(|a, b| {
+        b.freshness_at
+            .cmp(&a.freshness_at)
+            .then(a.member.event_id.cmp(&b.member.event_id))
+    });
+    let mut selected = vec![lead];
+    let mut targets = HashSet::from([release.target_key.clone()]);
+    let (mut earliest, mut latest) = (date, date);
+    let mut shared_changes = release.changes.clone();
+    for candidate in candidates {
+        if assigned.contains(&candidate.member.event_id)
+            || candidate.member.event_id == lead.member.event_id
+        {
+            continue;
+        }
+        let Some(other) = &candidate.release else {
+            continue;
+        };
+        let Some(other_date) = candidate.freshness_at.filter(|d| *d <= cutoff) else {
+            continue;
+        };
+        let start = earliest.min(other_date);
+        let end = latest.max(other_date);
+        if other.key != release.key
+            || end - start > Duration::hours(WINDOW_HOURS)
+            || targets.contains(&other.target_key)
+        {
+            continue;
+        }
+        if (release.client && (shared_changes.is_empty() || other.changes.is_empty()))
+            || (!shared_changes.is_empty()
+                && !other.changes.is_empty()
+                && shared_changes.is_disjoint(&other.changes))
+        {
+            continue;
+        }
+        // Keep a common change reference, never connect batch A to batch B through an unqualified entry.
+        if !other.changes.is_empty() {
+            shared_changes = if shared_changes.is_empty() {
+                other.changes.clone()
+            } else {
+                shared_changes
+                    .intersection(&other.changes)
+                    .cloned()
+                    .collect()
+            };
+        }
+        targets.insert(other.target_key.clone());
+        earliest = start;
+        latest = end;
+        selected.push(candidate);
+    }
+    selected
+}

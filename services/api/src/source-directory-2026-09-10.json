@@ -1,0 +1,1888 @@
+{
+  "id": "yikai-2026-09-10",
+  "title": "yikai 的信源整理",
+  "originUrl": "https://z08logvn9j.feishu.cn/docx/BYPndXpPVoJVhixz2OHcTBOQnlh",
+  "entries": [
+    {
+      "id": "podcast-72466fb69084f67a",
+      "platform": "podcast",
+      "name": "Lex Fridman Podcast",
+      "handle": null,
+      "profileUrl": "https://lexfridman.com/podcast",
+      "status": "feed_linked",
+      "note": "官方站 podcast 页直接给出 RSS；endpoint 与现有 catalog 完全一致，复用已有源。当前 feed 返回 502 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "3",
+      "documentUrls": [
+        "https://www.listennotes.com/podcasts/lex-fridman-podcast-lex-fridman-YRs7Zkd0n4l/",
+        "https://lexfridman.com/podcast"
+      ],
+      "subscription": {
+        "name": "Lex Fridman Podcast · 节目 RSS",
+        "endpoint": "https://lexfridman.com/feed/podcast/",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Lex Fridman",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://lexfridman.com/podcast",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.listennotes.com/podcasts/lex-fridman-podcast-lex-fridman-YRs7Zkd0n4l/",
+          "https://lexfridman.com/podcast",
+          "https://podcasts.apple.com/us/podcast/lex-fridman-podcast/id1434243584?uo=4",
+          "https://lexfridman.com/feed/podcast/"
+        ],
+        "feedTitle": "Lex Fridman Podcast"
+      }
+    },
+    {
+      "id": "podcast-6205c35367fa5d79",
+      "platform": "podcast",
+      "name": "Lenny's Podcast",
+      "handle": null,
+      "profileUrl": "https://www.lennysnewsletter.com/podcast",
+      "status": "feed_linked",
+      "note": "官方 Substack podcast 页暴露 podcast RSS；Apple 条目同名同作者，用于订阅公开播客节目。当前 feed 返回 361 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "8",
+      "documentUrls": [
+        "https://www.listennotes.com/podcasts/lennys-podcast-product-growth-career-lenny-2masjq3HkuC/",
+        "https://www.lennysnewsletter.com/podcast"
+      ],
+      "subscription": {
+        "name": "Lenny's Podcast · 节目 RSS",
+        "endpoint": "https://api.substack.com/feed/podcast/10845.rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Lenny Rachitsky",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.lennysnewsletter.com/podcast",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.listennotes.com/podcasts/lennys-podcast-product-growth-career-lenny-2masjq3HkuC/",
+          "https://www.lennysnewsletter.com/podcast",
+          "https://podcasts.apple.com/us/podcast/lennys-podcast-product-career-growth/id1627920305?uo=4",
+          "https://api.substack.com/feed/podcast/10845.rss"
+        ],
+        "feedTitle": "Lenny's Podcast: Product | Career | Growth"
+      }
+    },
+    {
+      "id": "podcast-3d6bc5a261bccd07",
+      "platform": "podcast",
+      "name": "Andrew Huberman",
+      "handle": null,
+      "profileUrl": "https://www.hubermanlab.com/podcast",
+      "status": "feed_linked",
+      "note": "YouTube 条目实际对应官方 Huberman Lab；官方 podcast 页与 Apple 均命中同一公开 Megaphone feed。当前 feed 返回 440 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "13",
+      "documentUrls": [
+        "https://www.youtube.com/@hubermanlab/videos"
+      ],
+      "subscription": {
+        "name": "Andrew Huberman · 节目 RSS",
+        "endpoint": "https://feeds.megaphone.fm/hubermanlab",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Scicomm Media",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.hubermanlab.com/podcast",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.youtube.com/@hubermanlab/videos",
+          "https://www.hubermanlab.com/podcast",
+          "https://podcasts.apple.com/us/podcast/huberman-lab/id1545953110?uo=4",
+          "https://feeds.megaphone.fm/hubermanlab"
+        ],
+        "feedTitle": "Huberman Lab"
+      }
+    },
+    {
+      "id": "podcast-321a0c9fc3a7c737",
+      "platform": "podcast",
+      "name": "Big Technology Podcast",
+      "handle": null,
+      "profileUrl": "https://www.bigtechnology.com/",
+      "status": "feed_linked",
+      "note": "Apple 精确命中 Alex Kantrowitz 官方播客；Megaphone feed 标题与主页一致，提供公开节目说明。当前 feed 返回 561 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "19",
+      "documentUrls": [
+        "https://www.listennotes.com/podcasts/big-technology-podcast-alex-kantrowitz-tkI5SX7uiNU/"
+      ],
+      "subscription": {
+        "name": "Big Technology Podcast · 节目 RSS",
+        "endpoint": "https://feeds.megaphone.fm/LI3617121267",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Alex Kantrowitz",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.bigtechnology.com/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.listennotes.com/podcasts/big-technology-podcast-alex-kantrowitz-tkI5SX7uiNU/",
+          "https://www.bigtechnology.com/",
+          "https://podcasts.apple.com/us/podcast/big-technology-podcast/id1522960417?uo=4",
+          "https://feeds.megaphone.fm/LI3617121267"
+        ],
+        "feedTitle": "Big Technology Podcast"
+      }
+    },
+    {
+      "id": "podcast-5fb39f5268db1780",
+      "platform": "podcast",
+      "name": "Unsupervised Learning: Redpoint's AI Podcast",
+      "handle": null,
+      "profileUrl": "https://unsupervised-learning.simplecast.com",
+      "status": "feed_linked",
+      "note": "目录名带 Redpoint，Apple 精确命中 Redpoint Ventures 的 Unsupervised Learning；Simplecast feed 有公开节目条目。",
+      "originBlock": "24",
+      "documentUrls": [
+        "https://www.youtube.com/@RedpointAI/videos"
+      ],
+      "subscription": {
+        "name": "Unsupervised Learning: Redpoint's AI Podcast · 节目 RSS",
+        "endpoint": "https://feeds.simplecast.com/dOSE_bdP",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Redpoint Ventures",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://unsupervised-learning.simplecast.com/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.youtube.com/@RedpointAI/videos",
+          "https://unsupervised-learning.simplecast.com",
+          "https://podcasts.apple.com/us/podcast/unsupervised-learning-with-jacob-effron/id1672188924?uo=4",
+          "https://feeds.simplecast.com/dOSE_bdP"
+        ],
+        "feedTitle": "Unsupervised Learning with Jacob Effron"
+      }
+    },
+    {
+      "id": "podcast-54fabf23fddb29bb",
+      "platform": "podcast",
+      "name": "Peter Yang",
+      "handle": null,
+      "profileUrl": "https://www.behindthecraft.com/",
+      "status": "feed_linked",
+      "note": "Peter Yang 官方站 Behind the Craft 与 Apple 同名命中；Anchor feed 为该节目公开 RSS。",
+      "originBlock": "29",
+      "documentUrls": [
+        "https://www.youtube.com/@PeterYangYT/videos"
+      ],
+      "subscription": {
+        "name": "Peter Yang · 节目 RSS",
+        "endpoint": "https://anchor.fm/s/f38497cc/podcast/rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Peter Yang",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.behindthecraft.com/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.youtube.com/@PeterYangYT/videos",
+          "https://www.behindthecraft.com/",
+          "https://podcasts.apple.com/us/podcast/behind-the-craft/id1736359687?uo=4",
+          "https://anchor.fm/s/f38497cc/podcast/rss"
+        ],
+        "feedTitle": "Behind the Craft"
+      }
+    },
+    {
+      "id": "podcast-423cf979cc083578",
+      "platform": "podcast",
+      "name": "AI Engineer",
+      "handle": null,
+      "profileUrl": "https://www.youtube.com/@aiDotEngineer",
+      "status": "needs_endpoint",
+      "note": "公开面向主要是 conference/talk/YouTube 频道；未找到 publisher 指定的独立 podcast RSS，且不能安全映射到已单列的 Latent Space。",
+      "originBlock": "34",
+      "documentUrls": [
+        "https://www.youtube.com/@aiDotEngineer"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "podcast-de26c1c7c8f07526",
+      "platform": "podcast",
+      "name": "Latent Space",
+      "handle": null,
+      "profileUrl": "https://www.latent.space/podcast",
+      "status": "feed_linked",
+      "note": "官方 podcast 页直接暴露 Substack podcast RSS；与 Apple 条目同名，覆盖公开播客档案。当前 feed 返回 221 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "39",
+      "documentUrls": [
+        "https://www.listennotes.com/podcasts/latent-space-the-ai-engineer-podcast-swyx-PjNDalXm_GZ/"
+      ],
+      "subscription": {
+        "name": "Latent Space · 节目 RSS",
+        "endpoint": "https://api.substack.com/feed/podcast/1084089.rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Latent.Space",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.latent.space/podcast",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.listennotes.com/podcasts/latent-space-the-ai-engineer-podcast-swyx-PjNDalXm_GZ/",
+          "https://www.latent.space/podcast",
+          "https://podcasts.apple.com/us/podcast/latent-space-the-ai-engineer-podcast/id1674008350?uo=4",
+          "https://api.substack.com/feed/podcast/1084089.rss"
+        ],
+        "feedTitle": "Latent Space: The AI Engineer Podcast"
+      }
+    },
+    {
+      "id": "podcast-53499e0ffbdd2c8b",
+      "platform": "podcast",
+      "name": "Mel Robbins",
+      "handle": null,
+      "profileUrl": "https://www.melrobbins.com/podcast/",
+      "status": "feed_linked",
+      "note": "YouTube 条目实际对应官方 The Mel Robbins Podcast；官方 podcast 页与 Apple 均命中同一公开 Simplecast feed。当前 feed 返回 434 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "43",
+      "documentUrls": [
+        "https://www.youtube.com/@melrobbins"
+      ],
+      "subscription": {
+        "name": "Mel Robbins · 节目 RSS",
+        "endpoint": "https://feeds.simplecast.com/UCwaTX1J",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Mel Robbins",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.melrobbins.com/podcast/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.youtube.com/@melrobbins",
+          "https://www.melrobbins.com/podcast/",
+          "https://podcasts.apple.com/us/podcast/the-mel-robbins-podcast/id1646101002?uo=4",
+          "https://feeds.simplecast.com/UCwaTX1J"
+        ],
+        "feedTitle": "The Mel Robbins Podcast"
+      }
+    },
+    {
+      "id": "podcast-4aac283984526fbd",
+      "platform": "podcast",
+      "name": "AI + a16z",
+      "handle": null,
+      "profileUrl": "https://a16z.com/podcasts/ai-a16z/",
+      "status": "feed_linked",
+      "note": "a16z 官方 podcast network 有独立 AI + a16z 条目；Apple 精确命中 Simplecast feed。",
+      "originBlock": "47",
+      "documentUrls": [
+        "https://www.listennotes.com/podcasts/ai-a16z-a16z-LrFO1MkemSg/"
+      ],
+      "subscription": {
+        "name": "AI + a16z · 节目 RSS",
+        "endpoint": "https://feeds.simplecast.com/Hb_IuXOo",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "a16z",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://a16z.com/podcasts/ai-a16z/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.listennotes.com/podcasts/ai-a16z-a16z-LrFO1MkemSg/",
+          "https://a16z.com/podcasts/ai-a16z/",
+          "https://podcasts.apple.com/us/podcast/ai-a16z/id1740178076?uo=4",
+          "https://feeds.simplecast.com/Hb_IuXOo"
+        ],
+        "feedTitle": "AI + a16z"
+      }
+    },
+    {
+      "id": "podcast-ee7abf3ddd16dd29",
+      "platform": "podcast",
+      "name": "Cognitive Revolution \"How AI Changes Everything\"",
+      "handle": null,
+      "profileUrl": "https://www.cognitiverevolution.ai/",
+      "status": "feed_linked",
+      "note": "官方站首页直接列 Apple/Spotify/YouTube/RSS；Megaphone feed 标题与站点一致。当前 feed 返回 371 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "51",
+      "documentUrls": [
+        "https://www.youtube.com/@CognitiveRevolutionPodcast/videos"
+      ],
+      "subscription": {
+        "name": "Cognitive Revolution \"How AI Changes Everything\" · 节目 RSS",
+        "endpoint": "https://feeds.megaphone.fm/RINTP3108857801",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Erik Torenberg, Nathan Labenz",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.cognitiverevolution.ai/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.youtube.com/@CognitiveRevolutionPodcast/videos",
+          "https://www.cognitiverevolution.ai/",
+          "https://podcasts.apple.com/us/podcast/the-cognitive-revolution/id1669813431?uo=4",
+          "https://feeds.megaphone.fm/RINTP3108857801"
+        ],
+        "feedTitle": "\"The Cognitive Revolution\""
+      }
+    },
+    {
+      "id": "podcast-362edad4174930f2",
+      "platform": "podcast",
+      "name": "Y Combinator",
+      "handle": null,
+      "profileUrl": "https://www.ycombinator.com/blog/announcing-the-y-combinator-podcast",
+      "status": "feed_linked",
+      "note": "YC 官方公告明确列出 RSS；Anchor feed 标题为 Y Combinator Startup Podcast，覆盖公开节目归档。当前 feed 返回 338 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "55",
+      "documentUrls": [
+        "https://www.youtube.com/@ycombinator/videos"
+      ],
+      "subscription": {
+        "name": "Y Combinator · 节目 RSS",
+        "endpoint": "https://anchor.fm/s/8c1524bc/podcast/rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Y Combinator",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.ycombinator.com/blog/announcing-the-y-combinator-podcast",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.youtube.com/@ycombinator/videos",
+          "https://www.ycombinator.com/blog/announcing-the-y-combinator-podcast",
+          "https://podcasts.apple.com/us/podcast/y-combinator-startup-podcast/id1236907421?uo=4",
+          "https://anchor.fm/s/8c1524bc/podcast/rss"
+        ],
+        "feedTitle": "Y Combinator Startup Podcast"
+      }
+    },
+    {
+      "id": "podcast-54a14eef52c7274d",
+      "platform": "podcast",
+      "name": "A16z Podcast",
+      "handle": null,
+      "profileUrl": "https://a16z.com/podcasts/a16z-show/",
+      "status": "feed_linked",
+      "note": "目录旧名对应现行 The a16z Show；a16z 官方 show 页与 Apple 同指向该 Simplecast feed。当前 feed 返回 1000 条，已明显超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "59",
+      "documentUrls": [
+        "https://www.listennotes.com/podcasts/a16z-podcast-andreessen-horowitz-IWF2alEr-9h/"
+      ],
+      "subscription": {
+        "name": "A16z Podcast · 节目 RSS",
+        "endpoint": "https://feeds.simplecast.com/JGE3yC0V",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "a16z",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://a16z.com/podcasts/a16z-show/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.listennotes.com/podcasts/a16z-podcast-andreessen-horowitz-IWF2alEr-9h/",
+          "https://a16z.com/podcasts/a16z-show/",
+          "https://podcasts.apple.com/us/podcast/the-a16z-show/id842818711?uo=4",
+          "https://feeds.simplecast.com/JGE3yC0V"
+        ],
+        "feedTitle": "The a16z Show"
+      }
+    },
+    {
+      "id": "podcast-4cad69d54406e5e3",
+      "platform": "podcast",
+      "name": "Sequoia Capital",
+      "handle": null,
+      "profileUrl": "https://sequoiacap.com/podcasts",
+      "status": "needs_endpoint",
+      "note": "Sequoia 官方 podcasts 页同时聚合多档节目；原条目过泛，未见统一 network RSS 可无歧义导入。",
+      "originBlock": "63",
+      "documentUrls": [
+        "https://www.youtube.com/@sequoiacapital/videos"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "podcast-cfef16a647efd982",
+      "platform": "podcast",
+      "name": "Dwarkesh Patel",
+      "handle": null,
+      "profileUrl": "https://www.dwarkesh.com/podcast",
+      "status": "feed_linked",
+      "note": "Dwarkesh 官方站显示 podcast，Apple 精确返回公开 feedUrl；GET 后标题与 link 均回指官方 /podcast。",
+      "originBlock": "67",
+      "documentUrls": [
+        "https://www.youtube.com/@DwarkeshPatel/videos"
+      ],
+      "subscription": {
+        "name": "Dwarkesh Patel · 节目 RSS",
+        "endpoint": "https://apple.dwarkesh-podcast.workers.dev/feed.rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Dwarkesh Patel",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.dwarkesh.com/podcast",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.youtube.com/@DwarkeshPatel/videos",
+          "https://www.dwarkesh.com/podcast",
+          "https://podcasts.apple.com/us/podcast/dwarkesh-podcast/id1516093381?uo=4",
+          "https://apple.dwarkesh-podcast.workers.dev/feed.rss"
+        ],
+        "feedTitle": "Dwarkesh Podcast"
+      }
+    },
+    {
+      "id": "podcast-28fbe71997ec6f0b",
+      "platform": "podcast",
+      "name": "The Pragmatic Engineer",
+      "handle": null,
+      "profileUrl": "https://newsletter.pragmaticengineer.com/podcast",
+      "status": "feed_linked",
+      "note": "官方 podcast 页暴露 Substack podcast RSS；Apple 同名同作者命中。",
+      "originBlock": "71",
+      "documentUrls": [
+        "https://newsletter.pragmaticengineer.com/podcast"
+      ],
+      "subscription": {
+        "name": "The Pragmatic Engineer · 节目 RSS",
+        "endpoint": "https://api.substack.com/feed/podcast/458709.rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Gergely Orosz",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://newsletter.pragmaticengineer.com/podcast",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://newsletter.pragmaticengineer.com/podcast",
+          "https://podcasts.apple.com/us/podcast/the-pragmatic-engineer/id1769051199?uo=4",
+          "https://api.substack.com/feed/podcast/458709.rss"
+        ],
+        "feedTitle": "The Pragmatic Engineer"
+      }
+    },
+    {
+      "id": "podcast-661e63179feb4d40",
+      "platform": "podcast",
+      "name": "Every",
+      "handle": null,
+      "profileUrl": "https://every.to/podcast",
+      "status": "feed_linked",
+      "note": "Every 官方 podcast 页明确 AI & I 为其播客归档；页面与 Apple 均指向同一 Transistor feed。",
+      "originBlock": "75",
+      "documentUrls": [
+        "https://www.youtube.com/@EveryInc/videos"
+      ],
+      "subscription": {
+        "name": "Every · 节目 RSS",
+        "endpoint": "https://feeds.transistor.fm/how-do-you-use-chatgpt",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Dan Shipper",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://every.to/podcast",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.youtube.com/@EveryInc/videos",
+          "https://every.to/podcast",
+          "https://podcasts.apple.com/us/podcast/ai-i/id1719789201?uo=4",
+          "https://feeds.transistor.fm/how-do-you-use-chatgpt"
+        ],
+        "feedTitle": "AI & I"
+      }
+    },
+    {
+      "id": "podcast-8e1c741953f2f252",
+      "platform": "podcast",
+      "name": "42 章经",
+      "handle": null,
+      "profileUrl": "https://www.xiaoyuzhoufm.com/podcast/648b0b641c48983391a63f98",
+      "status": "feed_linked",
+      "note": "Apple 精确命中 42章经/KaiQu；公开 XYZFM RSS 标题与小宇宙页面一致。",
+      "originBlock": "79",
+      "documentUrls": [
+        "https://www.xiaoyuzhoufm.com/podcast/648b0b641c48983391a63f98"
+      ],
+      "subscription": {
+        "name": "42 章经 · 节目 RSS",
+        "endpoint": "https://feed.xyzfm.space/evgg6xle9rdc",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "KaiQu",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.xiaoyuzhoufm.com/podcast/648b0b641c48983391a63f98",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.xiaoyuzhoufm.com/podcast/648b0b641c48983391a63f98",
+          "https://podcasts.apple.com/us/podcast/42%E7%AB%A0%E7%BB%8F/id1700299886?uo=4",
+          "https://feed.xyzfm.space/evgg6xle9rdc"
+        ],
+        "feedTitle": "42章经"
+      }
+    },
+    {
+      "id": "podcast-bb2fd6f06ed814c3",
+      "platform": "podcast",
+      "name": "晚点聊 LateTalk",
+      "handle": null,
+      "profileUrl": "https://podcast.latepost.com",
+      "status": "feed_linked",
+      "note": "Apple 精确命中 晚点聊 LateTalk；Fireside feed link 指向官方 podcast.latepost.com。",
+      "originBlock": "83",
+      "documentUrls": [
+        "https://www.xiaoyuzhoufm.com/podcast/61933ace1b4320461e91fd55"
+      ],
+      "subscription": {
+        "name": "晚点聊 LateTalk · 节目 RSS",
+        "endpoint": "https://feeds.fireside.fm/latetalk/rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "晚点 LatePost",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://podcast.latepost.com/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.xiaoyuzhoufm.com/podcast/61933ace1b4320461e91fd55",
+          "https://podcast.latepost.com",
+          "https://podcasts.apple.com/us/podcast/%E6%99%9A%E7%82%B9%E8%81%8A-latetalk/id1564877433?uo=4",
+          "https://feeds.fireside.fm/latetalk/rss"
+        ],
+        "feedTitle": "晚点聊 LateTalk"
+      }
+    },
+    {
+      "id": "podcast-8ec1c016a93ea67e",
+      "platform": "podcast",
+      "name": "张小珺Jùn|商业访谈录",
+      "handle": null,
+      "profileUrl": "https://www.xiaoyuzhoufm.com/podcast/626b46ea9cbbf0451cf5a962",
+      "status": "feed_linked",
+      "note": "Apple/小宇宙/XYZFM 三者一致；endpoint 与现有 catalog 完全一致，仅名称竖线字符不同。",
+      "originBlock": "87",
+      "documentUrls": [
+        "https://www.xiaoyuzhoufm.com/podcast/626b46ea9cbbf0451cf5a962"
+      ],
+      "subscription": {
+        "name": "张小珺Jùn|商业访谈录 · 节目 RSS",
+        "endpoint": "https://feed.xyzfm.space/dk4yh3pkpjp3",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "张小珺",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.xiaoyuzhoufm.com/podcast/626b46ea9cbbf0451cf5a962",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.xiaoyuzhoufm.com/podcast/626b46ea9cbbf0451cf5a962",
+          "https://podcasts.apple.com/us/podcast/%E5%BC%A0%E5%B0%8F%E7%8F%BAj%C3%B9n-%E5%95%86%E4%B8%9A%E8%AE%BF%E8%B0%88%E5%BD%95/id1634356920?uo=4",
+          "https://feed.xyzfm.space/dk4yh3pkpjp3"
+        ],
+        "feedTitle": "张小珺Jùn｜商业访谈录"
+      }
+    },
+    {
+      "id": "podcast-e2ce7cd80958f826",
+      "platform": "podcast",
+      "name": "十字路口Crossing",
+      "handle": null,
+      "profileUrl": "https://www.xiaoyuzhoufm.com/podcast/60502e253c92d4f62c2a9577",
+      "status": "feed_linked",
+      "note": "Apple 精确命中 十字路口Crossing/Koji；XYZFM RSS 与小宇宙页一致。",
+      "originBlock": "91",
+      "documentUrls": [
+        "https://www.xiaoyuzhoufm.com/podcast/60502e253c92d4f62c2a9577"
+      ],
+      "subscription": {
+        "name": "十字路口Crossing · 节目 RSS",
+        "endpoint": "https://feed.xyzfm.space/68fyjknth9hj",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Koji",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.xiaoyuzhoufm.com/podcast/60502e253c92d4f62c2a9577",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.xiaoyuzhoufm.com/podcast/60502e253c92d4f62c2a9577",
+          "https://podcasts.apple.com/us/podcast/%E5%8D%81%E5%AD%97%E8%B7%AF%E5%8F%A3crossing/id1729552193?uo=4",
+          "https://feed.xyzfm.space/68fyjknth9hj"
+        ],
+        "feedTitle": "十字路口Crossing"
+      }
+    },
+    {
+      "id": "podcast-a4e6cc8c3cf614ba",
+      "platform": "podcast",
+      "name": "OnBoard!",
+      "handle": null,
+      "profileUrl": "https://www.xiaoyuzhoufm.com/podcast/61cbaac48bb4cd867fcabe22",
+      "status": "feed_linked",
+      "note": "Apple 精确命中 OnBoard!/Monica Xie；XYZFM RSS 与小宇宙页一致。",
+      "originBlock": "95",
+      "documentUrls": [
+        "https://www.xiaoyuzhoufm.com/podcast/61cbaac48bb4cd867fcabe22"
+      ],
+      "subscription": {
+        "name": "OnBoard! · 节目 RSS",
+        "endpoint": "https://feed.xyzfm.space/xxg7ryklkkft",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "Monica Xie",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.xiaoyuzhoufm.com/podcast/61cbaac48bb4cd867fcabe22",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.xiaoyuzhoufm.com/podcast/61cbaac48bb4cd867fcabe22",
+          "https://podcasts.apple.com/us/podcast/onboard/id1613083252?uo=4",
+          "https://feed.xyzfm.space/xxg7ryklkkft"
+        ],
+        "feedTitle": "OnBoard!"
+      }
+    },
+    {
+      "id": "podcast-980942803d233202",
+      "platform": "podcast",
+      "name": "硅谷101",
+      "handle": null,
+      "profileUrl": "https://sv101.fireside.fm",
+      "status": "feed_linked",
+      "note": "Apple 精确命中 硅谷101；Fireside RSS 标题与 feed link 一致，覆盖公开节目归档。当前 feed 返回 259 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "99",
+      "documentUrls": [
+        "https://www.xiaoyuzhoufm.com/podcast/5e5c52c9418a84a04625e6cc"
+      ],
+      "subscription": {
+        "name": "硅谷101 · 节目 RSS",
+        "endpoint": "https://feeds.fireside.fm/sv101/rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "硅谷101",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://sv101.fireside.fm/",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.xiaoyuzhoufm.com/podcast/5e5c52c9418a84a04625e6cc",
+          "https://podcasts.apple.com/us/podcast/%E7%A1%85%E8%B0%B7101/id1498541229?uo=4",
+          "https://feeds.fireside.fm/sv101/rss"
+        ],
+        "feedTitle": "硅谷101"
+      }
+    },
+    {
+      "id": "podcast-e8238adadbd121f1",
+      "platform": "podcast",
+      "name": "What's Next | l科技早知道",
+      "handle": null,
+      "profileUrl": "https://www.shengfm.cn/podcastslist/whats-nextgun-ke-ji-zao-zhi-dao",
+      "status": "feed_linked",
+      "note": "Apple 精确命中 What's Next｜科技早知道；声动活泼官方节目页与 Fireside RSS 对应。当前 feed 返回 431 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "103",
+      "documentUrls": [
+        "https://www.xiaoyuzhoufm.com/podcast/5e74b52c418a84a046ecaceb"
+      ],
+      "subscription": {
+        "name": "What's Next | l科技早知道 · 节目 RSS",
+        "endpoint": "https://feeds.fireside.fm/guiguzaozhidao/rss",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "声动活泼",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.shengfm.cn/podcastslist/whats-nextgun-ke-ji-zao-zhi-dao",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.xiaoyuzhoufm.com/podcast/5e74b52c418a84a046ecaceb",
+          "https://www.shengfm.cn/podcastslist/whats-nextgun-ke-ji-zao-zhi-dao",
+          "https://podcasts.apple.com/us/podcast/whats-next-%E7%A7%91%E6%8A%80%E6%97%A9%E7%9F%A5%E9%81%93/id1494812579?uo=4",
+          "https://feeds.fireside.fm/guiguzaozhidao/rss"
+        ],
+        "feedTitle": "What's Next｜科技早知道"
+      }
+    },
+    {
+      "id": "podcast-f8e290a7a1f66f2b",
+      "platform": "podcast",
+      "name": "跨国串门儿计划",
+      "handle": null,
+      "profileUrl": "https://www.xiaoyuzhoufm.com/podcast/670f3da40d2f24f28978736f",
+      "status": "feed_linked",
+      "note": "Apple 精确命中 跨国串门儿计划/yikai；XYZFM RSS 与小宇宙页一致。当前 feed 返回 720 条，已超过 本系统单次最多 200 条的收录范围。",
+      "originBlock": "107",
+      "documentUrls": [
+        "https://www.xiaoyuzhoufm.com/podcast/670f3da40d2f24f28978736f"
+      ],
+      "subscription": {
+        "name": "跨国串门儿计划 · 节目 RSS",
+        "endpoint": "https://feed.xyzfm.space/r8t44lmvu99m",
+        "adapter": "podcast_rss",
+        "contentType": "podcast",
+        "publisher": "yikai",
+        "publisherType": "podcast",
+        "officialDomains": [],
+        "publisherScope": "https://www.xiaoyuzhoufm.com/podcast/670f3da40d2f24f28978736f",
+        "tier": "T1.5",
+        "topicIds": [
+          "podcast"
+        ],
+        "verificationUrls": [
+          "https://www.xiaoyuzhoufm.com/podcast/670f3da40d2f24f28978736f",
+          "https://podcasts.apple.com/us/podcast/%E8%B7%A8%E5%9B%BD%E4%B8%B2%E9%97%A8%E5%84%BF%E8%AE%A1%E5%88%92/id1850900599?uo=4",
+          "https://feed.xyzfm.space/r8t44lmvu99m"
+        ],
+        "feedTitle": "跨国串门儿计划"
+      }
+    },
+    {
+      "id": "blog-2ff230eac68aac35",
+      "platform": "blog",
+      "name": "Andrej Karpathy blog",
+      "handle": null,
+      "profileUrl": "https://karpathy.github.io/",
+      "status": "feed_linked",
+      "note": "已核验为作者旧 GitHub Pages 博客的第一方 feed；当前目录里已有的是 karpathy.bearblog.dev/feed/，不是同一站点，不能拿现有订阅替代这条。",
+      "originBlock": "113",
+      "documentUrls": [
+        "https://karpathy.github.io/"
+      ],
+      "subscription": {
+        "name": "Andrej Karpathy blog · 原始 Feed",
+        "endpoint": "https://karpathy.github.io/feed.xml",
+        "adapter": "rss",
+        "contentType": "blog",
+        "publisher": "Andrej Karpathy",
+        "publisherType": "publication",
+        "officialDomains": [
+          "karpathy.github.io"
+        ],
+        "publisherScope": "https://karpathy.github.io/",
+        "tier": "T1.5",
+        "topicIds": [
+          "agi"
+        ],
+        "verificationUrls": [
+          "https://karpathy.github.io/",
+          "https://karpathy.github.io/feed.xml"
+        ],
+        "feedTitle": "Andrej Karpathy blog"
+      }
+    },
+    {
+      "id": "blog-bbd26e4b625a94e3",
+      "platform": "blog",
+      "name": "Chip Huyen",
+      "handle": null,
+      "profileUrl": "https://huyenchip.com/blog/",
+      "status": "feed_linked",
+      "note": "博客页源码直接声明 /feed.xml，GET 返回有效 RSS 且标题与作者名一致，可直接作为第一方订阅源。",
+      "originBlock": "114",
+      "documentUrls": [
+        "https://huyenchip.com/blog/"
+      ],
+      "subscription": {
+        "name": "Chip Huyen · 原始 Feed",
+        "endpoint": "https://huyenchip.com/feed.xml",
+        "adapter": "rss",
+        "contentType": "blog",
+        "publisher": "Chip Huyen",
+        "publisherType": "publication",
+        "officialDomains": [
+          "huyenchip.com"
+        ],
+        "publisherScope": "https://huyenchip.com/blog/",
+        "tier": "T1.5",
+        "topicIds": [
+          "ai-coding",
+          "agi"
+        ],
+        "verificationUrls": [
+          "https://huyenchip.com/blog/",
+          "https://huyenchip.com/feed.xml"
+        ],
+        "feedTitle": "Chip Huyen"
+      }
+    },
+    {
+      "id": "blog-943e15e0d535c6fb",
+      "platform": "blog",
+      "name": "arthurchiao",
+      "handle": null,
+      "profileUrl": "https://arthurchiao.art/",
+      "status": "feed_linked",
+      "note": "首页公开暴露 https://arthurchiao.art/feed.xml，RSS 标题与站点标题一致，是作者本人的第一方博客源。",
+      "originBlock": "115",
+      "documentUrls": [
+        "https://arthurchiao.art/"
+      ],
+      "subscription": {
+        "name": "arthurchiao · 原始 Feed",
+        "endpoint": "https://arthurchiao.art/feed.xml",
+        "adapter": "rss",
+        "contentType": "blog",
+        "publisher": "ArthurChiao",
+        "publisherType": "publication",
+        "officialDomains": [
+          "arthurchiao.art"
+        ],
+        "publisherScope": "https://arthurchiao.art/",
+        "tier": "T1.5",
+        "topicIds": [],
+        "verificationUrls": [
+          "https://arthurchiao.art/",
+          "https://arthurchiao.art/feed.xml"
+        ],
+        "feedTitle": "ArthurChiao's Blog"
+      }
+    },
+    {
+      "id": "blog-d67b8b3d99691908",
+      "platform": "blog",
+      "name": "vintagedata",
+      "handle": null,
+      "profileUrl": "https://vintagedata.org/blog/",
+      "status": "needs_endpoint",
+      "note": "已确认这是 Pierre-Carl Langlais 的原站博客，但公开 HTML 未暴露 feed，常见第一方 feed 路径也均 404；先保留观察，不用聚合源代替。",
+      "originBlock": "116",
+      "documentUrls": [
+        "https://vintagedata.org/blog/"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "blog-8b0eaafedc559312",
+      "platform": "blog",
+      "name": "Simon Willison’s Weblog",
+      "handle": null,
+      "profileUrl": "https://simonwillison.net/",
+      "status": "feed_linked",
+      "note": "现有目录已订阅第一方 Atom 源 /atom/entries/；主页默认还公开 /atom/everything/，但 entries 源更贴合作者长文博客订阅，可直接复用现有 ID。",
+      "originBlock": "117",
+      "documentUrls": [
+        "https://simonwillison.net/"
+      ],
+      "subscription": {
+        "name": "Simon Willison’s Weblog · 原始 Feed",
+        "endpoint": "https://simonwillison.net/atom/entries/",
+        "adapter": "atom",
+        "contentType": "blog",
+        "publisher": "Simon Willison",
+        "publisherType": "publication",
+        "officialDomains": [
+          "simonwillison.net"
+        ],
+        "publisherScope": "https://simonwillison.net/",
+        "tier": "T1.5",
+        "topicIds": [
+          "agi",
+          "ai-coding"
+        ],
+        "verificationUrls": [
+          "https://simonwillison.net/",
+          "https://simonwillison.net/about/",
+          "https://simonwillison.net/atom/entries/"
+        ],
+        "feedTitle": "Simon Willison's Weblog: Entries"
+      }
+    },
+    {
+      "id": "blog-fb43a215329b9e2a",
+      "platform": "blog",
+      "name": "Lil’Log",
+      "handle": null,
+      "profileUrl": "https://lilianweng.github.io/",
+      "status": "feed_linked",
+      "note": "首页源码直接声明 RSS 地址为 index.xml；返回有效 RSS，标题对应 Lil'Log，属于作者第一方 Hugo 站点 feed。当前解析到 53 条，明显低于导入器 200 条上限；基于现有证据无已知 4 MiB 超限风险。",
+      "originBlock": "118",
+      "documentUrls": [
+        "https://lilianweng.github.io/"
+      ],
+      "subscription": {
+        "name": "Lil’Log · 原始 Feed",
+        "endpoint": "https://lilianweng.github.io/index.xml",
+        "adapter": "rss",
+        "contentType": "blog",
+        "publisher": "Lilian Weng",
+        "publisherType": "publication",
+        "officialDomains": [
+          "lilianweng.github.io"
+        ],
+        "publisherScope": "https://lilianweng.github.io/",
+        "tier": "T1.5",
+        "topicIds": [
+          "agi"
+        ],
+        "verificationUrls": [
+          "https://lilianweng.github.io/",
+          "https://lilianweng.github.io/index.xml"
+        ],
+        "feedTitle": "Lil'Log"
+      }
+    },
+    {
+      "id": "blog-01ba738e0fcbb8e8",
+      "platform": "blog",
+      "name": "Latent space",
+      "handle": null,
+      "profileUrl": "https://www.latent.space/",
+      "status": "feed_linked",
+      "note": "Substack 原站首页公开暴露 /feed，GET 返回有效 RSS，标题为 Latent.Space；这是第一方发布源，不是转发聚合。",
+      "originBlock": "119",
+      "documentUrls": [
+        "https://www.latent.space/"
+      ],
+      "subscription": {
+        "name": "Latent space · 原始 Feed",
+        "endpoint": "https://www.latent.space/feed",
+        "adapter": "rss",
+        "contentType": "blog",
+        "publisher": "Latent.Space",
+        "publisherType": "publication",
+        "officialDomains": [
+          "www.latent.space"
+        ],
+        "publisherScope": "https://www.latent.space/",
+        "tier": "T1.5",
+        "topicIds": [
+          "ai-coding",
+          "agent",
+          "agi"
+        ],
+        "verificationUrls": [
+          "https://www.latent.space/",
+          "https://www.latent.space/feed"
+        ],
+        "feedTitle": "Latent.Space"
+      }
+    },
+    {
+      "id": "blog-c51c15473bdb9a8e",
+      "platform": "blog",
+      "name": "Ben Thompson",
+      "handle": null,
+      "profileUrl": "https://stratechery.com/",
+      "status": "feed_linked",
+      "note": "公开站点 /feed/ 返回有效第一方 RSS，标题与 Stratechery by Ben Thompson 一致；可用于开放内容订阅，不涉及会员个性化 RSS 或付费绕过。",
+      "originBlock": "120",
+      "documentUrls": [
+        "https://stratechery.com/"
+      ],
+      "subscription": {
+        "name": "Ben Thompson · 原始 Feed",
+        "endpoint": "https://stratechery.com/feed/",
+        "adapter": "rss",
+        "contentType": "blog",
+        "publisher": "Ben Thompson",
+        "publisherType": "publication",
+        "officialDomains": [
+          "stratechery.com"
+        ],
+        "publisherScope": "https://stratechery.com/",
+        "tier": "T1.5",
+        "topicIds": [],
+        "verificationUrls": [
+          "https://stratechery.com/",
+          "https://stratechery.com/feed/"
+        ],
+        "feedTitle": "Stratechery by Ben Thompson"
+      }
+    },
+    {
+      "id": "blog-0364359a60f490e4",
+      "platform": "blog",
+      "name": "Manas J. Saloi",
+      "handle": null,
+      "profileUrl": "https://manassaloi.com/posts/",
+      "status": "feed_linked",
+      "note": "Posts 页源码公开声明 /feed.xml，GET 返回有效 Atom，标题与作者名一致，可直接作为第一方博客源。",
+      "originBlock": "121",
+      "documentUrls": [
+        "https://manassaloi.com/posts/"
+      ],
+      "subscription": {
+        "name": "Manas J. Saloi · 原始 Feed",
+        "endpoint": "https://manassaloi.com/feed.xml",
+        "adapter": "atom",
+        "contentType": "blog",
+        "publisher": "Manas J. Saloi",
+        "publisherType": "publication",
+        "officialDomains": [
+          "manassaloi.com"
+        ],
+        "publisherScope": "https://manassaloi.com/posts/",
+        "tier": "T1.5",
+        "topicIds": [],
+        "verificationUrls": [
+          "https://manassaloi.com/posts/",
+          "https://manassaloi.com/feed.xml"
+        ],
+        "feedTitle": "Manas J. Saloi"
+      }
+    },
+    {
+      "id": "blog-ed7180626903fedf",
+      "platform": "blog",
+      "name": "AHEAD OF AI",
+      "handle": null,
+      "profileUrl": "https://magazine.sebastianraschka.com/",
+      "status": "feed_linked",
+      "note": "Substack 原站首页公开暴露 /feed，GET 返回有效 RSS；feed 标题规范写法是 Ahead of AI，对应 Sebastian Raschka 本人出版物。",
+      "originBlock": "122",
+      "documentUrls": [
+        "https://magazine.sebastianraschka.com/"
+      ],
+      "subscription": {
+        "name": "AHEAD OF AI · 原始 Feed",
+        "endpoint": "https://magazine.sebastianraschka.com/feed",
+        "adapter": "rss",
+        "contentType": "blog",
+        "publisher": "Sebastian Raschka",
+        "publisherType": "publication",
+        "officialDomains": [
+          "magazine.sebastianraschka.com"
+        ],
+        "publisherScope": "https://magazine.sebastianraschka.com/",
+        "tier": "T1.5",
+        "topicIds": [
+          "agi"
+        ],
+        "verificationUrls": [
+          "https://magazine.sebastianraschka.com/",
+          "https://magazine.sebastianraschka.com/feed"
+        ],
+        "feedTitle": "Ahead of AI"
+      }
+    },
+    {
+      "id": "x-dotey",
+      "platform": "x",
+      "name": "宝玉",
+      "handle": "dotey",
+      "profileUrl": "https://x.com/dotey",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "127",
+      "documentUrls": [
+        "https://x.com/dotey?s=21"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-op7418",
+      "platform": "x",
+      "name": "歸藏",
+      "handle": "op7418",
+      "profileUrl": "https://x.com/op7418",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "129",
+      "documentUrls": [
+        "https://x.com/op7418"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-9hills",
+      "platform": "x",
+      "name": "九原客",
+      "handle": "9hills",
+      "profileUrl": "https://x.com/9hills",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "131",
+      "documentUrls": [
+        "https://x.com/9hills?s=21"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-hidecloud",
+      "platform": "x",
+      "name": "hidecloud",
+      "handle": "hidecloud",
+      "profileUrl": "https://x.com/hidecloud",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "133",
+      "documentUrls": [
+        "https://x.com/hidecloud?s=21"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-karpathy",
+      "platform": "x",
+      "name": "Andrej Karpathy",
+      "handle": "karpathy",
+      "profileUrl": "https://x.com/karpathy",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "135",
+      "documentUrls": [
+        "https://x.com/karpathy"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-_akhaliq",
+      "platform": "x",
+      "name": "AK",
+      "handle": "_akhaliq",
+      "profileUrl": "https://x.com/_akhaliq",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "136",
+      "documentUrls": [
+        "https://x.com/_akhaliq"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-yangyixxxx",
+      "platform": "x",
+      "name": "yangyi",
+      "handle": "yangyixxxx",
+      "profileUrl": "https://x.com/yangyixxxx",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "137",
+      "documentUrls": [
+        "https://x.com/yangyixxxx?s=21"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-jiaxi_cui",
+      "platform": "x",
+      "name": "panda",
+      "handle": "jiaxi_cui",
+      "profileUrl": "https://x.com/jiaxi_cui",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "138",
+      "documentUrls": [
+        "https://x.com/jiaxi_cui?s=21"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-bdsqlsz",
+      "platform": "x",
+      "name": "青龙圣者",
+      "handle": "bdsqlsz",
+      "profileUrl": "https://x.com/bdsqlsz",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "139",
+      "documentUrls": [
+        "https://x.com/bdsqlsz?s=21"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-wwwyesterday",
+      "platform": "x",
+      "name": "wwwyestday",
+      "handle": "wwwyesterday",
+      "profileUrl": "https://x.com/wwwyesterday",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "140",
+      "documentUrls": [
+        "https://x.com/wwwyesterday?s=21"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-buaaxhm",
+      "platform": "x",
+      "name": "supermao",
+      "handle": "buaaxhm",
+      "profileUrl": "https://x.com/buaaxhm",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "141",
+      "documentUrls": [
+        "https://x.com/buaaxhm?s=21"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-huybery",
+      "platform": "x",
+      "name": "Binyuan Hui",
+      "handle": "huybery",
+      "profileUrl": "https://x.com/huybery",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "142",
+      "documentUrls": [
+        "https://x.com/huybery"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-toyxyz3",
+      "platform": "x",
+      "name": "toyxyz",
+      "handle": "toyxyz3",
+      "profileUrl": "https://x.com/toyxyz3",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "143",
+      "documentUrls": [
+        "https://x.com/toyxyz3"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-dorialexander",
+      "platform": "x",
+      "name": "Alexander Doria",
+      "handle": "Dorialexander",
+      "profileUrl": "https://x.com/Dorialexander",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "144",
+      "documentUrls": [
+        "https://x.com/Dorialexander"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-gallabytes",
+      "platform": "x",
+      "name": "theseriousadult",
+      "handle": "gallabytes",
+      "profileUrl": "https://x.com/gallabytes",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "145",
+      "documentUrls": [
+        "https://x.com/gallabytes"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-itspaulai",
+      "platform": "x",
+      "name": "Paul Couvert",
+      "handle": "itsPaulAi",
+      "profileUrl": "https://x.com/itsPaulAi",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "146",
+      "documentUrls": [
+        "https://x.com/itsPaulAi"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-javilopen",
+      "platform": "x",
+      "name": "Javi Lopez",
+      "handle": "javilopen",
+      "profileUrl": "https://x.com/javilopen",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "147",
+      "documentUrls": [
+        "https://x.com/javilopen"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-mushtaqbilalphd",
+      "platform": "x",
+      "name": "Mushtaq Bilal, PhD",
+      "handle": "MushtaqBilalPhD",
+      "profileUrl": "https://x.com/MushtaqBilalPhD",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "148",
+      "documentUrls": [
+        "https://x.com/MushtaqBilalPhD"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-alexalbert__",
+      "platform": "x",
+      "name": "Alex Albert",
+      "handle": "alexalbert__",
+      "profileUrl": "https://x.com/alexalbert__",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "149",
+      "documentUrls": [
+        "https://x.com/alexalbert__"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-iscienceluvr",
+      "platform": "x",
+      "name": "Tanishq Mathew Abraham, Ph.D.",
+      "handle": "iScienceLuvr",
+      "profileUrl": "https://x.com/iScienceLuvr",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "150",
+      "documentUrls": [
+        "https://x.com/iScienceLuvr"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "x-aravsrinivas",
+      "platform": "x",
+      "name": "Aravind Srinivas",
+      "handle": "AravSrinivas",
+      "profileUrl": "https://x.com/AravSrinivas",
+      "status": "needs_authorization",
+      "note": "保留文档推荐账号；X 官方 API 授权尚未配置，未执行平台关注，也不声称已逐项核实账号身份。",
+      "originBlock": "151",
+      "documentUrls": [
+        "https://x.com/AravSrinivas"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-dbfb9329f5b8f66d",
+      "platform": "weibo",
+      "name": "祝威廉二世",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/1751401422",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "154",
+      "documentUrls": [
+        "https://weibo.com/u/1751401422"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-6f7a6b4deb845d13",
+      "platform": "weibo",
+      "name": "karminski-牙医",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/2169039837",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "156",
+      "documentUrls": [
+        "https://weibo.com/u/2169039837"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-61820b6e051e4e3c",
+      "platform": "weibo",
+      "name": "Transformer-周",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/1871474290",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "158",
+      "documentUrls": [
+        "https://weibo.com/u/1871474290"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-e9780c3da7d0dab8",
+      "platform": "weibo",
+      "name": "张俊林",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/1064649941",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "160",
+      "documentUrls": [
+        "https://weibo.com/u/1064649941"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-80add423c3795367",
+      "platform": "weibo",
+      "name": "OneFlow",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/6433304918",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "162",
+      "documentUrls": [
+        "https://weibo.com/u/6433304918"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-cb793b7e449170ca",
+      "platform": "weibo",
+      "name": "老师木",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/1991303247",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "164",
+      "documentUrls": [
+        "https://weibo.com/u/1991303247"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-707ba333a0b6442e",
+      "platform": "weibo",
+      "name": "海辛",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/1309158107",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "166",
+      "documentUrls": [
+        "https://weibo.com/u/1309158107"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-7ab5bbf2ac9b98a4",
+      "platform": "weibo",
+      "name": "Simon阿文",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/1757693565",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "167",
+      "documentUrls": [
+        "https://weibo.com/u/1757693565"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-b1fbff5eb98f926a",
+      "platform": "weibo",
+      "name": "Simon的白日梦",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/1948301550",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "168",
+      "documentUrls": [
+        "https://weibo.com/u/1948301550"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-9788c49cd149c9d6",
+      "platform": "weibo",
+      "name": "indigo",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/1639597372",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "169",
+      "documentUrls": [
+        "https://weibo.com/u/1639597372"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-e2698d0f4c54027f",
+      "platform": "weibo",
+      "name": "蚁工厂",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/2194035935",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "170",
+      "documentUrls": [
+        "https://weibo.com/u/2194035935"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "weibo-67b0b3b3adac29f5",
+      "platform": "weibo",
+      "name": "黄健楸",
+      "handle": null,
+      "profileUrl": "https://weibo.com/u/6083767801",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "171",
+      "documentUrls": [
+        "https://weibo.com/u/6083767801"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "reddit-5f7c55ee9cda16ee",
+      "platform": "reddit",
+      "name": "LocalLLaMa",
+      "handle": null,
+      "profileUrl": "https://www.reddit.com/r/LocalLLaMA/",
+      "status": "feed_linked",
+      "note": "已核实原站 Atom 的社区名、条目与原帖链接；只收公开帖子摘录，不代表官方公告、事实互证或完整评论串。实际采集健康另行显示。",
+      "originBlock": "173",
+      "documentUrls": [
+        "https://www.reddit.com/r/LocalLLaMA/"
+      ],
+      "subscription": {
+        "name": "Reddit · r/LocalLLaMA",
+        "endpoint": "https://www.reddit.com/r/LocalLLaMA/.rss",
+        "adapter": "atom",
+        "contentType": "blog",
+        "publisher": "Reddit community posts",
+        "publisherType": "community",
+        "officialDomains": [],
+        "publisherScope": "https://www.reddit.com/r/LocalLLaMA/",
+        "tier": "T2",
+        "topicIds": [
+          "open-models"
+        ],
+        "verificationUrls": [
+          "https://www.reddit.com/r/LocalLLaMA/",
+          "https://www.reddit.com/r/LocalLLaMA/.rss",
+          "https://www.reddit.com/r/LocalLLaMA/comments/1vx7ei1/best_local_vision_language_models_august_2026/"
+        ],
+        "feedTitle": "LocalLlama"
+      }
+    },
+    {
+      "id": "reddit-573904c0cc93abbc",
+      "platform": "reddit",
+      "name": "ClaudeAI",
+      "handle": null,
+      "profileUrl": "https://www.reddit.com/r/ClaudeAI/",
+      "status": "rate_limited",
+      "note": "原站 Feed 请求返回 HTTP 429；暂停复核并保留社区入口，不使用镜像绕过限制。",
+      "originBlock": "175",
+      "documentUrls": [
+        "https://www.reddit.com/r/ClaudeAI/"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "reddit-0e491ce78ce044b0",
+      "platform": "reddit",
+      "name": "ChatGPT",
+      "handle": null,
+      "profileUrl": "https://www.reddit.com/r/ChatGPT/",
+      "status": "rate_limited",
+      "note": "原站 Feed 请求返回 HTTP 429；暂停复核并保留社区入口，不使用镜像绕过限制。",
+      "originBlock": "177",
+      "documentUrls": [
+        "https://www.reddit.com/r/ChatGPT/"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "reddit-303e58568c0a8d06",
+      "platform": "reddit",
+      "name": "StableDiffusion",
+      "handle": null,
+      "profileUrl": "https://www.reddit.com/r/StableDiffusion/",
+      "status": "rate_limited",
+      "note": "原站 Feed 请求返回 HTTP 429；暂停复核并保留社区入口，不使用镜像绕过限制。",
+      "originBlock": "179",
+      "documentUrls": [
+        "https://www.reddit.com/r/StableDiffusion/"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "reddit-1f23b0c1ef7f6363",
+      "platform": "reddit",
+      "name": "ChatGPTCoding",
+      "handle": null,
+      "profileUrl": "https://www.reddit.com/r/ChatGPTCoding/",
+      "status": "rate_limited",
+      "note": "原站 Feed 请求返回 HTTP 429；暂停复核并保留社区入口，不使用镜像绕过限制。",
+      "originBlock": "181",
+      "documentUrls": [
+        "https://www.reddit.com/r/ChatGPTCoding/"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-8884b7632a960b40",
+      "platform": "bilibili",
+      "name": "花儿不哭",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/5760446",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "184",
+      "documentUrls": [
+        "https://space.bilibili.com/5760446"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-46da9f96227764ce",
+      "platform": "bilibili",
+      "name": "冷月",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/23195420",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "186",
+      "documentUrls": [
+        "https://space.bilibili.com/23195420"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-cd58d806c783ed7b",
+      "platform": "bilibili",
+      "name": "Rcell",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/343303724",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "186",
+      "documentUrls": [
+        "https://space.bilibili.com/343303724"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-26e7a9f7a0c9bb3c",
+      "platform": "bilibili",
+      "name": "Stardust_减",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/163056936",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "186",
+      "documentUrls": [
+        "https://space.bilibili.com/163056936"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-b1d9b7b06603e65c",
+      "platform": "bilibili",
+      "name": "秋叶",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/12566101",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "188",
+      "documentUrls": [
+        "https://space.bilibili.com/12566101"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-a4aa90669109f9db",
+      "platform": "bilibili",
+      "name": "霍华德",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/295428344",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "190",
+      "documentUrls": [
+        "https://space.bilibili.com/295428344"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-f2ce42dd4d59598f",
+      "platform": "bilibili",
+      "name": "taku的交错电台",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/490822516",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "192",
+      "documentUrls": [
+        "https://space.bilibili.com/490822516"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-5aab1d240e1119de",
+      "platform": "bilibili",
+      "name": "大江户战士",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/55123",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "194",
+      "documentUrls": [
+        "https://space.bilibili.com/55123"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-a6da2385a277636d",
+      "platform": "bilibili",
+      "name": "ZOMI 酱",
+      "handle": null,
+      "profileUrl": "https://b23.tv/crat9Be",
+      "status": "needs_confirmation",
+      "note": "原文 ZOMI 酱短链返回 -404，尚未确认有效主页；未猜测替换 UP 主 ID。",
+      "originBlock": "195",
+      "documentUrls": [
+        "https://b23.tv/crat9Be"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "bilibili-844e26c7622b4808",
+      "platform": "bilibili",
+      "name": "五道口纳什",
+      "handle": null,
+      "profileUrl": "https://space.bilibili.com/59807853",
+      "status": "needs_connector",
+      "note": "保留原文推荐入口；尚无已启用的平台采集适配器，未执行平台关注。",
+      "originBlock": "196",
+      "documentUrls": [
+        "https://space.bilibili.com/59807853"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "collection-608c05412616cf25",
+      "platform": "collection",
+      "name": "AI Reading List | 42章经",
+      "handle": null,
+      "profileUrl": "https://yveh7jntg7.feishu.cn/docx/X3jfdAJ3WoUOLxxpNK4cnPJtnGc",
+      "status": "reference_only",
+      "note": "保留原文资料入口供阅读参考；不递归导入其链接，也不作为聚合新闻订阅。",
+      "originBlock": "203",
+      "documentUrls": [
+        "https://yveh7jntg7.feishu.cn/docx/X3jfdAJ3WoUOLxxpNK4cnPJtnGc"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "collection-af28952ee9d11863",
+      "platform": "collection",
+      "name": "屠龙之术报告库",
+      "handle": null,
+      "profileUrl": "https://wiki.ima.qq.com/knowledge-base-share?shareId=28a804fef7bbb90209159f2e78690d683a27081e87bf4c2597420c0fa117f0ad",
+      "status": "reference_only",
+      "note": "保留原文资料入口供阅读参考；不递归导入其链接，也不作为聚合新闻订阅。",
+      "originBlock": "204",
+      "documentUrls": [
+        "https://wiki.ima.qq.com/knowledge-base-share?shareId=28a804fef7bbb90209159f2e78690d683a27081e87bf4c2597420c0fa117f0ad"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "github-f2e3d3c81b251c25",
+      "platform": "github",
+      "name": "karminski / one-small-step",
+      "handle": null,
+      "profileUrl": "https://github.com/karminski/one-small-step",
+      "status": "reference_only",
+      "note": "保留原文资料入口供阅读参考；不递归导入其链接，也不作为聚合新闻订阅。",
+      "originBlock": "229",
+      "documentUrls": [
+        "https://github.com/karminski/one-small-step"
+      ],
+      "subscription": null
+    },
+    {
+      "id": "directory-platform-0",
+      "platform": "community",
+      "name": "知乎",
+      "handle": null,
+      "profileUrl": null,
+      "status": "needs_selection",
+      "note": "文档仅泛指平台，未指定具体账号；保留关注意向，不编造账号或创建采集来源。",
+      "originBlock": "199-201",
+      "documentUrls": [],
+      "subscription": null
+    },
+    {
+      "id": "directory-platform-1",
+      "platform": "community",
+      "name": "即刻",
+      "handle": null,
+      "profileUrl": null,
+      "status": "needs_selection",
+      "note": "文档仅泛指平台，未指定具体账号；保留关注意向，不编造账号或创建采集来源。",
+      "originBlock": "199-201",
+      "documentUrls": [],
+      "subscription": null
+    }
+  ]
+}

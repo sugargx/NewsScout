@@ -1,0 +1,9 @@
+{
+  "name": "@scoutnews/source-access",
+  "version": "0.2.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "1.62.0-alpha-2026-07-20"
+  }
+}

@@ -220,8 +220,12 @@ pub fn coverage(sources: &[Source]) -> Value {
         "id":"builders", "label":"个人 Builder Watchlist", "status":"blocked", "sourceCount":0,
         "message":"具体作者、频道、社区及资料目录在关注名单中记录，并分别标识关联订阅或接入缺口；作者博客订阅不等于社交时间线监听。"
     }));
-    let x_sources = sources.iter().filter(|source| source.adapter == "x_public_preview"
-        && source.lifecycle_status != "paused").count();
+    let x_sources = sources
+        .iter()
+        .filter(|source| {
+            source.adapter == "x_public_preview" && source.lifecycle_status != "paused"
+        })
+        .count();
     items.push(json!({
         "id":"x", "label":"X 公开原帖预览", "status":if x_sources>0 {"partial"} else {"blocked"}, "sourceCount":x_sources,
         "message":format!("{x_sources} 个登记原帖的来源；通过官方 oEmbed 读取有限预览。只更新已登记链接，不自动扫描主页、不代表完整或最新时间线；可在来源卡片中补充原帖链接。"),

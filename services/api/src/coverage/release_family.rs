@@ -18,6 +18,7 @@ pub(super) struct Release {
     family_label: &'static str,
     target_key: String,
     client: bool,
+    package: bool,
     changes: BTreeSet<String>,
     subjects: BTreeSet<Subject>,
 }
@@ -97,6 +98,165 @@ fn client_tag_matches(tag: &str, target: &str, family: &str) -> bool {
     client_target(tag_target) == client_target(target)
 }
 
+fn package_name(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.'))
+}
+
+fn package_version(value: &str) -> bool {
+    if !version(value) {
+        return false;
+    }
+    let (without_build, build) = value
+        .split_once('+')
+        .map_or((value, None), |(version, build)| (version, Some(build)));
+    let (core, prerelease) = without_build
+        .split_once('-')
+        .map_or((without_build, None), |(core, prerelease)| {
+            (core, Some(prerelease))
+        });
+    let identifiers = |value: &str, allow_numeric_zeroes: bool| {
+        value.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && (allow_numeric_zeroes
+                    || !part.bytes().all(|byte| byte.is_ascii_digit())
+                    || part.len() == 1
+                    || !part.starts_with('0'))
+        })
+    };
+    core.split('.')
+        .all(|part| part.len() == 1 || !part.starts_with('0'))
+        && prerelease.is_none_or(|value| identifiers(value, false))
+        && build.is_none_or(|value| identifiers(value, true))
+}
+
+fn package_release(repo: &str, repository: &str, tag: &str, title: &str) -> Option<Release> {
+    let (package, release_version) = title.trim().split_once("==")?;
+    if !package_name(repository) || !package_name(package) || !package_version(release_version) {
+        return None;
+    }
+    // Decode only the verified delimiter, once; never decode path separators or nested escapes.
+    let tag = tag.replace("%3D", "=").replace("%3d", "=");
+    if tag.contains('%') {
+        return None;
+    }
+    let component = if let Some((component, tag_version)) = tag.split_once("==") {
+        if !package_name(component)
+            || tag_version != release_version
+            || !package.eq_ignore_ascii_case(&format!("{repository}-{component}"))
+        {
+            return None;
+        }
+        Some(component.to_ascii_lowercase())
+    } else {
+        if tag != release_version || !package.eq_ignore_ascii_case(repository) {
+            return None;
+        }
+        None
+    };
+    Some(Release {
+        key: format!("{repo}:package"),
+        product: Some(repository.to_ascii_lowercase()),
+        repository: repository.into(),
+        family_label: "同批",
+        target: match component.as_deref() {
+            None => "核心包".into(),
+            Some("sdk") => "SDK".into(),
+            Some("cli") => "CLI".into(),
+            Some(component) => component.into(),
+        },
+        target_key: component
+            .map(|component| format!("component:{component}"))
+            .unwrap_or_else(|| "core".into()),
+        client: false,
+        package: true,
+        version: release_version.into(),
+        changes: BTreeSet::new(),
+        subjects: BTreeSet::new(),
+    })
+}
+
+fn legacy_release(repo: &str, repository: &str, tag: &str, title: &str) -> Option<Release> {
+    let (target_tag, release_version) = tag
+        .rsplit_once("-v")
+        .or_else(|| tag.strip_prefix('v').map(|version| ("", version)))?;
+    if !version(release_version) {
+        return None;
+    }
+    let suffix = format!("(v{release_version})");
+    let title = title.trim().strip_suffix(&suffix)?.trim();
+    let mut words: Vec<_> = title.split_whitespace().collect();
+    let family = words.pop()?.to_ascii_lowercase();
+    let family_label = match family.as_str() {
+        "plugin" => "插件",
+        "extension" => "扩展",
+        "adapter" => "适配器",
+        "integration" => "集成",
+        "cli" | "sdk" => "客户端",
+        "provider"
+            if words
+                .last()
+                .is_some_and(|word| word.eq_ignore_ascii_case("sdk")) =>
+        {
+            words.pop();
+            "客户端"
+        }
+        _ => return None,
+    };
+    let client = matches!(family.as_str(), "cli" | "sdk" | "provider");
+    let prefix = (1..words.len())
+        .find(|length| normalized(&words[..*length].join(" ")) == normalized(repository));
+    // A named SDK provider may identify its host instead of the repository product,
+    // but its release tag must still identify that same host.
+    if prefix.is_none() && family != "provider" {
+        return None;
+    }
+    let product = prefix.map(|length| words[..length].join(" "));
+    let target = words[prefix.unwrap_or(0)..].join(" ");
+    if target.is_empty() {
+        return None;
+    }
+    let tag_target = normalized(target_tag);
+    let matches_tag = if client {
+        client_tag_matches(target_tag, &target, &family)
+    } else {
+        tag_target == normalized(&target) || tag_target == normalized(&format!("{target}{family}"))
+    };
+    if !matches_tag {
+        return None;
+    }
+    let target_key = if client {
+        format!("{}:{family}", client_target(&target))
+    } else {
+        normalized(&target)
+    };
+    Some(Release {
+        key: format!("{repo}:{}", if client { "client" } else { &family }),
+        product,
+        repository: repository.into(),
+        family_label,
+        target: match family.as_str() {
+            "cli" => format!("{target} CLI"),
+            "sdk" => format!("{target} SDK"),
+            "provider" => format!("{target} SDK Provider"),
+            _ => target,
+        },
+        target_key,
+        client,
+        package: false,
+        version: format!("v{release_version}"),
+        changes: BTreeSet::new(),
+        subjects: BTreeSet::new(),
+    })
+}
+
 pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
     if member.event_type != "release"
         || member.material_kind != "official"
@@ -114,6 +274,7 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
             || url.host_str() != Some("github.com")
             || !url.username().is_empty()
             || url.password().is_some()
+            || url.port().is_some()
         {
             return None;
         }
@@ -121,52 +282,20 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
         let [owner, repository, "releases", "tag", tag] = segments.as_slice() else {
             return None;
         };
-        let (target_tag, release_version) = tag
-            .rsplit_once("-v")
-            .or_else(|| tag.strip_prefix('v').map(|version| ("", version)))?;
-        if !version(release_version) {
-            return None;
-        }
-        let suffix = format!("(v{release_version})");
-        let title = evidence.title.trim().strip_suffix(&suffix)?.trim();
-        let mut words: Vec<_> = title.split_whitespace().collect();
-        let family = words.pop()?.to_ascii_lowercase();
-        let family_label = match family.as_str() {
-            "plugin" => "插件",
-            "extension" => "扩展",
-            "adapter" => "适配器",
-            "integration" => "集成",
-            "cli" | "sdk" => "客户端",
-            "provider" if words.last().is_some_and(|word| word.eq_ignore_ascii_case("sdk")) => {
-                words.pop();
-                "客户端"
-            }
-            _ => return None,
-        };
-        let client = matches!(family.as_str(), "cli" | "sdk" | "provider");
-        let prefix = (1..words.len())
-            .find(|length| normalized(&words[..*length].join(" ")) == normalized(repository));
-        // A named SDK provider may identify its host instead of the repository product,
-        // but its release tag must still identify that same host.
-        if prefix.is_none() && family != "provider" {
-            return None;
-        }
-        let product = prefix.map(|length| words[..length].join(" "));
-        let target = words[prefix.unwrap_or(0)..].join(" ");
-        if target.is_empty() {
-            return None;
-        }
-        let tag_target = normalized(target_tag);
-        let matches_tag = if client {
-            client_tag_matches(target_tag, &target, &family)
-        } else {
-            tag_target == normalized(&target)
-                || tag_target == normalized(&format!("{target}{family}"))
-        };
-        if !matches_tag {
-            return None;
-        }
         let repo = format!("github.com/{owner}/{repository}").to_ascii_lowercase();
+        let mut release = if evidence.title.contains("==") {
+            if owner.is_empty()
+                || !owner
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                || evidence.url != url.as_str()
+            {
+                return None;
+            }
+            package_release(&repo, repository, tag, &evidence.title)?
+        } else {
+            legacy_release(&repo, repository, tag, &evidence.title)?
+        };
         let mut changes = BTreeSet::new();
         for word in evidence.excerpt.split_whitespace() {
             let word = word.trim_matches(['(', ')', '[', ']', ',', '.', ';', '。']);
@@ -176,7 +305,12 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
             {
                 changes.insert(format!("{repo}/change/{number}"));
             } else if let Ok(link) = url::Url::parse(word) {
-                if link.scheme() == "https" && link.host_str() == Some("github.com") {
+                if link.scheme() == "https"
+                    && link.host_str() == Some("github.com")
+                    && link.username().is_empty()
+                    && link.password().is_none()
+                    && link.port().is_none()
+                {
                     let path: Vec<_> = link.path_segments()?.collect();
                     if let [link_owner, link_repo, "pull" | "issues", number] = path.as_slice() {
                         if link_owner.eq_ignore_ascii_case(owner)
@@ -190,31 +324,11 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
                 }
             }
         }
-        if client && changes.is_empty() {
+        if (release.client || release.package) && changes.is_empty() {
             return None;
         }
-        let target_key = if client {
-            format!("{}:{family}", client_target(&target))
-        } else {
-            normalized(&target)
-        };
-        let release = Release {
-            key: format!("{repo}:{}", if client { "client" } else { &family }),
-            product,
-            repository: (*repository).into(),
-            family_label,
-            target: match family.as_str() {
-                "cli" => format!("{target} CLI"),
-                "sdk" => format!("{target} SDK"),
-                "provider" => format!("{target} SDK Provider"),
-                _ => target,
-            },
-            target_key,
-            client,
-            version: format!("v{release_version}"),
-            changes,
-            subjects: subjects(&evidence.excerpt),
-        };
+        release.changes = changes;
+        release.subjects = subjects(&evidence.excerpt);
         if let Some(previous) = &mut result {
             if previous.key != release.key
                 || previous.target != release.target
@@ -222,8 +336,23 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
             {
                 return None;
             }
-            previous.changes.extend(release.changes);
-            previous.subjects = previous.subjects.intersection(&release.subjects).copied().collect();
+            if release.package {
+                previous.changes = previous
+                    .changes
+                    .intersection(&release.changes)
+                    .cloned()
+                    .collect();
+                if previous.changes.is_empty() {
+                    return None;
+                }
+            } else {
+                previous.changes.extend(release.changes);
+            }
+            previous.subjects = previous
+                .subjects
+                .intersection(&release.subjects)
+                .copied()
+                .collect();
         } else {
             result = Some(release);
         }
@@ -232,21 +361,55 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
 }
 
 pub(super) fn label(members: &[&Record]) -> String {
-    let releases: Vec<_> = members.iter().filter_map(|record| record.release.as_ref()).collect();
+    let releases: Vec<_> = members
+        .iter()
+        .filter_map(|record| record.release.as_ref())
+        .collect();
     let first = releases[0];
     let product = releases
         .iter()
         .filter_map(|release| release.product.as_deref())
         .min()
         .unwrap_or(&first.repository);
-    let common = releases.iter().skip(1).fold(first.subjects.clone(), |subjects, release| {
-        subjects.intersection(&release.subjects).copied().collect()
-    });
+    if first.package {
+        let mut components = releases.clone();
+        components.sort_by(|a, b| {
+            (a.target_key != "core")
+                .cmp(&(b.target_key != "core"))
+                .then(a.target_key.cmp(&b.target_key))
+        });
+        let names = components
+            .iter()
+            .take(2)
+            .map(|release| format!("{} {}", release.target, release.version))
+            .collect::<Vec<_>>()
+            .join(" / ");
+        let subject = if components.len() > 2 {
+            format!("{names} 等{}项", components.len())
+        } else {
+            names
+        };
+        return format!("{product} {}更新：{subject}", first.family_label);
+    }
+    let common = releases
+        .iter()
+        .skip(1)
+        .fold(first.subjects.clone(), |subjects, release| {
+            subjects.intersection(&release.subjects).copied().collect()
+        });
     let subject = if let Some(subject) = common.first() {
         subject.label().to_owned()
     } else {
-        let targets: BTreeSet<_> = releases.iter().map(|release| release.target.as_str()).collect();
-        let names = targets.iter().take(2).copied().collect::<Vec<_>>().join(" / ");
+        let targets: BTreeSet<_> = releases
+            .iter()
+            .map(|release| release.target.as_str())
+            .collect();
+        let names = targets
+            .iter()
+            .take(2)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" / ");
         if targets.len() > 2 {
             format!("{names} 等{}项", targets.len())
         } else {
@@ -256,10 +419,14 @@ pub(super) fn label(members: &[&Record]) -> String {
     format!("{product} {}更新：{subject}", first.family_label)
 }
 
-pub(super) fn cohorts<'a>(candidates: &[&'a Record], cutoff: DateTime<Utc>) -> Vec<Vec<&'a Record>> {
+pub(super) fn cohorts<'a>(
+    candidates: &[&'a Record],
+    cutoff: DateTime<Utc>,
+) -> Vec<Vec<&'a Record>> {
     let mut ordered = candidates.to_vec();
     ordered.sort_by(|a, b| {
-        b.freshness_at.cmp(&a.freshness_at)
+        b.freshness_at
+            .cmp(&a.freshness_at)
             .then(a.member.event_id.cmp(&b.member.event_id))
     });
     let mut assigned = HashSet::new();
@@ -319,7 +486,8 @@ fn select<'a>(
         {
             continue;
         }
-        if (release.client && (shared_changes.is_empty() || other.changes.is_empty()))
+        if ((release.client || release.package)
+            && (shared_changes.is_empty() || other.changes.is_empty()))
             || (!shared_changes.is_empty()
                 && !other.changes.is_empty()
                 && shared_changes.is_disjoint(&other.changes))

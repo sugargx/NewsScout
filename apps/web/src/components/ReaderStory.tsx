@@ -10,11 +10,12 @@ interface ReaderStoryProps extends Omit<HTMLAttributes<HTMLElement>, "title"> {
   titleRef?: Ref<HTMLButtonElement>;
   containerRef?: Ref<HTMLElement>;
   actions?: ReactNode;
+  preview?: ReactNode;
 }
 
 export function ReaderStory({
   title, headingLevel: Heading = "h2", meta, selected = false, onOpen, titleRef, containerRef,
-  className = "", actions, children, ...attributes
+  className = "", actions, preview, children, ...attributes
 }: ReaderStoryProps) {
   const titleId = useId();
   return <article {...attributes} ref={containerRef} aria-labelledby={titleId}
@@ -22,6 +23,7 @@ export function ReaderStory({
     <Heading className="ns-reader-story-title" id={titleId}>
       {onOpen ? <button type="button" ref={titleRef} onClick={onOpen} title="阅读要点与来源内容">{title}</button> : title}
     </Heading>
+    {preview && <div className="ns-reader-story-preview">{preview}</div>}
     <div className="ns-reader-story-meta">{meta}</div>
     <div className="ns-reader-story-body">{children}</div>
     {actions && <div className="ns-reader-story-actions">{actions}</div>}

@@ -22,7 +22,11 @@ pub trait Store: Send + Sync {
     async fn brief(&self, date: NaiveDate, persist: bool) -> Result<Option<DailyBrief>>;
     async fn brief_history(&self) -> Result<Vec<BriefHistory>>;
     async fn latest_brief(&self) -> Result<DailyBrief>;
-    async fn visitor_brief(&self, cutoff: DateTime<Utc>, interests: &VisitorInterests) -> Result<DailyBrief>;
+    async fn visitor_brief(
+        &self,
+        cutoff: DateTime<Utc>,
+        interests: &VisitorInterests,
+    ) -> Result<DailyBrief>;
     async fn record_exposures(&self, items: Vec<crate::models::Exposure>) -> Result<u64>;
     async fn topics(&self) -> Result<Vec<Topic>>;
     async fn replace_topics(&self, topics: Vec<Topic>) -> Result<Vec<Topic>>;
@@ -71,8 +75,13 @@ impl MemoryStore {
         event.not_interested_reason = None;
         event.seen = false;
         event.opened = false;
-        let interest = interests.topics().iter().filter(|topic| event.topics.contains(&topic.label))
-            .map(|topic| topic.weight).max().unwrap_or(35) as f32;
+        let interest = interests
+            .topics()
+            .iter()
+            .filter(|topic| event.topics.contains(&topic.label))
+            .map(|topic| topic.weight)
+            .max()
+            .unwrap_or(35) as f32;
         // Demo scores are synthetic; only PostgreSQL implements the real editorial feature model.
         event.recommendation = Some(crate::models::Recommendation {
             score: event.score.total * 0.8 + interest * 0.2,
@@ -84,7 +93,8 @@ impl MemoryStore {
             source_confirmed: true,
             explanation: "演示样本的访客兴趣排序，不代表真实新闻评分。".into(),
         });
-        (event.personal_relevance, event.personal_reason) = crate::reader::relevance(event, interests.topics());
+        (event.personal_relevance, event.personal_reason) =
+            crate::reader::relevance(event, interests.topics());
     }
 }
 
@@ -107,11 +117,18 @@ mod visitor_tests {
         }
         let profile = VisitorInterests::try_from("agents:100".to_owned()).unwrap();
         for interests in [None, Some(profile)] {
-            let result = store.list_events(&EventQuery {
-                interests, sort: Some("score".into()), ..Default::default()
-            }).await.unwrap();
-            assert_eq!(result.iter().map(|event| event.id).collect::<Vec<_>>(),
-                vec![Uuid::from_u128(2), Uuid::from_u128(1)]);
+            let result = store
+                .list_events(&EventQuery {
+                    interests,
+                    sort: Some("score".into()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                result.iter().map(|event| event.id).collect::<Vec<_>>(),
+                vec![Uuid::from_u128(2), Uuid::from_u128(1)]
+            );
         }
     }
 
@@ -124,7 +141,14 @@ mod visitor_tests {
             let mut state = store.state.write().await;
             state.events.truncate(2);
             for (index, event) in state.events.iter_mut().enumerate() {
-                event.topics = vec![if index == 0 { "心理与认知" } else { "AI 编程" }.into()];
+                event.topics = vec![
+                    if index == 0 {
+                        "心理与认知"
+                    } else {
+                        "AI 编程"
+                    }
+                    .into(),
+                ];
                 event.primary_topic = event.topics[0].clone();
                 event.event_type = "blog".into();
                 event.score.total = 50.0;
@@ -146,19 +170,44 @@ mod visitor_tests {
         let psychology = VisitorInterests::try_from("psychology:100".to_owned()).unwrap();
         let coding = VisitorInterests::try_from("coding:100".to_owned()).unwrap();
         for (profile, first) in [(&psychology, ids[0]), (&coding, ids[1])] {
-            let query = EventQuery { interests: Some(profile.clone()), limit: Some(1),
-                sort: Some("recommended".into()), ..Default::default() };
+            let query = EventQuery {
+                interests: Some(profile.clone()),
+                limit: Some(1),
+                sort: Some("recommended".into()),
+                ..Default::default()
+            };
             let items = store.list_events(&query).await.unwrap();
             assert_eq!(items[0].id, first);
-            let next = store.list_events(&EventQuery { offset: Some(1), ..query }).await.unwrap();
+            let next = store
+                .list_events(&EventQuery {
+                    offset: Some(1),
+                    ..query
+                })
+                .await
+                .unwrap();
             assert_ne!(next[0].id, first);
             let event = store.visitor_event(ids[0], profile).await.unwrap().unwrap();
-            assert!(!event.saved && !event.read && !event.seen && !event.opened && !event.not_interested);
+            assert!(
+                !event.saved
+                    && !event.read
+                    && !event.seen
+                    && !event.opened
+                    && !event.not_interested
+            );
             assert!(!event.personal_reason.contains("OWNER_INTEREST_SENTINEL"));
-            assert!(!store.visitor_brief(Utc::now(), profile).await.unwrap().is_snapshot);
+            assert!(
+                !store
+                    .visitor_brief(Utc::now(), profile)
+                    .await
+                    .unwrap()
+                    .is_snapshot
+            );
         }
         let state = store.state.read().await;
-        assert_eq!(serde_json::json!([state.events, state.topics, state.briefs]), before);
+        assert_eq!(
+            serde_json::json!([state.events, state.topics, state.briefs]),
+            before
+        );
     }
 }
 
@@ -169,27 +218,34 @@ impl Store for MemoryStore {
         let q = query.q.as_deref().unwrap_or_default().to_lowercase();
         let mut candidates = state.events.clone();
         if let Some(interests) = &query.interests {
-            for event in &mut candidates { Self::apply_visitor(event, interests); }
+            for event in &mut candidates {
+                Self::apply_visitor(event, interests);
+            }
         }
         let mut items: Vec<_> = candidates
             .into_iter()
             .filter(|event| {
                 query.topic.as_ref().is_none_or(|topic| {
-                    event
-                        .topics
-                        .iter()
-                        .any(|item| crate::reader::topic_alias(item).eq_ignore_ascii_case(crate::reader::topic_alias(topic)))
+                    event.topics.iter().any(|item| {
+                        crate::reader::topic_alias(item)
+                            .eq_ignore_ascii_case(crate::reader::topic_alias(topic))
+                    })
                 }) && event.not_interested == query.not_interested.unwrap_or(false)
-                    && query.facet.as_ref().is_none_or(|facet| event.topics.contains(facet))
+                    && query
+                        .facet
+                        .as_ref()
+                        .is_none_or(|facet| event.topics.contains(facet))
                     && (query.include_engineering.unwrap_or(false)
                         || query.saved == Some(true)
                         || query.not_interested == Some(true)
                         || !crate::reader::is_opaque_engineering_release(event))
-                    && query
-                        .kind
-                        .as_ref()
-                        .is_none_or(|kind| &event.event_type == kind
-                            || event.editorial.as_ref().is_some_and(|p| &p.content_kind == kind))
+                    && query.kind.as_ref().is_none_or(|kind| {
+                        &event.event_type == kind
+                            || event
+                                .editorial
+                                .as_ref()
+                                .is_some_and(|p| &p.content_kind == kind)
+                    })
                     && (query.tier.is_none() && query.source.is_none() && query.technical.is_none()
                         || event.evidence.iter().any(|item| {
                             query
@@ -219,7 +275,10 @@ impl Store for MemoryStore {
                     && query.later.is_none_or(|later| event.later == later)
                     && (q.is_empty()
                         || event.title.to_lowercase().contains(&q)
-                        || event.display_title.as_ref().is_some_and(|title| title.to_lowercase().contains(&q))
+                        || event
+                            .display_title
+                            .as_ref()
+                            .is_some_and(|title| title.to_lowercase().contains(&q))
                         || event.summary.to_lowercase().contains(&q)
                         || event
                             .topics
@@ -228,14 +287,24 @@ impl Store for MemoryStore {
             })
             .collect();
         for event in &mut items {
-            (event.personal_relevance, event.personal_reason) =
-                crate::reader::relevance(event, query.interests.as_ref().map_or(state.topics.as_slice(), VisitorInterests::topics));
+            (event.personal_relevance, event.personal_reason) = crate::reader::relevance(
+                event,
+                query
+                    .interests
+                    .as_ref()
+                    .map_or(state.topics.as_slice(), VisitorInterests::topics),
+            );
         }
         if query.sort.as_deref() == Some("newest") {
             items.sort_by(|a, b| b.published_at.cmp(&a.published_at).then(a.id.cmp(&b.id)));
         } else if query.sort.as_deref() == Some("score") {
-            items.sort_by(|a, b| b.score.total.total_cmp(&a.score.total)
-                .then(b.published_at.cmp(&a.published_at)).then(a.id.cmp(&b.id)));
+            items.sort_by(|a, b| {
+                b.score
+                    .total
+                    .total_cmp(&a.score.total)
+                    .then(b.published_at.cmp(&a.published_at))
+                    .then(a.id.cmp(&b.id))
+            });
         } else {
             crate::reader::sort_candidates(&mut items, query.as_of.unwrap_or_else(Utc::now));
         }
@@ -252,11 +321,19 @@ impl Store for MemoryStore {
     async fn visitor_event(&self, id: Uuid, interests: &VisitorInterests) -> Result<Option<Event>> {
         let state = self.state.read().await;
         let mut events = state.events.clone();
-        for event in &mut events { Self::apply_visitor(event, interests); }
+        for event in &mut events {
+            Self::apply_visitor(event, interests);
+        }
         let mut event = events.iter().find(|event| event.id == id).cloned();
         if let Some(event) = &mut event {
-            let records: Vec<_> = events.iter().map(crate::coverage::Record::from_event).collect();
-            if let Some(group) = crate::coverage::groups(&records, &[id], Utc::now()).into_iter().next() {
+            let records: Vec<_> = events
+                .iter()
+                .map(crate::coverage::Record::from_event)
+                .collect();
+            if let Some(group) = crate::coverage::groups(&records, &[id], Utc::now())
+                .into_iter()
+                .next()
+            {
                 crate::coverage::apply(event, group.bundle);
             }
         }
@@ -301,7 +378,11 @@ impl Store for MemoryStore {
         }
         if let Some(value) = input.not_interested {
             event.not_interested = value;
-            event.not_interested_reason = if value { input.not_interested_reason } else { None };
+            event.not_interested_reason = if value {
+                input.not_interested_reason
+            } else {
+                None
+            };
             if value {
                 event.saved = false;
             }
@@ -343,12 +424,21 @@ impl Store for MemoryStore {
         ))
     }
 
-    async fn visitor_brief(&self, cutoff: DateTime<Utc>, interests: &VisitorInterests) -> Result<DailyBrief> {
+    async fn visitor_brief(
+        &self,
+        cutoff: DateTime<Utc>,
+        interests: &VisitorInterests,
+    ) -> Result<DailyBrief> {
         let mut events = self.state.read().await.events.clone();
-        for event in &mut events { Self::apply_visitor(event, interests); }
+        for event in &mut events {
+            Self::apply_visitor(event, interests);
+        }
         events.retain(|event| crate::reader::brief_qualified(event, cutoff));
         crate::reader::sort_candidates(&mut events, cutoff);
-        Ok(crate::reader::select_brief(crate::coverage::rollup_events(events, cutoff), cutoff))
+        Ok(crate::reader::select_brief(
+            crate::coverage::rollup_events(events, cutoff),
+            cutoff,
+        ))
     }
     async fn brief(&self, date: NaiveDate, persist: bool) -> Result<Option<DailyBrief>> {
         let mut state = self.state.write().await;
@@ -367,7 +457,9 @@ impl Store for MemoryStore {
             brief.items =
                 crate::coverage::rollup_release_snapshots(brief.items, brief.generated_at);
             for section in &mut brief.sections {
-                section.event_ids.retain(|id| brief.items.iter().any(|e| e.id == *id));
+                section
+                    .event_ids
+                    .retain(|id| brief.items.iter().any(|e| e.id == *id));
             }
             brief.sections.retain(|s| !s.event_ids.is_empty());
             return Ok(Some(brief));
@@ -508,11 +600,24 @@ fn event(
     Event {
         editorial: Some(crate::models::Editorial {
             policy_version: "demo-article-value-v1".into(),
-            content_kind: match kind { "paper" => "research", "model" | "repository" => "metadata",
-                "release" => "release", "discussion" => "discussion", _ => "analysis" }.into(),
-            value_score: if matches!(kind,"model" | "repository") { 0.0 } else { 75.0 },
+            content_kind: match kind {
+                "paper" => "research",
+                "model" | "repository" => "metadata",
+                "release" => "release",
+                "discussion" => "discussion",
+                _ => "analysis",
+            }
+            .into(),
+            value_score: if matches!(kind, "model" | "repository") {
+                0.0
+            } else {
+                75.0
+            },
             reason: "演示选文规则样本，不代表真实文章分类或价值判断。".into(),
-            brief_eligible: !matches!(kind,"model" | "repository"),
+            brief_eligible: !matches!(kind, "model" | "repository"),
+            significance: None,
+            source_role: None,
+            significance_basis: None,
         }),
         display_title: None,
         not_interested_reason: None,
@@ -524,7 +629,10 @@ fn event(
         summary: summary.into(),
         importance: importance.into(),
         primary_topic: crate::reader::topic_alias(topic).into(),
-        topics: topics.iter().map(|value| crate::reader::topic_alias(value).to_string()).collect(),
+        topics: topics
+            .iter()
+            .map(|value| crate::reader::topic_alias(value).to_string())
+            .collect(),
         event_type: kind.into(),
         first_seen_at: Utc::now() - Duration::hours(hours),
         updated_at: Utc::now() - Duration::hours(hours / 2),
@@ -883,10 +991,13 @@ mod tests {
             original = event.title.clone();
             event.display_title = Some("独立中文阅读标题".into());
         }
-        let items = store.list_events(&EventQuery {
-            q: Some("独立中文阅读标题".into()),
-            ..Default::default()
-        }).await.unwrap();
+        let items = store
+            .list_events(&EventQuery {
+                q: Some("独立中文阅读标题".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, id);
         assert_eq!(items[0].title, original);

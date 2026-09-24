@@ -1,16 +1,16 @@
 import { Tab, TabList } from "@fluentui/react-components";
+import { BookmarkRegular, SearchRegular } from "@fluentui/react-icons";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
-import { EventCard } from "../components/EventCard";
+import { EmptyState } from "../components/EmptyState";
 import { EventRow } from "../components/EventRow";
 import { EventPreviewPane } from "../components/EventPreviewPane";
 import { TopicExplorer } from "../components/TopicExplorer";
 import { useExposure } from "../components/useExposure";
-import { ErrorNotice, Notice } from "../components/Feedback";
+import { ErrorNotice } from "../components/Feedback";
 import { PageHeader } from "../components/PageHeader";
-import { useStyles } from "../styles";
 import { useReadingWorkspace } from "../components/useReadingWorkspace";
 import { refreshOutcome } from "../editorial";
 import type { Event } from "../types";
@@ -19,7 +19,6 @@ import { ReaderButton } from "../components/ReaderControls";
 import { RadarControls, RadarFilterChips, radarView, type RadarFilterState } from "../components/RadarControls";
 
 export function RadarPage({ savedOnly = false }: { savedOnly?: boolean }) {
-  const styles=useStyles();
   const viewTabsId=useId();
   const [params,setParams]=useSearchParams();
   const view=radarView(params.get("view"));
@@ -76,26 +75,29 @@ export function RadarPage({ savedOnly = false }: { savedOnly?: boolean }) {
     }
   },[asOf,scope,query.data,query.isFetching,query.error]);
   return <div className="ns-editorial-page ns-radar-page">
-    <PageHeader compact eyebrow={savedOnly?"Library":"Reader desk"} title={savedOnly?"阅读清单":"新闻雷达"} />
-    {savedOnly && <TabList aria-label="阅读库" selectedValue={library} onTabSelect={(_,data)=>setLibrary(String(data.value))}><Tab value="saved">收藏</Tab><Tab value="feedback">不感兴趣 · 可撤销</Tab></TabList>}
+    <PageHeader eyebrow={savedOnly?"Your library":"News radar"} title={savedOnly?"收藏":"新闻雷达"}
+      subtitle={savedOnly?"收藏与“不感兴趣”记录会同步保存，不与其他读者共享，可随时撤销。":"用列表高效检索，或切换主题地图理解本批次的内容聚类。"}/>
+    {savedOnly && <TabList className="ns-tabs" aria-label="阅读库" selectedValue={library} onTabSelect={(_,data)=>{setLibrary(String(data.value));reader.close();}}><Tab value="saved">收藏</Tab><Tab value="feedback">不感兴趣 · 可撤销</Tab></TabList>}
     <RadarControls id={viewTabsId} filters={{search,topic,tier,sort,hours,includeEngineering}} topics={topics}
-      onChange={changeFilter} view={view} onViewChange={changeView} refresh={fresh} busy={query.isFetching} savedOnly={savedOnly}/>
-    <RadarFilterChips filters={{search:debouncedSearch,topic,tier,sort,hours,includeEngineering}} onChange={changeFilter} reset={reset} defaultHours={savedOnly?"0":"72"}/>
+      onChange={changeFilter} view={view} onViewChange={changeView} refresh={fresh} reset={reset} busy={query.isFetching} savedOnly={savedOnly}/>
+    <RadarFilterChips filters={{search:debouncedSearch,topic,tier,sort,hours,includeEngineering}} onChange={changeFilter} defaultHours={savedOnly?"0":"72"}/>
     {outcome&&<p className="ns-refresh-outcome" role="status">{outcome}</p>}
     {interests.error && <ErrorNotice title="主题读取失败" error={interests.error} retry={()=>void interests.refetch()} />}
     {exposure.error && <ErrorNotice title="浏览记录未保存，本次浏览不会用于减少重复推荐" error={exposure.error} />}
     {query.error && <ErrorNotice title="新闻列表加载失败" error={query.error} retry={()=>void query.refetch()} />}
-    <div id={`${viewTabsId}-panel`} role="tabpanel" aria-labelledby={`${viewTabsId}-${view}`}>
+    <div id={`${viewTabsId}-panel`} role={savedOnly?undefined:"tabpanel"} aria-labelledby={savedOnly?undefined:`${viewTabsId}-${view}`}>
     {view==="topics" && !savedOnly ? <TopicExplorer hours={hours} search={debouncedSearch} tier={tier} topic={topic} asOf={asOf} reader={reader} includeEngineering={includeEngineering} sort={sort}/> : <>
-      {query.isLoading ? <LoadingStatus>正在读取当前筛选的新闻…</LoadingStatus> : query.data&&<p className="ns-result-count" role="status">已加载 {items.length} {savedOnly?"条":"组 / 单篇"}{query.hasNextPage?"，还有更多":""} · 本次顺序固定</p>}
-      <div className={`${reader.selectedId ? styles.feedWithPreview : ""} ns-reader-workspace${reader.selectedId?" ns-reader-open":""}`}>
-        <div ref={exposure.container} aria-busy={query.isLoading} className={query.isLoading||!items.length?undefined:view==="cards"?styles.grid:styles.listSurface}>
-          {query.isLoading?<ReaderSkeleton variant={view==="cards"?"cards":"rows"} count={5}/>:items.map(event=>view==="cards"?<EventCard key={event.id} event={event} selected={event.id===reader.selectedId} onOpen={(item,opener)=>reader.open(item.id,opener)} onOpenRelated={reader.open} />:<EventRow key={event.id} event={event} selected={event.id===reader.selectedId} onOpen={(item,opener)=>reader.open(item.id,opener)} onOpenRelated={reader.open} />)}
+      {query.isLoading ? <LoadingStatus>正在读取当前筛选的新闻…</LoadingStatus> : query.data&&!!items.length&&<p className="ns-result-count" role="status">已加载 {items.length} {savedOnly?"条":"组 / 单篇"}{query.hasNextPage?"，还有更多":""} · 本次顺序固定</p>}
+      <div className={`ns-reader-workspace${reader.selectedId?" ns-reader-open":""}`}>
+        <div ref={exposure.container} aria-busy={query.isLoading} className={query.isLoading||!items.length?undefined:"ns-reader-list ns-article-list"}>
+          {query.isLoading?<ReaderSkeleton variant="rows" count={5}/>:items.map(event=><EventRow key={event.id} event={event} selected={event.id===reader.selectedId} onOpen={(item,opener)=>reader.open(item.id,opener)} onOpenRelated={reader.open} />)}
         </div>
-        {reader.selectedId && <div className={`${styles.previewSlot} ns-preview-slot`}>{(() => { const index = items.findIndex(event => event.id === reader.selectedId); return <EventPreviewPane eventId={reader.selectedId} preview={items[index]} onClose={reader.close} onPrevious={index > 0 ? () => reader.select(items[index - 1].id) : undefined} onNext={index >= 0 && index < items.length - 1 ? () => reader.select(items[index + 1].id) : undefined} editionNote={reader.editionNote??(savedOnly?"这是收藏库当前保存的条目；打开状态只记录这篇文章。":undefined)} />; })()}</div>}
+        {reader.selectedId && <div className="ns-preview-slot">{(() => { const index = items.findIndex(event => event.id === reader.selectedId); return <EventPreviewPane eventId={reader.selectedId} preview={items[index]} onClose={reader.close} onPrevious={index > 0 ? () => reader.select(items[index - 1].id) : undefined} onNext={index >= 0 && index < items.length - 1 ? () => reader.select(items[index + 1].id) : undefined} editionNote={reader.editionNote??(savedOnly?"这是收藏库当前保存的条目；打开状态只记录这篇文章。":undefined)} />; })()}</div>}
       </div>
-      {!query.isLoading && !query.error && !items.length && <Notice>当前范围没有匹配内容。可扩大时间范围、清除筛选，或采集最新新闻；不会用旧新闻伪装今日更新。</Notice>}
-      {query.hasNextPage && <div className={styles.actions}><ReaderButton disabled={query.isFetching} onClick={()=>void query.fetchNextPage()}>加载更多</ReaderButton></div>}
+      {!query.isLoading && !query.error && !items.length && (savedOnly
+        ? <EmptyState icon={<BookmarkRegular/>} title={library==="saved"?"还没有收藏":"没有标记为不感兴趣的内容"}>{library==="saved"?"在文章列表或阅读器中点击收藏，稍后从这里继续。":"标记为不感兴趣的内容会出现在这里，可随时撤销。"}</EmptyState>
+        : <EmptyState icon={<SearchRegular/>} title="没有符合条件的内容" actions={<ReaderButton onClick={reset}>清除筛选</ReaderButton>}>清除搜索或放宽筛选条件；不会用旧新闻伪装今日更新。</EmptyState>)}
+      {query.hasNextPage && <div className="ns-load-more"><ReaderButton disabled={query.isFetching} onClick={()=>void query.fetchNextPage()}>{query.isFetchingNextPage?"正在加载…":"加载更多"}</ReaderButton></div>}
     </>}
     </div>
   </div>;

@@ -1,3 +1,4 @@
+use crate::scoped_db::ScopedDb;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -8,7 +9,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
+use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
@@ -37,7 +38,10 @@ pub fn validate_x_post_urls(profile: &str, urls: &[String]) -> Result<Vec<String
             bail!("X 原帖链接不能超过2048字节");
         }
         let mut input = Url::parse(value.trim())?;
-        if input.query_pairs().any(|(key, _)| !matches!(key.as_ref(), "s" | "t" | "ref_src" | "ref_url")) {
+        if input
+            .query_pairs()
+            .any(|(key, _)| !matches!(key.as_ref(), "s" | "t" | "ref_src" | "ref_url"))
+        {
             bail!("X 原帖链接包含不支持的参数");
         }
         input.set_query(None);
@@ -56,9 +60,9 @@ use crate::{
         plain_text, podcast_excerpt, publisher_domain, score_event,
     },
     reading_context::{
-        CommentsStatus, FeedContext, ReadingComment, ReadingContext, ReadingContextKind, ReadingContextStatus, context_for_item,
-        extract_publisher_article, normalize_podcast_context, parse_feed_contexts,
-        text_material_fingerprint,
+        CommentsStatus, FeedContext, ReadingComment, ReadingContext, ReadingContextKind,
+        ReadingContextStatus, context_for_item, extract_publisher_article,
+        normalize_podcast_context, parse_feed_contexts, text_material_fingerprint,
     },
 };
 
@@ -318,7 +322,11 @@ impl FeedAdapter {
                 request = request.header(IF_MODIFIED_SINCE, last_modified);
             }
             let mut response = request.send().await.context("feed request failed")?;
-            if matches!(adapter, "publisher_page" | "reddit_comment_atom" | "x_oembed") && response.status().is_redirection() {
+            if matches!(
+                adapter,
+                "publisher_page" | "reddit_comment_atom" | "x_oembed"
+            ) && response.status().is_redirection()
+            {
                 bail!("publisher-page redirects are not followed");
             }
             if response.status().is_redirection() && response.status() != StatusCode::NOT_MODIFIED {
@@ -430,8 +438,11 @@ impl FeedAdapter {
                 etag: None,
                 last_modified: None,
             };
-            let BoundedResponse::Body { bytes, content_type, .. } =
-                self.fetch_bounded(&robots, "publisher_page").await?
+            let BoundedResponse::Body {
+                bytes,
+                content_type,
+                ..
+            } = self.fetch_bounded(&robots, "publisher_page").await?
             else {
                 bail!("Reddit robots policy could not be checked");
             };
@@ -442,48 +453,89 @@ impl FeedAdapter {
                 etag: None,
                 last_modified: None,
             };
-            let BoundedResponse::Body { bytes, content_type, .. } =
-                self.fetch_bounded(&source, "reddit_comment_atom").await?
+            let BoundedResponse::Body {
+                bytes,
+                content_type,
+                ..
+            } = self.fetch_bounded(&source, "reddit_comment_atom").await?
             else {
                 bail!("Reddit comment feed did not return a body");
             };
-            if !content_type.as_deref().is_some_and(|value| matches!(
-                value.split(';').next().unwrap_or_default().trim(),
-                "application/atom+xml" | "application/xml" | "text/xml"
-            )) {
+            if !content_type.as_deref().is_some_and(|value| {
+                matches!(
+                    value.split(';').next().unwrap_or_default().trim(),
+                    "application/atom+xml" | "application/xml" | "text/xml"
+                )
+            }) {
                 bail!("Reddit comment feed returned a non-Atom content type");
             }
             Ok(bytes)
-        }).await.context("Reddit comment acquisition timed out")?
+        })
+        .await
+        .context("Reddit comment acquisition timed out")?
     }
 
-    async fn fetch_x_registered_posts(&self, profile: &str, urls: &[String]) -> Result<FetchOutcome> {
+    async fn fetch_x_registered_posts(
+        &self,
+        profile: &str,
+        urls: &[String],
+    ) -> Result<FetchOutcome> {
         let urls = validate_x_post_urls(profile, urls)?;
         tokio::time::timeout(Duration::from_secs(90), async {
             let mut items = Vec::new();
             for original in &urls {
                 let mut endpoint = Url::parse("https://publish.x.com/oembed")?;
-                endpoint.query_pairs_mut().append_pair("url", original)
-                    .append_pair("omit_script", "true").append_pair("hide_thread", "true").append_pair("lang", "en");
-                let source = AdapterSource { endpoint: endpoint.to_string(), etag: None, last_modified: None };
-                let BoundedResponse::Body { bytes, content_type, .. } = self.fetch_bounded(&source, "x_oembed").await?
-                else { bail!("X oEmbed did not return a response body"); };
-                if !content_type.as_deref().is_some_and(|value|
-                    value.split(';').next().unwrap_or_default().trim() == "application/json")
-                {
+                endpoint
+                    .query_pairs_mut()
+                    .append_pair("url", original)
+                    .append_pair("omit_script", "true")
+                    .append_pair("hide_thread", "true")
+                    .append_pair("lang", "en");
+                let source = AdapterSource {
+                    endpoint: endpoint.to_string(),
+                    etag: None,
+                    last_modified: None,
+                };
+                let BoundedResponse::Body {
+                    bytes,
+                    content_type,
+                    ..
+                } = self.fetch_bounded(&source, "x_oembed").await?
+                else {
+                    bail!("X oEmbed did not return a response body");
+                };
+                if !content_type.as_deref().is_some_and(|value| {
+                    value.split(';').next().unwrap_or_default().trim() == "application/json"
+                }) {
                     bail!("X oEmbed returned a non-JSON response for {original}");
                 }
-                items.push(crate::x_public_posts::parse_oembed(&bytes, &Url::parse(original)?)?);
+                items.push(crate::x_public_posts::parse_oembed(
+                    &bytes,
+                    &Url::parse(original)?,
+                )?);
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
-            Ok(FetchOutcome::Items { items, etag: None, last_modified: None })
-        }).await.context("registered X post preview batch timed out")?
+            Ok(FetchOutcome::Items {
+                items,
+                etag: None,
+                last_modified: None,
+            })
+        })
+        .await
+        .context("registered X post preview batch timed out")?
     }
 
-    fn require_comment_policy(bytes: &[u8], content_type: Option<&str>, endpoint: &Url) -> Result<()> {
+    fn require_comment_policy(
+        bytes: &[u8],
+        content_type: Option<&str>,
+        endpoint: &Url,
+    ) -> Result<()> {
         let policy = std::str::from_utf8(bytes).context("Reddit robots policy is not UTF-8")?;
-        if !content_type.is_some_and(|value| value.split(';').next().unwrap_or_default().trim() == "text/plain")
-            || !policy.lines().any(|line| line.trim().to_ascii_lowercase().starts_with("user-agent:"))
+        if !content_type
+            .is_some_and(|value| value.split(';').next().unwrap_or_default().trim() == "text/plain")
+            || !policy
+                .lines()
+                .any(|line| line.trim().to_ascii_lowercase().starts_with("user-agent:"))
         {
             bail!("Reddit did not provide a recognizable robots policy");
         }
@@ -502,15 +554,19 @@ impl FeedAdapter {
         let bytes = self.fetch_public_comment_feed(&endpoint).await?;
         let feed = crate::reddit_comments::parse_public_top_comment_feed(&bytes, &endpoint)?;
         let mut updated = context.clone();
-        updated.comments = feed.comments.iter().map(|comment| ReadingComment {
-            id: comment.id.clone(),
-            body: comment.body.clone(),
-            score: comment.score.map(i64::from),
-            url: Some(comment.permalink.clone()),
-            author: comment.author.as_ref().map(|author| author.name.clone()),
-            published_at: Some(comment.published_at),
-            truncated: comment.truncated,
-        }).collect();
+        updated.comments = feed
+            .comments
+            .iter()
+            .map(|comment| ReadingComment {
+                id: comment.id.clone(),
+                body: comment.body.clone(),
+                score: comment.score.map(i64::from),
+                url: Some(comment.permalink.clone()),
+                author: comment.author.as_ref().map(|author| author.name.clone()),
+                published_at: Some(comment.published_at),
+                truncated: comment.truncated,
+            })
+            .collect();
         updated.comments_status = CommentsStatus::Available;
         updated.fetched_at = Some(Utc::now());
         Ok(Some(updated))
@@ -807,7 +863,7 @@ fn normalize_entry(
     if published_at
         .is_some_and(|date| date > Utc::now() + chrono::Duration::minutes(PUBLICATION_SKEW_MINUTES))
     {
-        tracing::warn!(source = %endpoint, %title, "skipping future-dated feed entry");
+        tracing::warn!("skipping future-dated feed entry");
         return Ok(None);
     }
     let content_hash = fingerprint(
@@ -989,10 +1045,16 @@ fn near_duplicate(
 
 #[derive(Clone)]
 pub struct FeedWorker {
-    pool: PgPool,
+    pool: ScopedDb,
     adapter: Arc<FeedAdapter>,
     run_lock: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    test_adapter: Option<Arc<dyn SourceAdapter>>,
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("source authorization changed during refresh")]
+struct SourceAuthorizationChanged;
 
 struct ArticleContextUpdate {
     content_item_id: Uuid,
@@ -1005,41 +1067,150 @@ struct ArticleContextUpdate {
 }
 
 impl FeedWorker {
-    pub fn new(pool: PgPool, client: Client) -> Self {
+    pub fn new(pool: impl Into<ScopedDb>, client: Client) -> Self {
         Self {
-            pool,
+            pool: pool.into(),
             adapter: Arc::new(FeedAdapter::new(client)),
             run_lock: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            test_adapter: None,
         }
     }
 
+    pub fn scoped(&self, pool: ScopedDb) -> Self {
+        Self {
+            pool,
+            adapter: self.adapter.clone(),
+            run_lock: self.run_lock.clone(),
+            #[cfg(test)]
+            test_adapter: self.test_adapter.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_adapter(mut self, adapter: Arc<dyn SourceAdapter>) -> Self {
+        self.test_adapter = Some(adapter);
+        self
+    }
+
     pub async fn run_due(&self) -> Result<IngestionReport> {
-        self.run(false, None, None).await
+        self.run(false, None, None, false).await
     }
     pub async fn run_all(&self) -> Result<IngestionReport> {
-        self.run(true, None, None).await
+        self.run(true, None, None, false).await
     }
     pub async fn run_source(&self, id: Uuid) -> Result<IngestionReport> {
-        self.run(true, Some(id), None).await
+        self.run(true, Some(id), None, false).await
+    }
+
+    pub async fn run_authorized_source(&self, id: Uuid, actor: &str) -> Result<IngestionReport> {
+        let _guard = self.run_lock.lock().await;
+        let source = sqlx::query("SELECT s.*,COALESCE(p.official_domains,'[]'::jsonb) AS official_domains
+            FROM sources s LEFT JOIN publishers p ON p.id=s.publisher_id
+            LEFT JOIN user_source_overrides o ON o.source_id=s.id AND o.user_id=$2
+            WHERE s.id=$1 AND (s.owner_user_id IS NULL OR s.owner_user_id=$2)
+              AND COALESCE(o.enabled,s.lifecycle_status IN('stable','observing'))
+              AND s.adapter_type=ANY($3)
+              AND (s.cache_meta->>'retryAfter' IS NULL OR (s.cache_meta->>'retryAfter')::timestamptz<=now())")
+            .bind(id).bind(actor).bind(supported_adapters()).fetch_optional(&self.pool).await?
+            .context("source unavailable or cooling down")?;
+        let counts = self.process_source(source, Some(actor)).await?;
+        Ok(IngestionReport {
+            attempted: 1,
+            succeeded: 1,
+            ingested: counts.ingested,
+            updated: counts.updated,
+            ..Default::default()
+        })
+    }
+
+    pub async fn run_cloud_due(&self) -> Result<()> {
+        self.run(false, None, None, true).await?;
+        // Following schedules never mutate the shared catalog. One reader can
+        // request a shorter interval without pausing collection for others.
+        let rows=sqlx::query("SELECT o.user_id,o.source_id FROM user_source_overrides o
+            JOIN sources s ON s.id=o.source_id JOIN app_users u ON u.id::text=o.user_id
+            WHERE s.owner_user_id IS NULL AND o.enabled IS DISTINCT FROM false
+              AND u.last_seen_at>now()-interval '30 days'
+              AND (o.schedule_minutes IS NOT NULL OR o.enabled=true AND s.lifecycle_status='paused')
+              AND NOT EXISTS(SELECT FROM fetch_runs f WHERE f.source_id=s.id
+                AND f.started_at+make_interval(mins=>GREATEST(COALESCE(o.schedule_minutes,s.schedule_minutes),15))>now())
+            ORDER BY o.updated_at,o.source_id LIMIT 100").fetch_all(&self.pool).await?;
+        for row in rows {
+            let id: Uuid = row.try_get("source_id")?;
+            let actor: String = row.try_get("user_id")?;
+            if self.run_authorized_source(id, &actor).await.is_err() {
+                tracing::warn!(source_id=%id,"following schedule collection failed");
+            }
+        }
+        Ok(())
     }
 
     pub async fn x_post_urls(&self, id: Uuid) -> Result<Vec<String>> {
+        let id = self.x_registry_source(id).await?;
         let row = sqlx::query("SELECT endpoint,compliance FROM sources WHERE id=$1 AND adapter_type='x_public_preview'")
             .bind(id).fetch_optional(&self.pool).await?.context("X preview source not found")?;
         let compliance: serde_json::Value = row.try_get("compliance")?;
-        let urls: Vec<String> = serde_json::from_value(compliance.get("originalPostUrls").cloned().context("X post registry is missing")?)?;
-        validate_x_post_urls(&row.try_get::<String,_>("endpoint")?, &urls)
+        let urls: Vec<String> = serde_json::from_value(
+            compliance
+                .get("originalPostUrls")
+                .cloned()
+                .context("X post registry is missing")?,
+        )?;
+        validate_x_post_urls(&row.try_get::<String, _>("endpoint")?, &urls)
+    }
+
+    pub async fn x_registry_source(&self, id: Uuid) -> Result<Uuid> {
+        sqlx::query_scalar(
+            "SELECT COALESCE((
+            SELECT own.id FROM sources own WHERE own.owner_user_id=scoutnews_actor()
+              AND own.adapter_type=s.adapter_type AND own.endpoint=s.endpoint),s.id)
+            FROM sources s WHERE s.id=$1 AND s.adapter_type='x_public_preview'",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        .context("X preview source not found")
     }
 
     pub async fn save_x_post_urls(&self, id: Uuid, urls: &[String]) -> Result<Vec<String>> {
+        let original = id;
+        let mut id = self.x_registry_source(id).await?;
         let mut tx = self.pool.begin().await?;
-        let row = sqlx::query("SELECT endpoint,compliance FROM sources WHERE id=$1 AND adapter_type='x_public_preview' FOR UPDATE")
+        let row = sqlx::query("SELECT endpoint,compliance,owner_user_id FROM sources WHERE id=$1 AND adapter_type='x_public_preview'")
             .bind(id).fetch_optional(&mut *tx).await?.context("X preview source not found")?;
-        let urls = validate_x_post_urls(&row.try_get::<String,_>("endpoint")?, urls)?;
+        let urls = validate_x_post_urls(&row.try_get::<String, _>("endpoint")?, urls)?;
         let before: serde_json::Value = row.try_get("compliance")?;
+        if self.pool.actor() != "local"
+            && row.try_get::<Option<String>, _>("owner_user_id")?.is_none()
+        {
+            // Registering personal posts against a catalog profile creates a
+            // private collection realm, never private evidence on public events.
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext('source-cap:'||scoutnews_actor()))")
+                .execute(&mut *tx)
+                .await?;
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM sources WHERE owner_user_id=scoutnews_actor()",
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+            anyhow::ensure!(count < 100, "custom source limit reached");
+            id=sqlx::query_scalar("INSERT INTO sources(id,name,endpoint,content_type,adapter_type,tier,
+                lifecycle_status,schedule_minutes,compliance,owner_user_id)
+                SELECT $2,name||' · 个人原帖',endpoint,content_type,adapter_type,tier,'observing',schedule_minutes,
+                  jsonb_build_object('coverage','registered_posts_only','observationRequired',true,'originalPostUrls',$3::jsonb),scoutnews_actor()
+                FROM sources WHERE id=$1
+                ON CONFLICT(owner_user_id,adapter_type,endpoint) DO UPDATE
+                SET compliance=sources.compliance||jsonb_build_object('originalPostUrls',$3::jsonb),updated_at=now() RETURNING id")
+                .bind(original).bind(Uuid::new_v4()).bind(serde_json::to_value(&urls)?)
+                .fetch_one(&mut *tx).await?;
+            sqlx::query("INSERT INTO source_topics(source_id,taxonomy_id,relevance,origin)
+                SELECT $1,taxonomy_id,relevance,'reader_following' FROM source_topics WHERE source_id=$2
+                ON CONFLICT DO NOTHING").bind(id).bind(original).execute(&mut *tx).await?;
+        }
         sqlx::query("UPDATE sources SET compliance=compliance || jsonb_build_object('originalPostUrls',$2::jsonb),updated_at=now() WHERE id=$1")
             .bind(id).bind(serde_json::to_value(&urls)?).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO admin_audits(id,actor,action,target_type,target_id,before_value,after_value,reason) VALUES($1,'local','x_post_registry_update','source',$2,$3,$4,'Owner registered original public X post links; not a timeline subscription')")
+        sqlx::query("INSERT INTO admin_audits(id,actor,action,target_type,target_id,before_value,after_value,reason) VALUES($1,scoutnews_actor(),'x_post_registry_update','source',$2,$3,$4,'Owner registered original public X post links; not a timeline subscription')")
             .bind(Uuid::new_v4()).bind(id.to_string()).bind(before.get("originalPostUrls"))
             .bind(serde_json::to_value(&urls)?).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -1048,6 +1219,15 @@ impl FeedWorker {
     /// Owner-only explicit enrichment of an existing event's exact evidence.
     /// This is intentionally not wired to public reader requests.
     pub async fn run_event_context_backfill(&self, event_id: Uuid) -> Result<IngestionReport> {
+        self.run_event_context_backfill_for_sources(event_id, None)
+            .await
+    }
+
+    pub async fn run_event_context_backfill_for_sources(
+        &self,
+        event_id: Uuid,
+        allowed_sources: Option<&[Uuid]>,
+    ) -> Result<IngestionReport> {
         let _guard = self.run_lock.lock().await;
         let rows = sqlx::query(r#"WITH candidates AS (
                 SELECT DISTINCT ON (s.id) ci.id AS content_item_id,s.id AS source_id,ci.canonical_url,ci.title,ci.metadata,
@@ -1057,10 +1237,12 @@ impl FeedWorker {
                 JOIN sources s ON s.id=ci.source_id LEFT JOIN publishers p ON p.id=s.publisher_id
                 WHERE ee.event_id=$1 AND EXISTS(SELECT 1 FROM events e WHERE e.id=$1 AND e.status='published')
                   AND s.lifecycle_status IN ('stable','observing')
+                  AND ($3::uuid[] IS NULL OR s.id=ANY($3))
                 ORDER BY s.id,ee.is_official DESC,ci.created_at,ci.id
             ) SELECT * FROM candidates ORDER BY is_official DESC,created_at,source_id LIMIT $2"#)
             .bind(event_id)
             .bind(MAX_PAGE_ENRICHMENTS_PER_SOURCE as i64)
+            .bind(allowed_sources)
             .fetch_all(&self.pool)
             .await?;
         if rows.is_empty() {
@@ -1080,16 +1262,22 @@ impl FeedWorker {
             let endpoint: String = row.try_get("endpoint")?;
             let title: String = row.try_get("title")?;
             let browser = crate::browser_articles::configured_for(&canonical_url);
-            let retry_key = if reddit { "commentsRetryAfter" } else { crate::browser_articles::retry_key(browser) };
+            let retry_key = if reddit {
+                "commentsRetryAfter"
+            } else {
+                crate::browser_articles::retry_key(browser)
+            };
             let domains: serde_json::Value = row.try_get("official_domains")?;
             let compliance: serde_json::Value = row.try_get("compliance")?;
-            if !reddit && !source_adapters::official_evidence_url(
-                &adapter,
-                &endpoint,
-                &canonical_url,
-                &domains,
-                &compliance,
-            ) {
+            if !reddit
+                && !source_adapters::official_evidence_url(
+                    &adapter,
+                    &endpoint,
+                    &canonical_url,
+                    &domains,
+                    &compliance,
+                )
+            {
                 continue;
             }
             report.attempted += 1;
@@ -1130,7 +1318,11 @@ impl FeedWorker {
                 .transpose()?
                 .unwrap_or_else(|| {
                     ReadingContext::from_feed(
-                        if reddit { ReadingContextKind::Post } else { ReadingContextKind::Article },
+                        if reddit {
+                            ReadingContextKind::Post
+                        } else {
+                            ReadingContextKind::Article
+                        },
                         canonical_url.clone(),
                         FeedContext {
                             body: metadata
@@ -1143,7 +1335,13 @@ impl FeedWorker {
                         Utc::now(),
                     )
                 });
-            if context.kind != if reddit { ReadingContextKind::Post } else { ReadingContextKind::Article } {
+            if context.kind
+                != if reddit {
+                    ReadingContextKind::Post
+                } else {
+                    ReadingContextKind::Article
+                }
+            {
                 report.failed += 1;
                 report
                     .errors
@@ -1151,9 +1349,13 @@ impl FeedWorker {
                 continue;
             }
             let result = if reddit {
-                self.adapter.fetch_reddit_comment_context(&canonical_url, &context).await
+                self.adapter
+                    .fetch_reddit_comment_context(&canonical_url, &context)
+                    .await
             } else {
-                self.adapter.fetch_publisher_page_context(&canonical_url, &context, &title, browser).await
+                self.adapter
+                    .fetch_publisher_page_context(&canonical_url, &context, &title, browser)
+                    .await
             };
             match result {
                 Ok(Some(updated))
@@ -1171,19 +1373,27 @@ impl FeedWorker {
                             canonical_url: canonical_url.clone(),
                             title: title.clone(),
                             context: updated,
-                            method: if reddit { "reddit_comment_atom" } else if browser { "browser" } else { "http" },
+                            method: if reddit {
+                                "reddit_comment_atom"
+                            } else if browser {
+                                "browser"
+                            } else {
+                                "http"
+                            },
                         });
                     }
                 }
                 Ok(_) => {
                     report.failed += 1;
-                    report.errors.push(format!(
-                        "{canonical_url}: 原站未允许读取或未提供可提取的文章正文；保留原有材料"
-                    ));
+                    report
+                        .errors
+                        .push("原站未允许读取或未提供可提取的文章正文；保留原有材料".into());
                 }
                 Err(error) => {
                     report.failed += 1;
-                    report.errors.push(format!("{canonical_url}: {error:#}"));
+                    report
+                        .errors
+                        .push("Reading context acquisition failed".into());
                     if let Some(until) = article_retry_after(&error) {
                         let source_id: Uuid = row.try_get("source_id")?;
                         retries
@@ -1194,7 +1404,7 @@ impl FeedWorker {
                     if let Some(until) = article_source_backoff(&error) {
                         retries.insert((row.try_get("source_id")?, "retryAfter".to_owned()), until);
                     }
-                    tracing::warn!(event_id = %event_id, url = %canonical_url, ?error,
+                    tracing::warn!(event_id = %event_id,
                         "event context backfill skipped; retaining persisted context");
                 }
             }
@@ -1253,7 +1463,10 @@ impl FeedWorker {
             report.updated += 1;
             if material_changed {
                 let ids: Vec<Uuid> = sqlx::query_scalar(
-                    "SELECT event_id FROM event_evidence WHERE content_item_id=$1",
+                    "SELECT ee.event_id FROM event_evidence ee
+                     JOIN events e ON e.id=ee.event_id
+                     JOIN content_items c ON c.id=ee.content_item_id
+                     WHERE c.id=$1 AND e.owner_user_id IS NOT DISTINCT FROM c.owner_user_id",
                 )
                 .bind(content_item_id)
                 .fetch_all(&mut *tx)
@@ -1272,7 +1485,7 @@ impl FeedWorker {
         Ok(report)
     }
     pub async fn run_daily(&self, since: DateTime<Utc>) -> Result<IngestionReport> {
-        self.run(true, None, Some(since)).await
+        self.run(true, None, Some(since), false).await
     }
 
     async fn run(
@@ -1280,12 +1493,13 @@ impl FeedWorker {
         force: bool,
         only_source: Option<Uuid>,
         daily_since: Option<DateTime<Utc>>,
+        private_only: bool,
     ) -> Result<IngestionReport> {
-        let _guard = self.run_lock.lock().await;
-        let sources = sqlx::query(r#"SELECT s.id,s.name,s.endpoint,s.content_type,s.adapter_type,s.tier,s.cache_meta,s.compliance,s.publisher_id,
+        let sources = sqlx::query(r#"SELECT s.id,s.name,s.endpoint,s.content_type,s.adapter_type,s.tier,s.cache_meta,s.compliance,s.publisher_id,s.owner_user_id,
                 COALESCE(p.official_domains,'[]'::jsonb) AS official_domains
             FROM sources s LEFT JOIN publishers p ON p.id=s.publisher_id
             WHERE s.lifecycle_status IN ('stable','observing')
+              AND (NOT $5 OR s.owner_user_id IS NOT NULL)
               AND s.adapter_type = ANY($3)
               AND ($2::uuid IS NULL OR s.id=$2)
               AND ($4::timestamptz IS NULL OR NOT EXISTS(SELECT 1 FROM fetch_runs f
@@ -1299,7 +1513,7 @@ impl FeedWorker {
                     WHEN 'anthropic_news' THEN 180 WHEN 'anthropic_research' THEN 180 WHEN 'anthropic_engineering' THEN 180
                     WHEN 'x_public_preview' THEN 1440 ELSE 1 END)) > now()))
             ORDER BY s.last_success_at ASC NULLS FIRST,s.name,s.id"#)
-            .bind(force).bind(only_source).bind(supported_adapters()).bind(daily_since).fetch_all(&self.pool).await?;
+            .bind(force).bind(only_source).bind(supported_adapters()).bind(daily_since).bind(private_only).fetch_all(&self.pool).await?;
         if sources.is_empty() && only_source.is_some() {
             bail!(
                 "source is missing, paused, in server-requested backoff, or has an unsupported adapter"
@@ -1310,30 +1524,38 @@ impl FeedWorker {
             ..Default::default()
         };
         for source in sources {
+            // Yield between sources so a large scheduled catalog cannot hold
+            // every reader's durable job behind a whole multi-hour batch.
+            let _guard = self.run_lock.lock().await;
             let source_name: String = source.try_get("name")?;
             let source_id: Uuid = source.try_get("id")?;
-            match self.process_source(source).await {
+            match self.process_source(source, None).await {
                 Ok(counts) => {
                     report.ingested += counts.ingested;
                     report.updated += counts.updated;
                     report.succeeded += 1;
                 }
                 Err(error) => {
-                    tracing::warn!(%source_id, %source_name, ?error, "source ingestion failed");
+                    tracing::warn!(%source_id, "source ingestion failed");
                     report.failed += 1;
-                    report.errors.push(format!("{source_name}: {error:#}"));
+                    let _ = (source_name, error);
+                    report
+                        .errors
+                        .push(format!("source {source_id}: collection failed"));
                 }
             }
         }
         Ok(report)
     }
 
-    async fn process_source(&self, row: PgRow) -> Result<ItemCounts> {
+    async fn process_source(&self, row: PgRow, actor: Option<&str>) -> Result<ItemCounts> {
         let source_id: Uuid = row.try_get("id")?;
         let run_id = Uuid::new_v4();
-        let result = self.process_source_inner(&row, source_id, run_id).await;
+        let result = self
+            .process_source_inner(&row, source_id, run_id, actor)
+            .await;
         if let Err(error) = &result {
-            let error_text = excerpt(&format!("{error:#}"), 2_000);
+            let error_text = "Collection failed; check source availability or retry later";
             // Deliberately outside the failed content transaction: parse and database
             // failures must both finish the run and update the source's health.
             let log = sqlx::query(r#"INSERT INTO fetch_runs(id,source_id,started_at,finished_at,status,error)
@@ -1343,24 +1565,32 @@ impl FeedWorker {
             let retry_after = if row.try_get::<String, _>("adapter_type")? == "x_public_preview" {
                 FeedAdapter::enrichment_retry_after(error)
             } else {
-                error.downcast_ref::<FetchBackoff>().map(|backoff| backoff.until)
+                error
+                    .downcast_ref::<FetchBackoff>()
+                    .map(|backoff| backoff.until)
             };
-            let mut backoff_meta = retry_after.map(|until| serde_json::json!({"retryAfter":until}))
+            let mut backoff_meta = retry_after
+                .map(|until| serde_json::json!({"retryAfter":until}))
                 .unwrap_or_else(|| serde_json::json!({}));
             if row.try_get::<String, _>("adapter_type")? == "x_public_preview" {
                 if let Some(backoff) = error.downcast_ref::<FetchBackoff>() {
                     backoff_meta["xProviderRetryAfter"] = serde_json::json!(backoff.until);
                 }
             }
-            let health = sqlx::query("UPDATE sources SET consecutive_failures=consecutive_failures+1,updated_at=now(),cache_meta=cache_meta || $2 WHERE id=$1")
-                .bind(source_id)
-                .bind(backoff_meta)
-                .execute(&self.pool).await;
+            let health = if error.is::<SourceAuthorizationChanged>() {
+                // A reader withdrawing consent is not a shared source failure.
+                Ok(None)
+            } else {
+                sqlx::query("UPDATE sources SET consecutive_failures=consecutive_failures+1,updated_at=now(),cache_meta=cache_meta || $2 WHERE id=$1")
+                    .bind(source_id).bind(backoff_meta).execute(&self.pool).await.map(Some)
+            };
             if let Err(log_error) = log {
-                tracing::error!(%source_id, ?log_error, "could not persist failed fetch run");
+                let _ = log_error;
+                tracing::error!(%source_id, "could not persist failed fetch run");
             }
             if let Err(health_error) = health {
-                tracing::error!(%source_id, ?health_error, "could not persist failed source health");
+                let _ = health_error;
+                tracing::error!(%source_id, "could not persist failed source health");
             }
         }
         result
@@ -1371,6 +1601,7 @@ impl FeedWorker {
         row: &PgRow,
         source_id: Uuid,
         run_id: Uuid,
+        actor: Option<&str>,
     ) -> Result<ItemCounts> {
         if row.try_get::<String, _>("adapter_type")? == "x_public_preview" {
             let provider_retry: Option<DateTime<Utc>> = sqlx::query_scalar(
@@ -1434,34 +1665,21 @@ impl FeedWorker {
                 .and_then(|value| value.as_str())
                 .map(str::to_owned),
         };
-        let outcome = if adapter == "x_public_preview" {
-            let compliance: serde_json::Value = row.try_get("compliance")?;
-            let urls: Vec<String> = serde_json::from_value(compliance.get("originalPostUrls").cloned()
-                .context("X source needs registered original post URLs; automatic profile crawling is not used")?)?;
-            self.adapter.fetch_x_registered_posts(&request.endpoint, &urls).await?
-        } else if matches!(adapter.as_str(), "rss" | "atom" | "github_release_atom") {
-            self.adapter.fetch(&request).await?
-        } else {
-            self.adapter.fetch_with_adapter(&request, &adapter).await?
-        };
+        let outcome = self.fetch_source(row, &request, &adapter).await?;
         let (outcome, article_backoffs) = self.enrich_feed_items(row, outcome).await?;
         let mut tx = self.pool.begin().await?;
         // Keep identity/upsert decisions atomic even if another local API process runs.
         sqlx::query("SELECT pg_advisory_xact_lock(736268,1)")
             .execute(&mut *tx)
             .await?;
-        let active: bool = sqlx::query_scalar(
-            "SELECT lifecycle_status IN ('stable','observing') FROM sources WHERE id=$1 FOR UPDATE",
-        )
-        .bind(source_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if !active {
-            bail!("source was paused during refresh");
-        }
+        recheck_source_authorization(&mut tx, row, actor).await?;
         if adapter == "x_public_preview" {
-            let current: serde_json::Value = sqlx::query_scalar("SELECT compliance->'originalPostUrls' FROM sources WHERE id=$1")
-                .bind(source_id).fetch_one(&mut *tx).await?;
+            let current: serde_json::Value = sqlx::query_scalar(
+                "SELECT compliance->'originalPostUrls' FROM sources WHERE id=$1",
+            )
+            .bind(source_id)
+            .fetch_one(&mut *tx)
+            .await?;
             let original: serde_json::Value = row.try_get("compliance")?;
             if original.get("originalPostUrls") != Some(&current) {
                 bail!("X 原帖清单在读取期间已更改，请重新刷新；本次结果未保存");
@@ -1503,6 +1721,30 @@ impl FeedWorker {
             .await?;
         tx.commit().await?;
         Ok(counts)
+    }
+
+    async fn fetch_source(
+        &self,
+        row: &PgRow,
+        request: &AdapterSource,
+        adapter: &str,
+    ) -> Result<FetchOutcome> {
+        #[cfg(test)]
+        if let Some(adapter) = &self.test_adapter {
+            return adapter.fetch(request).await;
+        }
+        if adapter == "x_public_preview" {
+            let compliance: serde_json::Value = row.try_get("compliance")?;
+            let urls: Vec<String> = serde_json::from_value(compliance.get("originalPostUrls").cloned()
+                .context("X source needs registered original post URLs; automatic profile crawling is not used")?)?;
+            self.adapter
+                .fetch_x_registered_posts(&request.endpoint, &urls)
+                .await
+        } else if matches!(adapter, "rss" | "atom" | "github_release_atom") {
+            self.adapter.fetch(request).await
+        } else {
+            self.adapter.fetch_with_adapter(request, adapter).await
+        }
     }
 
     async fn enrich_feed_items(
@@ -1618,7 +1860,7 @@ impl FeedWorker {
                     if let Some(until) = article_source_backoff(&error) {
                         backoffs.insert("retryAfter".to_owned(), until);
                     }
-                    tracing::warn!(url = %item.url, ?error, "publisher-page enrichment skipped; retaining feed context")
+                    tracing::warn!("publisher-page enrichment skipped; retaining feed context")
                 }
             }
         }
@@ -1631,6 +1873,42 @@ impl FeedWorker {
             backoffs,
         ))
     }
+}
+
+async fn recheck_source_authorization(
+    tx: &mut Transaction<'_, Postgres>,
+    original: &PgRow,
+    actor: Option<&str>,
+) -> Result<()> {
+    let id: Uuid = original.try_get("id")?;
+    // Lock the source before its override: this also serializes insertion of an
+    // absent override through its source FK. Hold both locks through persistence.
+    let Some(current) =
+        sqlx::query("SELECT owner_user_id,lifecycle_status FROM sources WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?
+    else {
+        return Err(SourceAuthorizationChanged.into());
+    };
+    let owner: Option<String> = current.try_get("owner_user_id")?;
+    if owner != original.try_get::<Option<String>, _>("owner_user_id")?
+        || actor.is_some_and(|actor| owner.as_deref().is_some_and(|owner| owner != actor))
+    {
+        return Err(SourceAuthorizationChanged.into());
+    }
+    let enabled = if let Some(actor) = actor {
+        sqlx::query_scalar::<_, Option<bool>>(
+            "SELECT enabled FROM user_source_overrides WHERE source_id=$1 AND user_id=$2 FOR UPDATE",
+        ).bind(id).bind(actor).fetch_optional(&mut **tx).await?.flatten()
+    } else {
+        None
+    };
+    let status: String = current.try_get("lifecycle_status")?;
+    if !enabled.unwrap_or(matches!(status.as_str(), "stable" | "observing")) {
+        return Err(SourceAuthorizationChanged.into());
+    }
+    Ok(())
 }
 
 fn article_source_backoff(error: &anyhow::Error) -> Option<DateTime<Utc>> {
@@ -1682,6 +1960,7 @@ async fn persist_item(
     item: &FetchedItem,
 ) -> Result<ItemCounts> {
     let source_id: Uuid = source.try_get("id")?;
+    let owner: Option<String> = source.try_get("owner_user_id")?;
     let content_type: String = source.try_get("content_type")?;
     let domains: serde_json::Value = source.try_get("official_domains")?;
     let publisher_id: Option<Uuid> = source.try_get("publisher_id")?;
@@ -1824,9 +2103,11 @@ async fn persist_item(
             .bind(source_id).bind(kind).bind(value).bind(content_id).execute(&mut **tx).await?;
     }
     let mut event_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT event_id FROM event_evidence WHERE content_item_id=$1 ORDER BY event_id",
+        "SELECT ee.event_id FROM event_evidence ee JOIN events e ON e.id=ee.event_id
+         WHERE ee.content_item_id=$1 AND e.owner_user_id IS NOT DISTINCT FROM $2 ORDER BY ee.event_id",
     )
     .bind(content_id)
+    .bind(&owner)
     .fetch_all(&mut **tx)
     .await?;
     let mut new_event = false;
@@ -1835,17 +2116,27 @@ async fn persist_item(
             r#"SELECT ee.event_id FROM event_evidence ee
             JOIN content_items ci ON ci.id=ee.content_item_id
             JOIN events e ON e.id=ee.event_id
-            WHERE ci.canonical_url=$1 OR EXISTS (SELECT 1 FROM content_item_identities identity
-                WHERE identity.content_item_id=ci.id AND identity.kind='url' AND identity.value=$1)
+            WHERE e.owner_user_id IS NOT DISTINCT FROM $2 AND
+              (ci.canonical_url=$1 OR EXISTS (SELECT 1 FROM content_item_identities identity
+                WHERE identity.content_item_id=ci.id AND identity.kind='url' AND identity.value=$1))
             ORDER BY e.created_at,e.id LIMIT 1"#,
         )
         .bind(&canonical)
+        .bind(&owner)
         .fetch_optional(&mut **tx)
         .await?;
         let event_id = match exact {
             Some(id) => Some(id),
             None if incoming_publication.is_some() => {
-                find_near_event(tx, &item.title, &canonical, published, &content_type).await?
+                find_near_event(
+                    tx,
+                    &item.title,
+                    &canonical,
+                    published,
+                    &content_type,
+                    owner.as_deref(),
+                )
+                .await?
             }
             None => None,
         };
@@ -1855,11 +2146,11 @@ async fn persist_item(
             let event_id = Uuid::new_v4();
             let topic: Option<String> = sqlx::query_scalar("SELECT tn.label FROM source_topics st JOIN taxonomy_nodes tn ON tn.id=st.taxonomy_id WHERE st.source_id=$1 ORDER BY st.relevance DESC,tn.id LIMIT 1")
                 .bind(source_id).fetch_optional(&mut **tx).await?;
-            sqlx::query(r#"INSERT INTO events(id,canonical_title,summary,importance,primary_topic,event_type,first_seen_at,updated_at)
-                VALUES($1,$2,$3,$4,$5,$6,$7,$8)"#)
+            sqlx::query(r#"INSERT INTO events(id,canonical_title,summary,importance,primary_topic,event_type,first_seen_at,updated_at,owner_user_id)
+                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)"#)
                 .bind(event_id).bind(&item.title).bind(item.summary.as_deref().unwrap_or("Feed 未提供摘要，请打开原文核验。"))
                 .bind("来自订阅 Feed 的原文摘录；请结合来源与互证信息判断重要性。")
-                .bind(topic).bind(&content_type).bind(published).bind(now).execute(&mut **tx).await?;
+                .bind(topic).bind(&content_type).bind(published).bind(now).bind(&owner).execute(&mut **tx).await?;
             event_ids.push(event_id);
             new_event = true;
         }
@@ -1920,6 +2211,46 @@ async fn persist_item(
     ))
 }
 
+#[cfg(test)]
+pub(crate) async fn test_realm_ingestion(pool: &sqlx::PgPool, sources: [Uuid; 3]) -> Result<()> {
+    let url = format!("https://example.com/research/realm-{}", Uuid::new_v4());
+    let item=FetchedItem {
+        external_id:"isolated-realm-fixture".into(),
+        title:"An identical technical report on agent architecture with reproducible benchmark evaluation".into(),
+        url:url.clone(),published_at:Some(Utc::now()),summary:Some("Measured architecture benchmark and evaluation.".repeat(20)),
+        content_hash:Uuid::new_v4().to_string(),enclosures:vec![],
+        source_metadata:serde_json::json!({}),reading_context:None,reading_context_resources:serde_json::json!({}),
+    };
+    for source in sources {
+        let row = sqlx::query(
+            "SELECT s.*,COALESCE(p.official_domains,'[]'::jsonb) AS official_domains
+            FROM sources s LEFT JOIN publishers p ON p.id=s.publisher_id WHERE s.id=$1",
+        )
+        .bind(source)
+        .fetch_one(pool)
+        .await?;
+        let mut tx = pool.begin().await?;
+        persist_item(&mut tx, &row, &item).await?;
+        tx.commit().await?;
+    }
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT ee.event_id) FROM event_evidence ee
+        JOIN content_items ci ON ci.id=ee.content_item_id WHERE ci.canonical_url=$1",
+    )
+    .bind(&url)
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        count, 3,
+        "system ingestion must never merge readers' identical material"
+    );
+    let cross:i64=sqlx::query_scalar("SELECT count(*) FROM event_evidence ee JOIN content_items c ON c.id=ee.content_item_id
+        JOIN events e ON e.id=ee.event_id WHERE c.canonical_url=$1 AND c.owner_user_id IS DISTINCT FROM e.owner_user_id")
+        .bind(&url).fetch_one(pool).await?;
+    assert_eq!(cross, 0);
+    Ok(())
+}
+
 fn reading_context_material_changed(
     metadata: &serde_json::Value,
     previous_context: Option<&ReadingContext>,
@@ -1945,15 +2276,17 @@ async fn find_near_event(
     url: &str,
     published: DateTime<Utc>,
     content_type: &str,
+    owner: Option<&str>,
 ) -> Result<Option<Uuid>> {
     let candidates = sqlx::query(r#"SELECT e.id,e.canonical_title,e.first_seen_at,
         (SELECT ci.canonical_url FROM event_evidence ee JOIN content_items ci ON ci.id=ee.content_item_id
           WHERE ee.event_id=e.id ORDER BY ci.created_at,ci.id LIMIT 1) AS url
         FROM events e WHERE e.status='published' AND e.event_type=$1
+          AND e.owner_user_id IS NOT DISTINCT FROM $4
           AND e.first_seen_at BETWEEN $2 - interval '36 hours' AND $2 + interval '36 hours'
           AND similarity(e.canonical_title,$3) >= 0.65
         ORDER BY similarity(e.canonical_title,$3) DESC,e.created_at,e.id LIMIT 40"#)
-        .bind(content_type).bind(published).bind(title).fetch_all(&mut **tx).await?;
+        .bind(content_type).bind(published).bind(title).bind(owner).fetch_all(&mut **tx).await?;
     for candidate in candidates {
         let candidate_title: String = candidate.try_get("canonical_title")?;
         let candidate_url: Option<String> = candidate.try_get("url")?;
@@ -2076,10 +2409,20 @@ mod tests {
     fn x_registry_accepts_only_bounded_same_author_originals() {
         let profile = "https://x.com/karpathy";
         let post = "https://x.com/karpathy/status/2083749667410727319";
-        assert_eq!(validate_x_post_urls(profile, &[post.into(),format!("{post}?s=20&t=tracking")]).unwrap(), vec![post]);
+        assert_eq!(
+            validate_x_post_urls(profile, &[post.into(), format!("{post}?s=20&t=tracking")])
+                .unwrap(),
+            vec![post]
+        );
         assert!(validate_x_post_urls(profile, &[]).is_err());
-        assert!(validate_x_post_urls(profile, &vec![post.into();21]).is_err());
-        assert!(validate_x_post_urls(profile, &["https://x.com/dotey/status/2083749667410727319".into()]).is_err());
+        assert!(validate_x_post_urls(profile, &vec![post.into(); 21]).is_err());
+        assert!(
+            validate_x_post_urls(
+                profile,
+                &["https://x.com/dotey/status/2083749667410727319".into()]
+            )
+            .is_err()
+        );
         assert!(validate_x_post_urls(profile, &[format!("{post}?token=private")]).is_err());
         assert!(validate_x_post_urls(profile, &["https://127.0.0.1/status/1".into()]).is_err());
     }
@@ -2088,16 +2431,34 @@ mod tests {
     fn reddit_comment_policy_denies_crawling_and_unrecognizable_responses() {
         let endpoint = crate::reddit_comments::public_top_comment_rss_url(
             "https://www.reddit.com/r/test/comments/abc123/post/",
-        ).unwrap();
+        )
+        .unwrap();
         let denied = FeedAdapter::require_comment_policy(
-            b"User-agent: *\nDisallow: /\n", Some("text/plain; charset=UTF-8"), &endpoint,
-        ).unwrap_err();
+            b"User-agent: *\nDisallow: /\n",
+            Some("text/plain; charset=UTF-8"),
+            &endpoint,
+        )
+        .unwrap_err();
         assert!(denied.downcast_ref::<CommentPolicyBlocked>().is_some());
         assert!(article_retry_after(&denied).unwrap() > Utc::now() + chrono::Duration::hours(23));
         assert!(article_source_backoff(&denied).is_none());
-        assert!(FeedAdapter::require_comment_policy(b"<html>Login</html>", Some("text/html"), &endpoint).is_err());
+        assert!(
+            FeedAdapter::require_comment_policy(
+                b"<html>Login</html>",
+                Some("text/html"),
+                &endpoint
+            )
+            .is_err()
+        );
         assert!(FeedAdapter::require_comment_policy(b"", Some("text/plain"), &endpoint).is_err());
-        assert!(FeedAdapter::require_comment_policy(b"User-agent: *\nAllow: /\n", Some("text/plain"), &endpoint).is_ok());
+        assert!(
+            FeedAdapter::require_comment_policy(
+                b"User-agent: *\nAllow: /\n",
+                Some("text/plain"),
+                &endpoint
+            )
+            .is_ok()
+        );
     }
 
     fn parse(xml: &str) -> Vec<FetchedItem> {

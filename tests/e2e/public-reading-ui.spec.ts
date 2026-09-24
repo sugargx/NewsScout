@@ -122,7 +122,12 @@ async function fixture(page:Page,options:{theme?:string;feedback?:PublicFeedback
   return {reads,forbidden,errors,articles,legacy,groupedArchive};
 }
 function queue(page:Page){return page.getByRole("region",{name:"T1 顺序阅读队列",exact:true});}
-function detail(page:Page){return page.getByRole("complementary",{name:"公开文章阅读区",exact:true});}
+function detail(page:Page){
+  const width=page.viewportSize()?.width ?? 1280;
+  return width<=1024
+    ? page.getByRole("dialog",{name:"文章阅读窗口",exact:true})
+    : page.getByRole("complementary",{name:"公开文章阅读区",exact:true});
+}
 function interestsDialog(page:Page){return page.getByRole("dialog",{name:"兴趣主题",exact:true});}
 async function editInterests(page:Page,topic="心理与认知",weight="100") {
   await page.getByRole("button",{name:/^兴趣主题/}).click();
@@ -177,7 +182,9 @@ test("visitor interests change current selection and full Radar batches, not arc
   await page.goto("/?edition=2026-07-16");
   await expect(page.locator(".ns-beta-feed")).toContainText("七月保存的原始标题");
   await page.goto("/reading");
-  await expect(queue(page).locator("[data-public-event]").first()).toHaveAttribute("data-public-event",id(0));
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
+  await expect(page.getByText(article(0).displayTitle!,{exact:true})).toBeVisible();
+  await expect(queue(page).locator("[data-public-event]").first()).toHaveAttribute("data-public-event",id(1));
   expect(state.reads.filter(url=>url.pathname.startsWith("/beta/api/briefs")||url.pathname.startsWith("/beta/api/reading")).every(url=>!url.searchParams.has("interests"))).toBe(true);
   const context=await browser.newContext({baseURL:process.env.SCOUTNEWS_E2E_BASE_URL,serviceWorkers:"block"});
   try {
@@ -414,17 +421,18 @@ test("public T1 filters, anchored pagination and source reading work without own
   await page.goto("/reading");
   await expect(page.getByRole("heading",{level:1,name:"深度阅读",exact:true})).toBeVisible();
   await expect(page.getByRole("navigation",{name:"公开阅读视图"}).getByRole("button")).toHaveCount(5);
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
+  await expect(page.getByText(article(0).displayTitle!,{exact:true})).toBeVisible();
   await expect(detail(page)).toHaveCount(0);
   const firstRequest=state.reads.find(url=>url.pathname==="/beta/api/reading")!;
   expect(firstRequest.searchParams.get("scope")).toBe("technical");
   expect(firstRequest.searchParams.get("hours")).toBe("720");
   expect(firstRequest.searchParams.get("asOf")).toMatch(/Z$/);
   await page.getByRole("button",{name:"加载更多文章",exact:true}).click();
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(45);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(44);
   expect(state.reads.filter(url=>url.pathname==="/beta/api/reading").at(-1)?.searchParams.get("asOf")).toBe(firstRequest.searchParams.get("asOf"));
   await page.getByLabel("T1 博客来源",{exact:true}).selectOption(sources[0].id);
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(23);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(22);
   await expect(queue(page)).not.toContainText(sources[1].name);
   expect(state.reads.filter(url=>url.pathname==="/beta/api/reading").at(-1)?.searchParams.get("source")).toBe(sources[0].id);
   await page.getByLabel("阅读内容",{exact:true}).selectOption("all");
@@ -443,26 +451,33 @@ test("public T1 filters, anchored pagination and source reading work without own
 test("unopened-only keeps the active article and restores useful focus after it leaves the list",async({page})=>{
   const state=await fixture(page);
   await page.goto("/?tab=reading");
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
   await page.getByLabel("只看尚未打开的文章",{exact:true}).check();
-  const first=queue(page).locator(`[data-public-event="${id(0)}"]`);
-  await first.click();
+  const start=page.getByRole("button",{name:"从第 1 篇开始",exact:true});
+  await expect(start).toBeVisible();
+  await start.click();
   await expect(detail(page)).toContainText("当前已收录的详情");
-  await expect(first).toContainText("已打开");
-  await expect(first).toHaveAttribute("aria-pressed","true");
+  const active=page.locator(`.ns-library-list [data-public-event="${id(0)}"]`);
+  await expect(active).toContainText("已打开");
+  await expect(active).toHaveAttribute("aria-pressed","true");
+  await expect(start).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(detail(page)).toHaveCount(0);
-  await expect(first).toHaveCount(0);
-  await expect(queue(page).locator("[data-public-event]").first()).toBeFocused();
+  await expect(active).toHaveCount(0);
+  await expect(page.locator(".ns-reader-start")).toContainText(article(1).displayTitle!);
+  await expect(page.getByRole("button",{name:"从第 1 篇开始",exact:true})).toBeFocused();
   await page.reload();
-  await expect(queue(page).locator(`[data-public-event="${id(0)}"]`)).toContainText("已打开");
+  await expect(page.getByRole("button",{name:"从第 1 篇开始",exact:true})).toBeVisible();
+  await expect(page.locator(".ns-reader-start")).toContainText(article(0).displayTitle!);
+  await expect(page.locator(".ns-reader-start")).toContainText("已打开");
+  expect(JSON.parse(await page.evaluate(key=>localStorage.getItem(key), "newsscout-public-feedback-v1")!).opened).toContain(id(0));
   expect(state.forbidden).toEqual([]);
 });
 
 test("next article crosses pages but skips browser-opened and dismissed entries",async({page})=>{
   await fixture(page,{feedback:{saved:{},dismissed:[id(41)],opened:[id(40)]}});
   await page.goto("/reading");
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
   await page.getByLabel("只看尚未打开的文章",{exact:true}).check();
   await queue(page).locator(`[data-public-event="${id(39)}"]`).click();
   await expect(detail(page).getByRole("heading",{name:article(39).displayTitle!,exact:true})).toBeVisible();
@@ -487,15 +502,15 @@ test("a delayed next page cannot open an article after the T1 source scope chang
     finally {finished();}
   });
   await page.goto("/reading");
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
   await queue(page).locator(`[data-public-event="${id(39)}"]`).click();
   await expect(detail(page)).toContainText("第三条详细说明");
   await detail(page).getByRole("button",{name:"下一篇",exact:true}).click();
   await started;
   await page.getByLabel("T1 博客来源",{exact:true}).selectOption(sources[0].id);
   await expect(detail(page)).toHaveCount(0);
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(23);
-  await queue(page).locator("[data-public-event]").first().click();
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(22);
+  await page.getByRole("button",{name:"从第 1 篇开始",exact:true}).click();
   release();await drained;
   await expect(detail(page).getByRole("heading",{name:article(0).displayTitle!,exact:true})).toBeVisible();
   expect(new URL(page.url()).searchParams.get("article")).toBe(id(0));
@@ -506,17 +521,22 @@ test("weekly navigation uses returned sections and preserves order through in-pl
   const state=await fixture(page);
   await page.goto("/weekly");
   const list=page.getByRole("region",{name:"公开新闻列表",exact:true});
+  const nav=page.getByRole("navigation",{name:"本周主题导航",exact:true});
+  await expect(page.getByText("选择一个主题开始回顾",{exact:true})).toBeVisible();
+  await expect(list.locator("[data-public-event]")).toHaveCount(0);
+  await expect(nav.getByRole("button")).toHaveCount(3);
+  await nav.getByRole("button",{name:"全部主题",exact:true}).click();
+  expect(new URL(page.url()).searchParams.get("weekTopic")).toBe("all");
   await expect(list.locator("[data-public-event]")).toHaveCount(4);
   expect(await list.locator("[data-public-event]").evaluateAll(elements=>elements.map(element=>element.getAttribute("data-public-event")))).toEqual([id(0),id(1),id(20),id(21)]);
-  await expect(page.getByRole("navigation",{name:"本周主题导航"}).getByRole("link")).toHaveCount(2);
-  const link=page.getByRole("link",{name:"工程实践 2 篇",exact:true});
-  const anchor=await link.getAttribute("href");
-  await link.click();
-  await expect(page.locator(`[id=${JSON.stringify(anchor!.slice(1))}]`)).toBeInViewport();
+  await nav.getByRole("button",{name:/^工程实践/}).click();
+  expect(new URL(page.url()).searchParams.get("weekTopic")).toBe("practice-1");
+  await expect(list.locator("[data-public-event]")).toHaveCount(2);
+  expect(await list.locator("[data-public-event]").evaluateAll(elements=>elements.map(element=>element.getAttribute("data-public-event")))).toEqual([id(20),id(21)]);
   await list.locator("[data-public-event]").first().getByRole("heading").getByRole("button").click();
   await expect(detail(page)).toContainText("第三条详细说明");
   await detail(page).getByRole("button",{name:"下一篇",exact:true}).click();
-  await expect(detail(page).getByRole("heading",{name:article(1).displayTitle!,exact:true})).toBeVisible();
+  await expect(detail(page).getByRole("heading",{name:article(21).displayTitle!,exact:true})).toBeVisible();
   expect(state.reads.some(url=>url.pathname==="/beta/api/brief")).toBe(false);
   expect(state.forbidden).toEqual([]);
 });
@@ -558,7 +578,7 @@ test("public reading failures and unavailable archives stay explicit rather than
   await expect(page.getByText("这个范围暂时没有文章。",{exact:true})).toHaveCount(0);
   failing=false;
   await page.getByRole("alert").getByRole("button",{name:"重试",exact:true}).click();
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
   await page.goto("/?edition=2026-07-18");
   await expect(page.getByRole("alert")).toContainText("没有这个已保存版本");
   await expect(page.locator("[data-public-event]")).toHaveCount(0);
@@ -582,7 +602,7 @@ test("public T1, weekly and archive loading retain structure without invented to
   await page.setViewportSize({width:390,height:844});
   await page.emulateMedia({colorScheme:"dark",reducedMotion:"reduce"});
   for(const entry of [
-    {name:"reading",path:"/reading",pattern:/\/beta\/api\/reading\?/,variant:"queue",count:40},
+    {name:"reading",path:"/reading",pattern:/\/beta\/api\/reading\?/,variant:"queue",count:39},
     {name:"weekly",path:"/weekly",pattern:/\/beta\/api\/weekly$/,variant:"cards",count:4},
     {name:"archive",path:"/?edition=2026-07-16",pattern:/\/beta\/api\/briefs\/2026-07-16$/,variant:"cards",count:2},
   ]) {
@@ -600,6 +620,10 @@ test("public T1, weekly and archive loading retain structure without invented to
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
       await page.screenshot({path:info.outputPath(`public-${entry.name}-loading-dark-390.png`)});
       release();await drained;
+      if(entry.name==="weekly") {
+        await expect(page.getByRole("heading",{name:"选择一个主题开始回顾",exact:true})).toBeVisible();
+        await page.getByRole("navigation",{name:"本周主题导航",exact:true}).getByRole("button",{name:"全部主题",exact:true}).click();
+      }
       await expect(page.locator("[data-public-event]")).toHaveCount(entry.count);
       await expect(page.locator("[data-reader-skeleton]")).toHaveCount(0);
     } finally {release();}
@@ -618,10 +642,10 @@ test("saved path alias and navigation preserve browser-only favorites",async({pa
     await expect(second.getByText("先收藏一篇值得再读的文章。",{exact:true})).toBeVisible();
   } finally {await other.close();}
   await page.getByRole("button",{name:"深度阅读",exact:true}).click();
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
   await page.getByRole("button",{name:"每周回顾",exact:true}).click();
   await expect(page.getByRole("heading",{name:"每周回顾",level:1,exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"晨间简报",exact:true}).click();
+  await page.getByRole("button",{name:"今日精选",exact:true}).click();
   await expect(page.getByLabel("晨报版本",{exact:true})).toBeVisible();
   expect(state.forbidden).toEqual([]);
 });
@@ -631,25 +655,41 @@ for(const theme of ["light","dark"])for(const width of [1440,390]) {
     const state=await fixture(page,{theme,manyTopics:true});
     await page.setViewportSize({width,height:width===390?844:1000});
     await page.goto("/reading");
-    await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+    await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
+    await expect(page.getByText(article(0).displayTitle!,{exact:true})).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-theme",theme);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     await page.screenshot({path:info.outputPath(`public-reading-${theme}-${width}.png`)});
     await queue(page).locator("[data-public-event]").first().click();
     await expect(detail(page)).toContainText("第三条详细说明");
-    if(width>980) {
+    if(width>1024) {
       const left=await queue(page).boundingBox(),right=await detail(page).boundingBox();
-      expect(Math.abs(left!.y-right!.y)).toBeLessThanOrEqual(2);
+      expect(right!.x).toBeGreaterThan(left!.x);
+      expect(left!.x+left!.width).toBeLessThanOrEqual(right!.x);
+      expect(right!.y).toBe(0);
+      expect(right!.width).toBeGreaterThan(390);
     } else {await expect(queue(page)).toBeHidden();}
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     await page.screenshot({path:info.outputPath(`public-reading-detail-${theme}-${width}.png`)});
     await page.keyboard.press("Escape");
-    if(width<=980)expect(await queue(page).evaluate(element=>getComputedStyle(element).maxHeight)).toBe("none");
-    await page.getByRole("button",{name:"每周回顾",exact:true}).click();
-    await expect(page.getByRole("navigation",{name:"本周主题导航"}).getByRole("link")).toHaveCount(8);
+    if(width<=1024)expect(await queue(page).evaluate(element=>getComputedStyle(element).maxHeight)).toBe("none");
+    const nav=page.getByRole("navigation",{name:"公开阅读视图",exact:true});
+    if(width<=1024) {
+      await page.getByRole("button",{name:"打开导航",exact:true}).click();
+      await nav.getByRole("button",{name:"每周回顾",exact:true}).click();
+    } else {
+      await page.getByRole("button",{name:"每周回顾",exact:true}).click();
+    }
+    await expect(page.getByRole("navigation",{name:"本周主题导航"}).getByRole("button")).toHaveCount(9);
+    await expect(page.getByText("选择一个主题开始回顾",{exact:true})).toBeVisible();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     await page.screenshot({path:info.outputPath(`public-weekly-${theme}-${width}.png`)});
-    await page.getByRole("button",{name:"晨间简报",exact:true}).click();
+    if(width<=1024) {
+      await page.getByRole("button",{name:"打开导航",exact:true}).click();
+      await nav.getByRole("button",{name:"今日精选",exact:true}).click();
+    } else {
+      await page.getByRole("button",{name:"今日精选",exact:true}).click();
+    }
     await page.getByLabel("晨报版本",{exact:true}).selectOption("2026-07-16");
     await expect(page.locator("[data-public-event]")).toHaveCount(2);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
@@ -664,39 +704,50 @@ for(const width of [1280,1024,768,390]) {
     const state=await fixture(page);
     await page.setViewportSize({width,height:width===390?844:900});
     await page.goto("/reading");
-    await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+    await expect(page.getByRole("heading",{level:1,name:"深度阅读",exact:true})).toBeVisible();
+    await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
     const navigation=page.getByRole("navigation",{name:"公开阅读视图",exact:true});
+    const main=await page.locator("#main-content").boundingBox(),list=await queue(page).boundingBox();
+    expect(list!.width/main!.width).toBeGreaterThan(.85);
+    await expect(page.locator(".ns-library-placeholder")).toHaveCount(0);
+    if(width>768) {
+      const sidebar=page.locator(".ns-reader-sidebar");
+      await expect(sidebar).toBeVisible();
+      expect((await sidebar.boundingBox())!.width).toBe(176);
+      await expect(navigation.getByRole("button")).toHaveCount(5);
+    } else {
+      const openNav=page.getByRole("button",{name:"打开导航",exact:true});
+      await expect(openNav).toBeVisible();
+      const box=await openNav.boundingBox();
+      expect(box!.y).toBeLessThanOrEqual(72);
+      for(const select of await page.locator(".ns-reading-controls select").all())expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await openNav.click();
+      await expect(navigation.getByRole("button")).toHaveCount(5);
+    }
     const destinations=navigation.getByRole("button");
-    await expect(destinations).toHaveCount(5);
+    await expect(destinations.first()).toBeInViewport({ratio:1});
     const boxes=await destinations.evaluateAll(elements=>elements.map(element=>{
-      const r=element.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height};
+      const r=element.getBoundingClientRect();return {x:r.x,right:r.right,width:r.width,height:r.height};
     }));
     for(const box of boxes) {
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.right).toBeLessThanOrEqual(width+1);
       expect(box.width).toBeGreaterThanOrEqual(44);
-      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(width>768?40:44);
     }
-    const main=await page.locator("#main-content").boundingBox(),list=await queue(page).boundingBox();
-    expect(list!.width/main!.width).toBeGreaterThan(.85);
-    await expect(page.locator(".ns-library-placeholder")).toHaveCount(0);
-    if(width===1024)expect((await page.locator(".ns-reader-sidebar").boundingBox())!.width).toBeLessThanOrEqual(80);
-    if(width<=860) {
-      const nav=await navigation.boundingBox();
-      expect(nav!.y).toBeGreaterThan((width===390?844:900)-100);
-      expect(nav!.y+nav!.height).toBeLessThanOrEqual((width===390?844:900)+1);
-      for(const select of await page.locator(".ns-reading-controls select").all())expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    }
+    if(width<=768)await page.keyboard.press("Escape");
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     await queue(page).locator("[data-public-event]").first().click();
     await expect(detail(page)).toContainText("第三条详细说明");
-    if(width>=1280) {
+    if(width>1024) {
       const left=await queue(page).boundingBox(),right=await detail(page).boundingBox();
-      expect(Math.abs(left!.y-right!.y)).toBeLessThanOrEqual(2);
+      expect(right!.x).toBeGreaterThan(left!.x);
+      expect(left!.x+left!.width).toBeLessThanOrEqual(right!.x);
+      expect(right!.y).toBe(0);
       expect(right!.width).toBeGreaterThan(390);
     } else {
       await expect(queue(page)).toBeHidden();
-      await expect(detail(page).locator(".ns-reader-position")).toContainText("第 1 / 40+ 篇");
+      await expect(detail(page).locator(".ns-reader-position")).toContainText("第 2 / 40+ 篇");
       await expect(detail(page).getByRole("button",{name:"返回列表",exact:true})).toBeVisible();
     }
     expect(state.forbidden).toEqual([]);
@@ -717,7 +768,7 @@ test("reading dependency failures have one recovery action and no misleading sta
   await page.screenshot({path:info.outputPath("reading-combined-error-dark-390.png")});
   failing=false;
   await page.getByRole("alert").getByRole("button",{name:"重试",exact:true}).click();
-  await expect(queue(page).locator("[data-public-event]")).toHaveCount(40);
+  await expect(queue(page).locator("[data-public-event]")).toHaveCount(39);
   await expect(page.getByLabel("T1 博客来源",{exact:true}).locator("option")).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(state.forbidden).toEqual([]);

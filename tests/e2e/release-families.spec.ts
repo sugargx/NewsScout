@@ -125,7 +125,7 @@ test("component release groups preserve filters, pagination, versions and indepe
     await expect(row.locator("[data-coverage-member]")).toHaveCount(4);
     await preview.getByRole("button",{name:`撤销不感兴趣：${member.title}`,exact:true}).click();
     await expect(row.locator("[data-coverage-member]")).toHaveCount(5);
-    await preview.getByRole("button",{name:"关闭阅读面板",exact:true}).click();
+    await preview.getByRole("button",{name:"返回列表",exact:true}).click();
     await page.screenshot({path:info.outputPath("synthetic-component-groups-private-1440.png"),fullPage:true});
 
     const {server,origin}=await publicReader();
@@ -180,7 +180,7 @@ test("component release groups retained-corpus screenshots preserve real release
   try {
     await page.goto(`${origin}/?tab=radar&q=Mem0&hours=72&sort=newest`);
     await expect(page.getByRole("heading",{name:"Mem0 客户端更新：调用来源标识",exact:true})).toBeVisible();
-    for(const view of ["紧凑列表","摘要卡片"]) {
+    for(const view of ["列表"]) {
       await page.getByRole("tab",{name:view,exact:true}).click();
       const row=page.locator(`[data-public-event="${client!.id}"]`);
       await expect(row).toBeVisible();
@@ -191,7 +191,7 @@ test("component release groups retained-corpus screenshots preserve real release
         await page.setViewportSize({width,height:1050});
         await row.scrollIntoViewIfNeeded();
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-        await page.screenshot({path:info.outputPath(`retained-components-${view==="紧凑列表"?"compact":"cards"}-${width}.png`),fullPage:true});
+        await page.screenshot({path:info.outputPath(`retained-components-${view==="列表"?"compact":"cards"}-${width}.png`),fullPage:true});
         if(width===390) {
           const lastAction=disclosure.locator("[data-coverage-member]").last()
             .getByRole("button",{name:"查看详情",exact:true});

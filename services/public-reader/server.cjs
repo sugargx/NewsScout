@@ -148,14 +148,16 @@ function projectBrief(value) {
   if (value.localDate !== undefined && !calendarDate(value.localDate)
     || ["generatedAt", "windowStart", "windowEnd"].some(key => value[key] !== undefined && !utcTimestamp(value[key]))
     || value.primaryWindowStart != null && !utcTimestamp(value.primaryWindowStart)
+    || value.nextRefreshAt != null && !utcTimestamp(value.nextRefreshAt)
     || value.estimatedMinutes !== undefined
       && (!Number.isSafeInteger(value.estimatedMinutes) || value.estimatedMinutes < 0 || value.estimatedMinutes > 1440)
-    || value.isSnapshot !== undefined && typeof value.isSnapshot !== "boolean") {
+    || value.isSnapshot !== undefined && typeof value.isSnapshot !== "boolean"
+    || value.refreshPending !== undefined && typeof value.refreshPending !== "boolean") {
     throw new Error("Invalid edition metadata");
   }
   const items = value.items.map(projectArticle);
   const brief = {
-    ...pick(value, ["localDate", "generatedAt", "windowStart", "windowEnd", "primaryWindowStart", "estimatedMinutes", "isSnapshot"]),
+    ...pick(value, ["localDate", "generatedAt", "windowStart", "windowEnd", "primaryWindowStart", "estimatedMinutes", "isSnapshot", "nextRefreshAt", "refreshPending"]),
     items, note: "共享选文；收藏和阅读记录属于各自浏览器，不改动站主设置。",
   };
   if (value.sections !== undefined) {

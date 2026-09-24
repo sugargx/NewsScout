@@ -91,7 +91,10 @@ pub fn validate_post_url(value: &str, handle: &str) -> Result<Url> {
 }
 
 pub fn parse_oembed(bytes: &[u8], requested_post: &Url) -> Result<FetchedItem> {
-    ensure!(bytes.len() <= MAX_EMBED_HTML_BYTES, "X publisher response exceeds its size bound");
+    ensure!(
+        bytes.len() <= MAX_EMBED_HTML_BYTES,
+        "X publisher response exceeds its size bound"
+    );
     let (requested_post, handle, status_id) = requested_identity(requested_post)?;
     let response: OEmbedResponse =
         serde_json::from_slice(bytes).context("invalid X publisher oEmbed JSON")?;
@@ -106,7 +109,10 @@ pub fn parse_oembed(bytes: &[u8], requested_post: &Url) -> Result<FetchedItem> {
         "X publisher embed has an unexpected provider, type, or version"
     );
     let provider = canonicalize_oembed_url(&response.provider_url)?;
-    ensure!(provider.path() == "/", "X publisher embed has an unexpected provider URL");
+    ensure!(
+        provider.path() == "/",
+        "X publisher embed has an unexpected provider URL"
+    );
 
     let response_post = canonicalize_oembed_post_url(&response.url, &handle)
         .context("X publisher embed returned an invalid post URL")?;
@@ -316,7 +322,10 @@ fn extract_embed_text(html: &str, requested_post: &Url) -> Result<EmbedText> {
                         .any(|value| value == "twitter-tweet")
                 })
             {
-                ensure!(!provider_seen, "X publisher embed has multiple provider blocks");
+                ensure!(
+                    !provider_seen,
+                    "X publisher embed has multiple provider blocks"
+                );
                 provider_seen = true;
                 provider_depth = Some(depth);
             } else if provider_depth
@@ -442,7 +451,10 @@ fn close_tag(
         .is_some_and(|(active_depth, _)| *active_depth == depth)
     {
         let (_, text) = paragraph.take().expect("checked above");
-        let text = decode_entities(&text).split_whitespace().collect::<Vec<_>>().join(" ");
+        let text = decode_entities(&text)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         if !text.is_empty() {
             result.paragraphs.push(text);
         }
@@ -452,7 +464,10 @@ fn close_tag(
         .is_some_and(|(active_depth, _)| *active_depth == depth)
     {
         let (_, text) = date_anchor.take().expect("checked above");
-        let text = decode_entities(&text).split_whitespace().collect::<Vec<_>>().join(" ");
+        let text = decode_entities(&text)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         if !text.is_empty() {
             result.date_labels.push(text);
         }
@@ -806,9 +821,18 @@ mod tests {
         let mut outer = fixture();
         let html = outer["html"].as_str().unwrap().to_owned();
         outer["html"] = json!(format!("{html}<div><p>Unattributed outside text</p></div>"));
-        assert!(!parse(outer).unwrap().reading_context.unwrap().body.contains("Unattributed"));
+        assert!(
+            !parse(outer)
+                .unwrap()
+                .reading_context
+                .unwrap()
+                .body
+                .contains("Unattributed")
+        );
         let mut multiple = fixture();
-        multiple["html"] = json!(format!("{html}<blockquote class=\"twitter-tweet\"><p>Different post</p></blockquote>"));
+        multiple["html"] = json!(format!(
+            "{html}<blockquote class=\"twitter-tweet\"><p>Different post</p></blockquote>"
+        ));
         assert!(parse(multiple).is_err());
         let mut provider = fixture();
         provider["provider_url"] = json!("https://unrelated.example");
@@ -818,8 +842,10 @@ mod tests {
     #[test]
     fn preserves_escaped_source_code_as_passive_text_not_markup() {
         let mut source = fixture();
-        source["html"] = json!(source["html"].as_str().unwrap()
-            .replace("First &amp; second", "&lt;svg&gt;literal source&lt;/svg&gt; &amp; text"));
+        source["html"] = json!(source["html"].as_str().unwrap().replace(
+            "First &amp; second",
+            "&lt;svg&gt;literal source&lt;/svg&gt; &amp; text"
+        ));
         let body = parse(source).unwrap().reading_context.unwrap().body;
         assert!(body.contains("<svg>literal source</svg> & text"));
         assert!(!body.contains("never include this"));
@@ -874,10 +900,16 @@ mod tests {
     #[test]
     fn long_posts_have_compact_titles_without_discarding_retained_body() {
         let mut value = fixture();
-        value["html"] = json!(format!("<blockquote class=\"twitter-tweet\"><p>{}</p><a href=\"{POST_URL}\">August 2, 2026</a></blockquote>", "source text ".repeat(500)));
+        value["html"] = json!(format!(
+            "<blockquote class=\"twitter-tweet\"><p>{}</p><a href=\"{POST_URL}\">August 2, 2026</a></blockquote>",
+            "source text ".repeat(500)
+        ));
         let item = parse(value).unwrap();
         assert_eq!(item.title.chars().count(), MAX_TITLE_CHARS);
-        assert_eq!(item.reading_context.unwrap().body.chars().count(), MAX_BODY_CHARS);
+        assert_eq!(
+            item.reading_context.unwrap().body.chars().count(),
+            MAX_BODY_CHARS
+        );
     }
 
     #[test]

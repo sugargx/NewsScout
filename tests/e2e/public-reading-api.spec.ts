@@ -856,7 +856,7 @@ test("GET requests with bodies cannot reach upstream", async ({ gateway }) => {
 
 test("owner routes, management APIs and archive generators remain inaccessible", async ({ gateway, request }) => {
   for (const path of [
-    "/sources", "/settings", "/topics", "/shares", "/api/v1/sources", "/api/v1/weekly", "/api/v1/briefs",
+    "/sources", "/settings", "/topics", "/shares", "/share", "/api/v1/sources", "/api/v1/weekly", "/api/v1/briefs",
     "/api/v1/processing", "/api/v1/model-providers", "/api/v1/events?saved=true", "/api/v1/events/exposures",
     "/beta/api/sources", `/beta/api/reading/sources/${sourceId}`, `/beta/api/reading/sources/${sourceId}/refresh`,
     "/beta/api/briefs/today/generate", `/beta/api/briefs/${archiveDate}/save`, "/beta/api/shares",

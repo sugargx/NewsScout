@@ -1,19 +1,24 @@
 # 运行与发布手册
 
-适用环境：当前 Windows 本地运行方式；维护日期：2026-09-20。除明确说明外，命令从 ScoutNews 项目根目录执行。本文是操作说明，补充文档本身不启动服务、不改设置、不恢复数据库。
+适用环境：Windows 可信本地、旧 Dev Tunnel 与 Azure 邀请测试；维护日期：2026-09-24。除明确说明外，命令从 ScoutNews 项目根目录执行。本页保留现有本地/隧道操作；云端 what-if、Linux 构建、digest 部署、恢复与轮换使用 [Azure 运行手册](AZURE-PREVIEW.md)。更新文档本身不启动服务、不改设置、不恢复数据库。
+
+**当前状态（2026-09-24，以 `release-status.json` 为准）：r11 revision `newsscout--0000008` Ready，仅1个批准身份，云端schema推断为29。** 14:31:48确认旧版本停止后启动新版本，14:32:50 Ready，14:33:44完成Single/min=max=1交接，约62秒不可用；账号/Origin/CSRF、资源、凭据引用、设置与历史保存版保持。迁移29只改SQL函数，滚动前已记录PITR恢复点；回退限制见 [Azure手册第8节](AZURE-PREVIEW.md#8-备份恢复与回退)。日常本地实例保持停止，本轮未重启或迁移，日常库仍为27；已有本地备份不等于已执行27→29恢复演练或切版。旧Dev Tunnel已退役，本页命令不授权重放历史操作。
 
 ## 1. 先分清运行环境
 
 | 环境 | Web / 入口 | API | Gateway | PostgreSQL |
 | --- | --- | --- | --- | --- |
 | 日常个人版 | 5173，Vite 开发服务 | 8080 | 8787 | 55433，`scoutnews` |
-| 公开试读 | 5190，独立生产页面与只读网关 | 读取现有 8080 | 不直接访问 | 不直接访问 |
+| 旧匿名公开试读（已退役） | 历史端口5190，独立只读网关 | 历史配置读取8080 | 不直接访问 | 不直接访问 |
+| Azure 认证邀请预览 | 平台HTTPS → Node3000；公开登录200，私有API仍需真实身份及明确批准 | 容器内 `127.0.0.1:8080` | 容器内 `127.0.0.1:8787` | 独立云端私网5432、TLS `verify-full`，不连接本机库 |
 | 隔离真实 E2E | 15173 | 18080 | 18787 | 55432，每次新建 `scoutnews_e2e_<UUID>` |
 | 页面替身验证 | 15173，Vite preview | 请求在浏览器内拦截 | 不需要 | 不需要 |
 | 人工评审候选网关 | 示例 15190 | 只读访问现有 8080 | 不直接访问 | 不直接访问 |
 | 手动 Docker 数据库 | 另行启动 Web/API | 另行配置 | 另行配置 | Compose 默认映射 5432 |
 
-端口均以 loopback 为边界。**只允许专用 Dev Tunnel 转发 5190**；不要公开 5173、8080、8787、5432、55433 或隔离测试端口。只读网关不是全套后台的反向代理。
+本地端口以loopback为边界；若另获授权复现旧隧道，也只能转发5190，不能公开5173、8080、8787、5432、55433或测试端口。当前旧隧道已退役。Azure只公开平台到Node3000的HTTPS入口，不能把localhost可信模式直接上线，旧只读网关也不是完整后台代理。
+
+云端保持1 CPU/2 GiB、min=max=1；调度器未可横向扩展，不能加副本或缩为0来节省费用而声称日程语义不变。云端仅阅读/模型管理设置不开放，主题、来源、自定义来源、采集、完整分享和账号隐私/导出不能因“公开版”一词被一并关掉。
 
 ## 2. 首次启动与日常停止
 
@@ -80,11 +85,13 @@ if ([string]::IsNullOrWhiteSpace($env:COPILOT_GATEWAY_SHARED_SECRET)) {
 | Copilot Gateway | `npm.cmd run dev:gateway` |
 | Web | `npm.cmd run dev:web` |
 
-进程环境优先于 `.env`；一键启动器另外固定本轮的 loopback 端口、日常数据库 URL 和浏览器助手路径。摘要模型/额度及阅读日程保存在 `app_settings`，不是每次启动都从环境变量重置。新库额度默认 20，允许配置 1–5000；已有试用库的 5000 是已保存选择。
+进程环境优先于 `.env`；启动器固定本轮loopback端口、日常数据库URL与助手路径。模型/额度/日程保存在 `app_settings`，重启不重置。新库默认20、可配置1–5000；本地原5000保持，当前云端则由20经200调整到5000（按最终安全聚合），不是云端新库默认，也不授权自动复制/提高其他环境预算。
 
 手动启用原始博客浏览器补全时，还需要 `SCOUTNEWS_BROWSER_NODE`、`SCOUTNEWS_BROWSER_CAPTURE_SCRIPT` 的绝对路径，以及明确的 `SCOUTNEWS_BROWSER_ARTICLE_HOSTS`。一键启动器会提供路径并默认仅允许 OpenAI 指定主机；空主机名单关闭该路径。不要为了某站失败扩大成无约束浏览器读取。
 
 ## 4. 公开试读的启动
+
+**旧Dev Tunnel已退役；本节及第5节保留历史/受控复现程序，不是当前启动待办。** 若要恢复须另行授权。Azure的登录、完整页面及私有操作在同一镜像，不使用此启动器；第6节的个人备份/恢复仍有独立用途。
 
 先保证个人 API 可读，再安装、登录并按本机 `devtunnel --help` 准备专用隧道。以下 `$tunnelId` 的示例值必须替换为实际创建结果：
 
@@ -204,6 +211,31 @@ if ($LASTEXITCODE -ne 0) { throw '备份目录不可读取。' }
 
 SQLx 会校验已应用迁移的内容校验和。不要格式化或改写旧迁移，包括改变换行符；`.gitattributes` 对 `services/api/migrations/*.sql` 关闭文本换行转换，确保 Git checkout 保留原始字节。后续数据库调整新增迁移，不修改已应用文件。
 
+云端运行新镜像会执行增量迁移，不能将其连接指向55433做部署验证。本机日常库本次已在最终无writer冻结备份、第二次完整隔离恢复通过后安全升级至27；20表原指纹不变，14份briefs、3份shares、64个sources、6168个events保留，Terra/enabled=true/5000设置不变，5173/8080响应正常，未把本地历史导入云端。今后升级仍须另行授权、匹配版本的备份与隔离演练；Azure PITR另见 [云端恢复步骤](AZURE-PREVIEW.md)。
+
+### 个人库升级前的隔离预检
+
+`services\api\tests\run-owner-upgrade.ps1` 是本次24→27安全升级所用的私有备份检查器，**脚本本身不写正在使用的个人数据库**。它只接受成功迁移最高版本为24的PostgreSQL custom-format `pg_dump`，不是当前27库未来升级的通用入口；不得篡改迁移版本绕过守卫。使用已配置PG17与现有Rust环境；备份保留在私有本地/批准的离线存储，**不得上传Azure、Blob、ACR/CI、聊天或提交Git**，不打印数据、设置或凭据。
+
+从项目根目录执行以下独立PowerShell进程，将占位符替换为已存在的私有备份绝对路径。若55490已被占用，停止本次预检，不能杀掉他人的实例、改用日常55433或绕过目标保护：
+
+```powershell
+pwsh -NoProfile -File .\services\api\tests\run-owner-upgrade.ps1 `
+    -BackupPath 'D:\<private-backup-directory>\<owner-backup>.dump'
+```
+
+执行边界：
+
+1. 在 `services\api\target\owner-upgrade-validation\<run-UUID>` 下建立本次隔离数据/日志目录，使用PG17 loopback `127.0.0.1:55490` 和唯一数据库 `scoutnews_upgrade_check_<UUID>`。恢复原备份的副本，不覆盖原备份；不指向日常库或Azure。
+2. 脚本只给子进程设置专用 `SCOUTNEWS_OWNER_UPGRADE_DATABASE_URL`，由Rust再次检查loopback、固定端口和数据库前缀；恢复后的版本必须为24。不要为了通过检查而改写迁移记录或目标守卫。
+3. `services\api\tests\owner_upgrade\mod.rs` 是经main的 `cfg(test)` 引入的嵌套ignored Rust binary test，脚本显式使用 `--bin scoutnews-api` 选择并执行，不重启正在运行的API。不要绕过包装器直接对个人连接运行ignored测试或迁移，也不要再把该模块作为独立integration-test入口发现。
+4. 迁移到当前latest前后，比较20张原有表（含 `app_settings`）原字段的行数/指纹，并逐项比较设置；新加的owner/发布快照列不混入原字段指纹。随后运行来源目录导入，允许三个目录表刷新，但继续核对私人历史/设置及local读者对原晨报、草稿、状态、兴趣的RLS可见性。
+5. `finally` 清除专用环境变量并关闭本次拥有的PG；确认进程身份已退出后，只删除本次data目录。原备份保留，私有日志保留在本次 `logs` 目录；不能扩大清理范围或按进程名称停止其他PG。失败日志可能含私有恢复信息，不上传或粘贴原文。
+
+通过必须有ignored用例**实际执行且成功**、`Restored owner database upgraded 24->...` /20表指纹和设置保留结果及Rust成功结论；脚本结束、零条用例或清理目录本身不算通过。最终交接确认：最终冻结、无writer备份再次完整恢复到隔离PG并通过24→27检查，随后才应用日常库前向迁移；目录刷新后私人历史/local RLS检查通过，隔离PG已停且仅owned data删除。当前日常库已为27，不再是“尚未升级”；原数据/设置保留的实际范围见 [Azure手册第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)。此结果不自动授权任何后续升级。
+
+本次后端修复是新增 `0027_legacy_evidence_realms.sql`；`0026_reader_role_membership.sql` 已负责角色membership，不能把它重新当作本次修复。Azure已应用的 `0025` 保持字节不变。
+
 ## 7. 故障排查
 
 | 症状 | 排查顺序 / 处理边界 |
@@ -231,3 +263,19 @@ SQLx 会校验已应用迁移的内容校验和。不要格式化或改写旧迁
 处理时先保留旧会话证据，再执行本文“切换同一公开地址”的 identity-safe stop/start，使用原 TunnelId 与 `-SkipBuild`。该次已有登录仍可用，不需要新建隧道、改变匿名连接权限、扩大端口范围、重启个人数据库或触发采集。若重新连接仍被拒绝，应先处理明确的登录/服务错误，不通过关闭授权要求或无限重启掩盖它。
 
 恢复完成必须从实际 HTTPS 检查 `/health` 的 `readOnly=true`、文章读取与入口资源；只检查进程 ID、本地端口或 TLS 握手不够。当前启动器没有针对“活着但失联”的自动重连保证，仍需保持宿主电脑和附着式启动器运行。连接复发时沿用上述诊断边界，不把一次恢复写成长期托管。
+
+## 8. Azure 邀请测试操作入口
+
+完整命令以 [Azure 运行手册](AZURE-PREVIEW.md) 为准，不能混用旧隧道命令与云端生命周期。
+
+| 操作 | 实施边界 |
+| --- | --- |
+| 目标与费用 | 仅用户指定的 Visual Studio/MSDN 订阅/租户；显式 `--subscription`，不改变全局 CLI context、spending cap 或自动升级规格；非生产、无生产 SLA |
+| 基座 what-if/验证 | `azure-infra*.ps1`；基础设施与应用运行时分开。基座 verifier 包含“无运行时应用”检查，应用上线后不能将其当作全站健康检查 |
+| 构建/部署 | `Dockerfile.azure` → 私有 ACR → digest；`cloud-app.bicep` 先阻断公众流量、配置/核对 EasyAuth，再受控开启现场验收 |
+| 凭据与模型 | Key Vault独立服务凭据、不读取本机keyring；精确Terra。新库默认滚动24小时20次，当前云端已保存5000，失败计入；不静默换模型，后续额度变更须另行授权 |
+| 日常诊断 | 区分进程/数据库健康、Microsoft 登录、Origin/CSRF、RLS/所有权、采集/摘要和 Blob 权限；只保留去敏错误、有限路由、时间与 trace ID |
+| 恢复与回退 | 云端 PITR 恢复到新私网服务器；镜像回退用已确认 digest 并核对 schema 兼容，不回滚迁移文件或覆盖个人数据库 |
+| 轮换 | 已有准备脚本不会覆盖现有 secret；用受控轮换流程写新版本，再验证引用和重启/新 revision，不能用“脚本运行成功”代替新凭据已生效 |
+
+采集取消、自助账号删除和完整使用分析面板仍未提供。r8预览已开放登录，`approved_accounts` 当前仅1个明确批准身份；真实OAuth/读取先于维护通道采集。新环境默认空名单，但不能用 `[]` 覆盖当前名单；每次增加/撤销仍须用户明确批准、使用本人真实申请编号，不匹配邮箱、整个tenant或CLI guest OID。按 [第6.5节](AZURE-PREVIEW.md#65-批准账号与撤销访问) 使用完整私有参数、同一运行digest、先what-if后部署和验证，回退不恢复已撤销成员。第二真实账号及私有偏好/编辑/发布/撤销/导出live覆盖仍有限，见 [第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)；文档命令不表示已执行。

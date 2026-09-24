@@ -124,11 +124,12 @@ pub fn parse_public_top_comment_feed(bytes: &[u8], endpoint: &Url) -> Result<Red
             Ok(Event::Start(element)) => {
                 depth += 1;
                 let name = local_name(element.name().as_ref());
-                if depth == 1 && (name != "feed"
-                    || !element.attributes().flatten().any(|attr| {
-                        attr.key.as_ref().starts_with(b"xmlns")
-                            && attr.value.as_ref() == b"http://www.w3.org/2005/Atom"
-                    }))
+                if depth == 1
+                    && (name != "feed"
+                        || !element.attributes().flatten().any(|attr| {
+                            attr.key.as_ref().starts_with(b"xmlns")
+                                && attr.value.as_ref() == b"http://www.w3.org/2005/Atom"
+                        }))
                 {
                     bail!("Reddit comment response is not an Atom feed");
                 }
@@ -220,7 +221,9 @@ pub fn parse_public_top_comment_feed(bytes: &[u8], endpoint: &Url) -> Result<Red
                             let id = entry.id.clone().expect("entry kind requires an ID");
                             if !comment_ids.insert(id) {
                                 skipped_duplicate_comments += 1;
-                            } else if let Some(comment) = comment_from_entry(entry, &expected_post_id)? {
+                            } else if let Some(comment) =
+                                comment_from_entry(entry, &expected_post_id)?
+                            {
                                 if comments.len() == MAX_RETAINED_COMMENTS {
                                     skipped_due_to_limit += 1;
                                 } else {
@@ -321,7 +324,11 @@ fn append_link(
         return Ok(());
     }
     let href = attribute(element, "href").context("Reddit Atom alternate link lacks href")?;
-    entry.permalink = Some(validate_reddit_permalink(endpoint, expected_post_id, &href)?);
+    entry.permalink = Some(validate_reddit_permalink(
+        endpoint,
+        expected_post_id,
+        &href,
+    )?);
     Ok(())
 }
 
@@ -362,7 +369,9 @@ fn post_from_entry(entry: AtomEntry, expected_post_id: &str) -> Result<RedditPos
     if id.strip_prefix("t3_") != Some(expected_post_id) {
         bail!("Reddit post entry does not match the requested post permalink");
     }
-    let permalink = entry.permalink.context("Reddit post entry lacks an alternate permalink")?;
+    let permalink = entry
+        .permalink
+        .context("Reddit post entry lacks an alternate permalink")?;
     validate_reddit_post_permalink(&permalink)?;
     Ok(RedditPost {
         id,
@@ -377,7 +386,9 @@ fn post_from_entry(entry: AtomEntry, expected_post_id: &str) -> Result<RedditPos
 
 fn comment_from_entry(entry: AtomEntry, expected_post_id: &str) -> Result<Option<RedditComment>> {
     let id = entry.id.context("Reddit comment entry lacks an ID")?;
-    let content = entry.content.context("Reddit comment entry lacks content")?;
+    let content = entry
+        .content
+        .context("Reddit comment entry lacks content")?;
     let (body, truncated) = bound_comment_body(&reading_text(&content));
     if body.is_empty() || is_removed_or_deleted(&body) {
         return Ok(None);
@@ -386,7 +397,11 @@ fn comment_from_entry(entry: AtomEntry, expected_post_id: &str) -> Result<Option
         .permalink
         .context("Reddit comment entry lacks an alternate permalink")?;
     if !is_comment_permalink(&permalink, expected_post_id)
-        || Url::parse(&permalink)?.path().trim_end_matches('/').rsplit('/').next()
+        || Url::parse(&permalink)?
+            .path()
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
             != id.strip_prefix("t1_")
     {
         bail!("Reddit comment permalink does not belong to the requested post");
@@ -428,7 +443,9 @@ fn parse_atom_time(value: &str, field: &str) -> Result<DateTime<Utc>> {
 }
 
 fn validate_reddit_permalink(endpoint: &Url, expected_post_id: &str, href: &str) -> Result<String> {
-    let url = endpoint.join(href.trim()).context("invalid Reddit Atom permalink")?;
+    let url = endpoint
+        .join(href.trim())
+        .context("invalid Reddit Atom permalink")?;
     let url = validate_public_https(url.as_str())?;
     if url.host_str() != Some(REDDIT_HOST) || url.port().is_some() || url.fragment().is_some() {
         bail!("Reddit Atom permalink is not a canonical public Reddit URL");
@@ -468,7 +485,10 @@ fn bound_comment_body(value: &str) -> (String, bool) {
     if value.chars().count() <= MAX_RETAINED_COMMENT_BODY_CHARS {
         return (value.to_owned(), false);
     }
-    let mut body: String = value.chars().take(MAX_RETAINED_COMMENT_BODY_CHARS).collect();
+    let mut body: String = value
+        .chars()
+        .take(MAX_RETAINED_COMMENT_BODY_CHARS)
+        .collect();
     body.truncate(body.trim_end().len());
     (body, true)
 }
@@ -553,8 +573,7 @@ mod tests {
           <link rel="alternate" href="https://www.reddit.com/r/test/comments/abc123/a_test_post/comment2/"/></entry>
         </feed>"#;
 
-        let feed =
-            parse_public_top_comment_feed(xml, &Url::parse(ENDPOINT).unwrap()).unwrap();
+        let feed = parse_public_top_comment_feed(xml, &Url::parse(ENDPOINT).unwrap()).unwrap();
 
         assert_eq!(
             feed.ordering,
@@ -592,9 +611,7 @@ mod tests {
           <link rel="alternate" href="https://www.reddit.com/r/test/comments/abc123/a_test_post/comment1/"/>
         </entry></feed>"#;
 
-        assert!(
-            parse_public_top_comment_feed(xml, &Url::parse(ENDPOINT).unwrap()).is_err()
-        );
+        assert!(parse_public_top_comment_feed(xml, &Url::parse(ENDPOINT).unwrap()).is_err());
     }
 
     #[test]
@@ -607,10 +624,12 @@ mod tests {
             .as_str(),
             ENDPOINT
         );
-        assert!(public_top_comment_rss_url(
-            "https://www.reddit.com/r/test/comments/abc123/a_test_post/?sort=new"
-        )
-        .is_err());
+        assert!(
+            public_top_comment_rss_url(
+                "https://www.reddit.com/r/test/comments/abc123/a_test_post/?sort=new"
+            )
+            .is_err()
+        );
         for endpoint in [
             "http://www.reddit.com/r/test/comments/abc123/title/.rss?sort=top",
             "https://www.reddit.com/r/test/comments/abc123/title/comment1/.rss?sort=top",
@@ -631,9 +650,28 @@ mod tests {
           <link href="https://www.reddit.com/r/test/comments/abc123/a_test_post/comment1/"/></entry>
         </feed>"#;
         let endpoint = Url::parse(ENDPOINT).unwrap();
-        assert_eq!(parse_public_top_comment_feed(xml.as_bytes(), &endpoint).unwrap().comments[0].body, "A & B");
-        assert!(parse_public_top_comment_feed(xml.replace("t1_comment1", "t1_other").as_bytes(), &endpoint).is_err());
-        assert!(parse_public_top_comment_feed(xml.replace("<feed ", "<html ").replace("</feed>", "</html>").as_bytes(), &endpoint).is_err());
+        assert_eq!(
+            parse_public_top_comment_feed(xml.as_bytes(), &endpoint)
+                .unwrap()
+                .comments[0]
+                .body,
+            "A & B"
+        );
+        assert!(
+            parse_public_top_comment_feed(
+                xml.replace("t1_comment1", "t1_other").as_bytes(),
+                &endpoint
+            )
+            .is_err()
+        );
+        assert!(
+            parse_public_top_comment_feed(
+                xml.replace("<feed ", "<html ")
+                    .replace("</feed>", "</html>")
+                    .as_bytes(),
+                &endpoint
+            )
+            .is_err()
+        );
     }
-
 }

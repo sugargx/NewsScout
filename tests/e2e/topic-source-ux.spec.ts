@@ -31,7 +31,7 @@ test("source filters keep every displayed subscription in scope, separate the wa
   await expect(page.getByLabel("来源等级",{exact:true})).toHaveValue("T2");
   await expect(page.getByLabel("搜索来源",{exact:true})).toHaveValue(source.name);
   await expect.poll(ids).toEqual(searched.map(item=>item.id).sort());
-  await page.getByRole("tab",{name:"关注名单",exact:true}).click();
+  await page.getByRole("tab",{name:/^关注名单/}).click();
   await expect(page.getByRole("heading",{name:"关注名单与接入状态",exact:true})).toBeVisible();
   await expect(results).toHaveCount(0);
   await expect(page.getByLabel("来源等级",{exact:true})).toHaveCount(0);
@@ -50,9 +50,10 @@ test("source filters keep every displayed subscription in scope, separate the wa
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     await page.screenshot({path:info.outputPath(`sources-t1-${width}.png`)});
   }
-  await page.getByRole("tab",{name:"覆盖与管理",exact:true}).click();
-  await expect(page.getByRole("heading",{name:"添加订阅来源",exact:true})).toBeVisible();
+  await page.getByRole("tab",{name:/^覆盖盲区/}).click();
   await expect(page.getByRole("region",{name:"来源与领域覆盖",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"新增来源",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"添加订阅来源",exact:true})).toBeVisible();
 });
 
 test("topic network layout is deterministic, bounded and collision-free across sparse and dense topologies",()=>{
@@ -94,6 +95,7 @@ test.describe("topic network real-publisher interactions",()=>{
       await page.goto(`/radar?view=topics&clawpilotTheme=${theme}`);
       await page.locator("[data-topic-id]").first().waitFor();
       const response=page.waitForResponse(response=>response.url().includes("/api/v1/explore?")&&new URL(response.url()).searchParams.get("hours")==="0");
+      await page.getByText("更多筛选 · 时间与排序",{exact:true}).click();
       await page.getByLabel("时间范围",{exact:true}).selectOption("0");
       const exploration:Exploration=await(await response).json();
       const graph=page.getByRole("group",{name:"关键词主题共现图",exact:true,includeHidden:true});
@@ -117,12 +119,14 @@ test.describe("topic network real-publisher interactions",()=>{
       const before=await positions();
       await results.getByRole("button").first().click();
       await expect(page.locator(".ns-preview-title")).toBeVisible();
-      await expect(results).toHaveCount(0);
-      expect(await positions()).toEqual(before);
+      await expect(page.locator(".ns-topic-article").first()).toHaveAttribute("aria-current","true");
+      await expect(graph).toHaveAttribute("data-focused-topic",linked);
+      expect((await positions()).map(point=>point[0]).sort()).toEqual(before.map(point=>point[0]).sort());
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
       await page.locator(".ns-topic-workspace").screenshot({path:info.outputPath(`network-reading-${theme}-${width}.png`)});
-      await page.getByRole("button",{name:"关闭阅读面板",exact:true}).click();
+      await page.getByRole("button",{name:"返回主题结果",exact:true}).click();
       await expect(results.getByRole("button").first()).toBeFocused();
+      await expect.poll(positions).toEqual(before);
       if(width<1000)await page.getByRole("button",{name:"主题地图",exact:true}).click();
       const isolated=expectedNodes.find(id=>!expectedEdges.some(edge=>edge.source===id||edge.target===id));
       expect(isolated,"A real fallback topic exercises the zero-edge state").toBeTruthy();

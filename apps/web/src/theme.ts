@@ -1,11 +1,11 @@
 import { webDarkTheme, webLightTheme, type Theme } from "@fluentui/react-components";
 
-function clawpilotTheme(base: Theme): Theme {
+function readerTheme(base: Theme): Theme {
   return {
     ...base,
-    fontFamilyBase: '"Segoe UI", Aptos, Calibri, "Microsoft YaHei", "PingFang SC", sans-serif',
-    borderRadiusMedium: "10px",
-    borderRadiusLarge: "16px",
+    fontFamilyBase: "var(--cp-font-body)",
+    borderRadiusMedium: "8px",
+    borderRadiusLarge: "10px",
     colorNeutralBackground1: "var(--cp-surface)",
     colorNeutralBackground1Hover: "var(--cp-surface-soft)",
     colorNeutralBackground2: "var(--cp-surface-soft)",
@@ -15,6 +15,8 @@ function clawpilotTheme(base: Theme): Theme {
     colorNeutralForeground3: "var(--cp-text-soft)",
     colorNeutralStroke1: "var(--cp-border)",
     colorNeutralStroke2: "var(--cp-border-strong)",
+    colorNeutralStrokeAccessible: "var(--cp-border-strong)",
+    colorNeutralStrokeAccessibleHover: "var(--cp-accent)",
     colorBrandBackground: "var(--cp-accent)",
     colorBrandBackgroundHover: "var(--cp-accent-hover)",
     colorBrandBackgroundPressed: "var(--cp-accent-hover)",
@@ -35,4 +37,4 @@ function clawpilotTheme(base: Theme): Theme {
   };
 }
 
-export const scoutNewsTheme = clawpilotTheme(document.documentElement.dataset.theme === "dark" ? webDarkTheme : webLightTheme);
+export const scoutNewsTheme = readerTheme(document.documentElement.dataset.theme === "dark" ? webDarkTheme : webLightTheme);

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import "../reader-navigation.css";
 
 export interface ReaderDestination<T extends string = string> {
@@ -23,6 +23,8 @@ export function ReaderNavigation<T extends string>({ label, items, activeKey, on
         <span className="ns-reader-nav-label">{item.label}</span><span className="ns-reader-nav-short">{item.shortLabel}</span>
         {!!item.count && <span className="ns-reader-nav-count">{item.count}</span>}</>;
       const name = item.count !== undefined ? `${item.label} ${item.count}` : item.label;
+      if (item.href && activeKey === item.key) return <Link key={item.key} to={item.href} aria-label={name}
+        title={item.label} aria-current="page" className="ns-reader-nav-item is-active">{content}</Link>;
       return item.href
         ? <NavLink key={item.key} to={item.href} end={item.href === "/"} aria-label={name} title={item.label}
           className={({ isActive }) => `ns-reader-nav-item${isActive ? " is-active" : ""}`}>{content}</NavLink>

@@ -55,7 +55,7 @@ test("reader quality separates adaptive summary points from material limitations
   }
 });
 
-test("reader quality freezes brief order and text until explicit refresh and shares that selection",async({page,request})=>{
+test("reader quality keeps the daily edition fixed and shares that exact selection",async({page,request})=>{
   const originals:Record<string,unknown>[]=JSON.parse(databaseQuery(`SELECT json_agg(e) FROM(
     SELECT id,summary_kind,summary_format_version,summary_points,summary_material_limit,summary_limitations FROM events
     WHERE length(summary)>60 AND event_type='blog' ORDER BY id LIMIT 10)e`));
@@ -71,40 +71,46 @@ test("reader quality freezes brief order and text until explicit refresh and sha
     page.on("request",request=>{if(request.url().endsWith("/api/v1/briefs/latest"))briefRequests++;});
     await page.goto("/");
     const cards=page.locator("article[data-event-id]");
-    await expect(cards).toHaveCount(10);
-    const before=await cards.evaluateAll(nodes=>nodes.map(node=>({id:node.getAttribute("data-event-id"),points:node.querySelector(".ns-summary-points")?.textContent})));
+    await expect(cards.first()).toBeVisible();
+    const snapshot=()=>cards.evaluateAll(nodes=>nodes.map(node=>({id:node.getAttribute("data-event-id"),points:node.querySelector(".ns-summary-points")?.textContent})));
+    const before=await snapshot();
+    expect(before.length).toBeGreaterThanOrEqual(3);
+    const catchUp=await page.locator('.ns-edition-section[data-section="catch_up"] article[data-event-id]').count();
     const changed=before[0].id!;
     const title=await cards.first().getByRole("heading").innerText();
     databaseQuery(`UPDATE events SET summary_format_version=2 WHERE id='${changed}'`);
     await page.evaluate(()=>{window.dispatchEvent(new Event("online"));document.dispatchEvent(new Event("visibilitychange"));window.dispatchEvent(new Event("focus"));});
-    await expect(page.getByRole("button",{name:"应用更新",exact:true})).toBeVisible();
+    await page.waitForTimeout(800);
+    // The daily edition is fixed: no background refetch and no manual update control.
     expect(briefRequests).toBe(1);
-    expect(await cards.evaluateAll(nodes=>nodes.map(node=>({id:node.getAttribute("data-event-id"),points:node.querySelector(".ns-summary-points")?.textContent})))).toEqual(before);
+    await expect(page.getByRole("button",{name:"应用更新",exact:true})).toHaveCount(0);
+    expect(await snapshot()).toEqual(before);
     await cards.first().getByRole("button",{name:/^收藏：/}).click();
     await expect(cards.first().getByRole("button",{name:/^取消收藏：/})).toBeVisible();
     expect(await cards.evaluateAll(nodes=>nodes.map(node=>node.getAttribute("data-event-id")))).toEqual(before.map(item=>item.id));
-    const shareResponse=page.waitForResponse(response=>response.url().endsWith("/api/v1/shares")&&response.request().method()==="POST");
-    await page.getByText("版本与分享",{exact:true}).click();
-    await page.getByRole("button",{name:"制作分享卡片",exact:true}).click();
-    const shared=await(await shareResponse).json();
-    expect(shared.document.items[0].title).toBe(title);
-    expect(shared.document.items).toHaveLength(10);
-    await page.goBack();
-    await expect(cards).toHaveCount(10);
+    // Sharing reuses the edition already on screen: same items, same order, no extra request.
+    await page.getByRole("link",{name:"生成今日分享图"}).click();
+    await expect(page.getByRole("heading",{name:"今日分享",level:1})).toBeVisible();
+    await page.getByRole("group",{name:"分享排序"}).getByRole("button",{name:"精选顺序",exact:true}).click();
+    const options=page.locator(".ns-share-options strong");
+    await expect(options).toHaveCount(before.length);
+    await expect(options.first()).toHaveText(title);
+    // 补读 items stay selectable but are never part of the default pick.
+    await expect(page.getByRole("img",{name:new RegExp(`^分享图预览：(?:今日|\\d{1,2}月\\d{1,2}日)值得分享的 ${Math.min(10,before.length-catchUp)} 条新闻$`)})).toBeVisible();
     expect(briefRequests).toBe(1);
-    await page.getByRole("button",{name:"应用更新",exact:true}).click();
-    await expect.poll(()=>briefRequests).toBe(2);
-    await expect(page.getByRole("status").filter({hasText:"未采集来源"})).toBeVisible();
+    await page.goBack();
+    await expect(cards).toHaveCount(before.length);
+    expect(briefRequests).toBe(1);
+    expect((await snapshot()).map(item=>item.id)).toEqual(before.map(item=>item.id));
     const dismissed=cards.last();
     const dismissedId=await dismissed.getAttribute("data-event-id");
     const orderBeforeDismiss=await cards.evaluateAll(nodes=>nodes.map(node=>node.getAttribute("data-event-id")));
     await dismissed.getByRole("button",{name:/^不感兴趣：/}).click();
-    await expect(cards).toHaveCount(9);
+    await expect(cards).toHaveCount(before.length-1);
     expect(await cards.evaluateAll(nodes=>nodes.map(node=>node.getAttribute("data-event-id")))).toEqual(orderBeforeDismiss.filter(id=>id!==dismissedId));
     const current=await(await request.get(`${api}/api/v1/events/${changed}`)).json();
     const conflict=await request.post(`${api}/api/v1/shares`,{data:{kind:"brief",selection:[{eventId:changed,contentVersion:current.contentVersion-1,summarizedAt:current.summarizedAt}]}});
     expect(conflict.status()).toBe(409);
-    await request.delete(`${api}/api/v1/shares/${shared.id}`);
   } finally {
     for(const item of contents)databaseQuery(`UPDATE content_items SET published_at=${literal(item.published_at)} WHERE id='${item.id}'`);
     for(const item of originals)databaseQuery(`UPDATE events SET ${Object.entries(item).filter(([key])=>key!=="id").map(([key,value])=>`${key}=${literal(value)}`).join(",")} WHERE id=${literal(item.id)}`);
@@ -124,7 +130,8 @@ test("reader quality uses earliest same-event evidence without inventing an occu
       UPDATE content_items SET published_at=now() WHERE id='${events[1].content}';
       INSERT INTO event_evidence(event_id,content_item_id,is_official) VALUES('${events[0].id}','${events[1].content}',false)`);
     const item=await(await request.get(`${api}/api/v1/events/${events[0].id}`)).json();
-    expect(item.recommendation.freshness).toBeCloseTo(12.5,1);
+    const halfLife=({research:96,analysis:96,tutorial:96,release:48} as Record<string,number>)[item.editorial?.contentKind]??30;
+    expect(item.recommendation.freshness).toBeCloseTo(100*0.5**(72/halfLife),1);
     expect(Date.parse(item.publishedAt)-Date.parse(item.freshnessAt)).toBeGreaterThan(71*3600000);
     expect(item).not.toHaveProperty("eventOccurredAt");
     expect(item.evidence).toHaveLength(2);
@@ -152,7 +159,7 @@ test("reader quality exposes real technical indexes and an in-place topic worksp
   await page.getByLabel("T1 博客来源",{exact:true}).selectOption(source("307"));
   await page.getByLabel("阅读时间范围",{exact:true}).selectOption("0");
   await expect(page.getByRole("article",{name:"文章就地阅读"})).toHaveCount(0);
-  await page.locator(".ns-library-item").first().click();
+  await page.getByRole("button",{name:"从第 1 篇开始",exact:true}).click();
   await expect(page.getByRole("article",{name:"文章就地阅读"})).toBeVisible();
   await expect(page.locator(".ns-preview-title")).toBeVisible();
   await page.goto("/radar?view=topics&hours=720");
@@ -165,7 +172,7 @@ test("reader quality exposes real technical indexes and an in-place topic worksp
   await results.getByRole("button").first().click();
   await expect(page.getByRole("article",{name:"文章就地阅读"})).toBeVisible();
   await expect(page.locator(".ns-preview-title")).toBeVisible();
-  await expect(results).not.toBeVisible();
+  await expect(results.getByRole("button").first()).toHaveAttribute("aria-current","true");
   await expect(graph).toBeVisible();
   for(const width of [1440,390]) {
     await page.setViewportSize({width,height:1000});
@@ -177,7 +184,7 @@ test("reader quality exposes real technical indexes and an in-place topic worksp
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     await page.screenshot({path:info.outputPath(`quality-topic-${width}.png`),fullPage:true});
   }
-  await page.getByRole("article",{name:"文章就地阅读"}).getByRole("button",{name:"关闭阅读面板",exact:true}).click();
+  await page.getByRole("article",{name:"文章就地阅读"}).getByRole("button",{name:"返回主题结果",exact:true}).click();
   await expect(results).toBeVisible();
   expect(databaseQuery("SELECT count(*) FROM admin_audits WHERE action='summarize_attempt'")).toBe("0");
 });

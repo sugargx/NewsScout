@@ -1,0 +1,97 @@
+:root {
+  --cp-font-body: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --cp-font-display: Georgia, "Songti SC", SimSun, serif;
+  --cp-nav-width: 176px;
+  --cp-content-width: 1120px;
+  --cp-reading-width: 720px;
+  --cp-sidebar: var(--cp-bg-elevated);
+  --cp-warm: var(--cp-surface-soft);
+  --cp-focus: var(--cp-warning);
+  --cp-raised: var(--cp-surface);
+  --cp-control-well: var(--cp-bg-elevated);
+  --cp-radius-control: 6px;
+  --cp-radius-surface: 8px;
+  --cp-radius-dialog: 10px;
+  --cp-page-padding: 40px;
+  --cp-row-padding: 17px;
+  --cp-muted-label: var(--cp-text-soft);
+  --cp-warn-bg: rgba(251, 191, 36, .14);
+  --cp-warn-fg: var(--cp-warning);
+  --cp-warn-border: rgba(251, 191, 36, .45);
+  --cp-ok-border: var(--cp-accent);
+  /* Dark-compatible defaults for CoDesign light literals; the light block restores the approved values. */
+  --cp-hover: var(--cp-surface-soft);
+  --cp-glass: color-mix(in srgb, var(--cp-surface) 94%, transparent);
+  --cp-toolbar-glass: color-mix(in srgb, var(--cp-surface) 86%, transparent);
+  --cp-problem-bg: var(--cp-warn-bg);
+  --cp-map-bg: var(--cp-surface);
+  --cp-orb: var(--cp-surface);
+  --cp-halo: var(--cp-surface);
+  --cp-deck: var(--cp-text-soft);
+  --cp-toggle-off: #8a8a8a;
+  --cp-toggle-knob: var(--cp-surface);
+}
+
+/* Legacy dark compatibility: CoDesign pages put metadata on --cp-bg, so muted text and selection tint need AA contrast there. */
+html[data-theme="dark"]:root {
+  --cp-text-muted: #ababab;
+  --cp-accent-soft: #47373a;
+}
+
+/* The approved CoDesign light palette (2026-09-20 20:07 version) overrides the legacy theme tokens. */
+:root:not([data-theme="dark"]) {
+  --cp-bg: #f3f4ef;
+  --cp-bg-elevated: #e9ece7;
+  --cp-sidebar: #e9ede7;
+  --cp-surface: #fcfcf9;
+  --cp-raised: #ffffff;
+  --cp-control-well: #e9ece7;
+  --cp-surface-soft: #e4eeea;
+  --cp-border: #dce1da;
+  --cp-border-strong: #aeb8b2;
+  --cp-muted-label: #7c8781;
+  --cp-warn-bg: #fff6d7;
+  --cp-warn-fg: #8a6514;
+  --cp-warn-border: #ead58c;
+  --cp-ok-border: #abc7bc;
+  --cp-text: #17211e;
+  --cp-text-muted: #66716c;
+  --cp-text-soft: #4f5b56;
+  --cp-accent: #275d52;
+  --cp-accent-hover: #1d4a41;
+  --cp-accent-soft: #e4eeea;
+  --cp-accent-fg: #ffffff;
+  --cp-danger: #a4403c;
+  --cp-link: #275d52;
+  --cp-warm: #f2eee5;
+  --cp-focus: #b86e2f;
+  --cp-shadow: 0 8px 28px rgba(23, 33, 30, .08);
+  --cp-overlay: rgba(25, 34, 30, .42);
+  --cp-panel: #fcfcf9;
+  --cp-panel-strong: #ffffff;
+  --cp-highlight: rgba(39, 93, 82, .12);
+  --cp-hover: #f8faf7;
+  --cp-glass: rgba(252, 252, 249, .94);
+  --cp-toolbar-glass: rgba(255, 255, 255, .86);
+  --cp-problem-bg: #f7f0e7;
+  --cp-map-bg: radial-gradient(circle at center, #f9faf6, #eef2ec);
+  --cp-orb: rgba(255, 255, 255, .92);
+  --cp-halo: #f5f7f2;
+  --cp-deck: #39443f;
+  --cp-toggle-off: #b8c2bd;
+  --cp-toggle-knob: #fff;
+}
+
+body { font-family: var(--cp-font-body); font-size: 14px; }
+button, input, select, textarea { font: inherit; }
+@media (max-width: 1024px) { :root { --cp-page-padding: 30px; } }
+@media (max-width: 768px) { :root { --cp-page-padding: 20px; } }
+@media (max-width: 420px) { :root { --cp-page-padding: 16px; } }
+@media (prefers-reduced-motion: reduce) {
+  .ns-reader-shell *, .ns-reader-shell *::before, .ns-reader-shell *::after {
+    animation-duration: .01ms !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+.ns-visually-hidden { position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

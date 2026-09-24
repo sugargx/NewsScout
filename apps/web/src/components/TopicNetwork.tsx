@@ -1,10 +1,10 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Exploration } from "../types";
 import { layoutTopics } from "../topic-layout";
 import "../topic-network.css";
 
 export function TopicNetwork({nodes,edges,facet,onSelect}:{nodes:Exploration["nodes"];edges:Exploration["edges"];facet:string;onSelect:(id:string)=>void}) {
-  const id=useId(),host=useRef<HTMLDivElement>(null);
+  const host=useRef<HTMLDivElement>(null);
   const [width,setWidth]=useState(480),[hover,setHover]=useState("");
   const [camera,setCamera]=useState({zoom:1,x:0,y:0});
   const drag=useRef<{pointer:number;x:number;y:number;panX:number;panY:number}|null>(null);
@@ -54,12 +54,6 @@ export function TopicNetwork({nodes,edges,facet,onSelect}:{nodes:Exploration["no
             y:Math.max(-layout.height/2,Math.min(layout.height/2,state.panY+event.clientY-state.y))}));
         }}
         onPointerUp={()=>{drag.current=null;}} onPointerCancel={()=>{drag.current=null;}}>
-        <defs>
-          <pattern id={`${id}-dots`} width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".8" fill="var(--cp-border)" opacity=".55"/></pattern>
-          <radialGradient id={`${id}-wash`}><stop offset="0" stopColor="var(--cp-accent)" stopOpacity=".085"/><stop offset="1" stopColor="var(--cp-accent)" stopOpacity="0"/></radialGradient>
-        </defs>
-        <rect width="100%" height="100%" fill={`url(#${id}-dots)`}/>
-        <ellipse cx={layout.width/2} cy={layout.height/2} rx={layout.width*.46} ry={layout.height*.43} fill={`url(#${id}-wash)`}/>
         <g transform={`translate(${camera.x+layout.width/2} ${camera.y+layout.height/2}) scale(${camera.zoom}) translate(${-layout.width/2} ${-layout.height/2})`}>
           {focusedEdges.map((edge,index)=>{
             const from=positions.get(edge.source),to=positions.get(edge.target);if(!from||!to)return null;

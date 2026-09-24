@@ -1,8 +1,9 @@
 use std::{collections::HashMap, env, sync::Arc};
 
+use crate::auth::ReaderState as State;
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, Query},
     http::{HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Redirect},
@@ -28,6 +29,8 @@ use crate::{
 
 #[derive(Clone)]
 pub struct AppState {
+    pub auth: Arc<crate::auth::Auth>,
+    pub identity: Option<crate::auth::Identity>,
     pub store: Arc<dyn Store>,
     pub http: Client,
     pub oauth_states: Arc<tokio::sync::Mutex<HashMap<String, std::time::Instant>>>,
@@ -72,11 +75,20 @@ fn select_default_model(models: &[String], preferred: &str) -> Option<String> {
 }
 
 pub fn router(state: AppState) -> Router {
-    let mut origins = vec![
-        HeaderValue::from_static("http://localhost:5173"),
-        HeaderValue::from_static("http://127.0.0.1:5173"),
-    ];
-    if let Ok(origin) = env::var("WEB_ORIGIN") {
+    let mut origins = if state.auth.cloud() {
+        vec![]
+    } else {
+        vec![
+            HeaderValue::from_static("http://localhost:5173"),
+            HeaderValue::from_static("http://127.0.0.1:5173"),
+        ]
+    };
+    if let Some(origin) = state
+        .auth
+        .origin()
+        .map(str::to_owned)
+        .or_else(|| env::var("WEB_ORIGIN").ok())
+    {
         match HeaderValue::from_str(&origin) {
             Ok(origin) => origins.push(origin),
             Err(error) => tracing::error!(?error, "WEB_ORIGIN is not a valid HTTP origin"),
@@ -85,6 +97,21 @@ pub fn router(state: AppState) -> Router {
     let allowed_origins = origins.clone();
     Router::new()
         .route("/health", get(health))
+        .route("/api/v1/session", get(crate::auth::session))
+        .route(
+            "/api/v1/me/telemetry-consent",
+            put(crate::reader_account::consent),
+        )
+        .route("/api/v1/telemetry", post(crate::reader_account::telemetry))
+        .route("/api/v1/me/export", post(crate::reader_account::export))
+        .route(
+            "/api/v1/ingestion-runs/{id}",
+            get(crate::ingestion_jobs::status),
+        )
+        .route(
+            "/api/v1/public/shares/{id}",
+            get(crate::publishing::cloud_public_share),
+        )
         .route("/api/v1/runtime", get(runtime))
         .route("/api/v1/events", get(list_events))
         .route("/api/v1/events/exposures", post(record_exposures))
@@ -132,7 +159,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/sources/{id}", put(update_source))
         .route("/api/v1/sources/{id}/refresh", post(refresh_source))
-        .route("/api/v1/sources/{id}/x-posts", get(x_post_urls).put(save_x_post_urls))
+        .route(
+            "/api/v1/sources/{id}/x-posts",
+            get(x_post_urls).put(save_x_post_urls),
+        )
         .route("/api/v1/model-providers", get(model_providers))
         .route("/api/v1/processing", get(processing_status))
         .route("/api/v1/processing/settings", put(processing_settings))
@@ -179,6 +209,11 @@ pub fn router(state: AppState) -> Router {
                 }
             },
         ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware,
+        ))
+        .layer(axum::extract::DefaultBodyLimit::max(256 * 1024))
         .with_state(state)
 }
 
@@ -217,8 +252,23 @@ async fn list_events(
             .as_deref()
             .is_some_and(|tier| !["T1", "T1.5", "T2"].contains(&tier))
         || query.kind.as_deref().is_some_and(|kind| {
-            !["blog", "release", "podcast", "paper", "model", "repository",
-                "news", "research", "analysis", "tutorial", "discussion", "question", "promotion", "metadata"].contains(&kind)
+            ![
+                "blog",
+                "release",
+                "podcast",
+                "paper",
+                "model",
+                "repository",
+                "news",
+                "research",
+                "analysis",
+                "tutorial",
+                "discussion",
+                "question",
+                "promotion",
+                "metadata",
+            ]
+            .contains(&kind)
         })
     {
         return Err(ApiError::BadRequest(
@@ -248,7 +298,9 @@ async fn list_events(
         .sum();
     let mut response = serde_json::json!({"items":items,"nextOffset":next_offset,"returnedEventCount":event_count,
         "returnedMaterialCount":material_count,"grouping":if query.coverage.unwrap_or(false) {"proven-event-v1"} else {"events"}});
-    if query.interests.is_some() { response["readerProfileApplied"] = true.into(); }
+    if query.interests.is_some() {
+        response["readerProfileApplied"] = true.into();
+    }
     Ok(Json(response))
 }
 
@@ -269,7 +321,9 @@ async fn get_event(
     event
         .map(|event| {
             let mut response = serde_json::json!(event);
-            if personalized { response["readerProfileApplied"] = true.into(); }
+            if personalized {
+                response["readerProfileApplied"] = true.into();
+            }
             Json(response)
         })
         .ok_or(ApiError::NotFound)
@@ -332,7 +386,9 @@ async fn latest_brief(
     Query(query): Query<VisitorQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if query.as_of.is_some() && query.interests.is_none() {
-        return Err(ApiError::BadRequest("指定精选时间时必须提供访客兴趣。".into()));
+        return Err(ApiError::BadRequest(
+            "指定精选时间时必须提供访客兴趣。".into(),
+        ));
     }
     let cutoff = query.as_of.unwrap_or_else(chrono::Utc::now);
     if cutoff > chrono::Utc::now() + chrono::Duration::minutes(5) {
@@ -345,7 +401,9 @@ async fn latest_brief(
         state.store.latest_brief().await?
     };
     let mut response = serde_json::json!(brief);
-    if personalized { response["readerProfileApplied"] = true.into(); }
+    if personalized {
+        response["readerProfileApplied"] = true.into();
+    }
     Ok(Json(response))
 }
 
@@ -363,8 +421,23 @@ async fn explore_topics(
             .as_deref()
             .is_some_and(|tier| !["T1", "T1.5", "T2"].contains(&tier))
         || query.kind.as_deref().is_some_and(|kind| {
-            !["blog", "release", "podcast", "paper", "model", "repository",
-                "news", "research", "analysis", "tutorial", "discussion", "question", "promotion", "metadata"].contains(&kind)
+            ![
+                "blog",
+                "release",
+                "podcast",
+                "paper",
+                "model",
+                "repository",
+                "news",
+                "research",
+                "analysis",
+                "tutorial",
+                "discussion",
+                "question",
+                "promotion",
+                "metadata",
+            ]
+            .contains(&kind)
         })
     {
         return Err(ApiError::BadRequest("探索时间范围或查询长度无效".into()));
@@ -395,7 +468,9 @@ async fn explore_topics(
         "nodes":nodes.into_iter().map(|(id,count)|serde_json::json!({"id":id,"count":count})).collect::<Vec<_>>(),
         "edges":edges.into_iter().map(|((source,target),count)|serde_json::json!({"source":source,"target":target,"count":count})).collect::<Vec<_>>(),
         "meaning":"关系仅表示当前推荐样本中的主题共现，不表示因果或已核实的知识关系"});
-    if query.interests.is_some() { response["readerProfileApplied"] = true.into(); }
+    if query.interests.is_some() {
+        response["readerProfileApplied"] = true.into();
+    }
     Ok(Json(response))
 }
 
@@ -523,13 +598,21 @@ async fn create_source(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if input.adapter == "x_public_preview" {
         if input.content_type != "blog" {
-            return Err(ApiError::BadRequest("X 原帖预览使用 blog 存储类型，阅读内容会标识为帖子".into()));
+            return Err(ApiError::BadRequest(
+                "X 原帖预览使用 blog 存储类型，阅读内容会标识为帖子".into(),
+            ));
         }
-        input.original_post_urls = Some(crate::ingestion::validate_x_post_urls(
-            &input.endpoint, input.original_post_urls.as_deref().unwrap_or_default(),
-        ).map_err(|error| ApiError::BadRequest(error.to_string()))?);
+        input.original_post_urls = Some(
+            crate::ingestion::validate_x_post_urls(
+                &input.endpoint,
+                input.original_post_urls.as_deref().unwrap_or_default(),
+            )
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        );
     } else if input.original_post_urls.is_some() {
-        return Err(ApiError::BadRequest("仅 X 公开预览适配器接受原帖链接列表".into()));
+        return Err(ApiError::BadRequest(
+            "仅 X 公开预览适配器接受原帖链接列表".into(),
+        ));
     }
     Ok(Json(serde_json::json!(
         state.store.create_source(input).await?
@@ -542,27 +625,54 @@ struct XPostUrlsInput {
     urls: Vec<String>,
 }
 
-async fn x_post_urls(State(state): State<AppState>, Path(id): Path<Uuid>) -> Result<Json<serde_json::Value>, ApiError> {
+async fn x_post_urls(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     require_database(&state)?;
-    if !state.store.sources().await?.iter().any(|source| source.id == id && source.adapter == "x_public_preview") {
+    if !state
+        .store
+        .sources()
+        .await?
+        .iter()
+        .any(|source| source.id == id && source.adapter == "x_public_preview")
+    {
         return Err(ApiError::NotFound);
     }
-    let worker = state.feed_worker.as_ref().ok_or_else(|| ApiError::Configuration("数据库未就绪".into()))?;
+    let worker = state
+        .feed_worker
+        .as_ref()
+        .ok_or_else(|| ApiError::Configuration("数据库未就绪".into()))?;
     let urls = worker.x_post_urls(id).await?;
-    Ok(Json(serde_json::json!({"urls":urls,"coverage":"registered_posts_only"})))
+    Ok(Json(
+        serde_json::json!({"urls":urls,"coverage":"registered_posts_only"}),
+    ))
 }
 
 async fn save_x_post_urls(
-    State(state): State<AppState>, Path(id): Path<Uuid>, Json(input): Json<XPostUrlsInput>,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<XPostUrlsInput>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_database(&state)?;
-    let source = state.store.sources().await?.into_iter().find(|source| source.id == id && source.adapter == "x_public_preview")
+    let source = state
+        .store
+        .sources()
+        .await?
+        .into_iter()
+        .find(|source| source.id == id && source.adapter == "x_public_preview")
         .ok_or(ApiError::NotFound)?;
     let urls = crate::ingestion::validate_x_post_urls(&source.endpoint, &input.urls)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let worker = state.feed_worker.as_ref().ok_or_else(|| ApiError::Configuration("数据库未就绪".into()))?;
+    let worker = state
+        .feed_worker
+        .as_ref()
+        .ok_or_else(|| ApiError::Configuration("数据库未就绪".into()))?;
     let urls = worker.save_x_post_urls(id, &urls).await?;
-    Ok(Json(serde_json::json!({"urls":urls,"coverage":"registered_posts_only"})))
+    let source_id = worker.x_registry_source(id).await?;
+    Ok(Json(
+        serde_json::json!({"urls":urls,"sourceId":source_id,"coverage":"registered_posts_only"}),
+    ))
 }
 
 async fn update_source(
@@ -613,6 +723,11 @@ async fn refresh_source(
     if !["stable", "observing"].contains(&source.lifecycle_status.as_str()) {
         return Err(ApiError::Conflict("请先启用此来源，再执行采集".into()));
     }
+    if state.auth.cloud() {
+        return crate::ingestion_jobs::submit(&state, Some(id))
+            .await
+            .map(Json);
+    }
 
     let worker = state
         .feed_worker
@@ -628,6 +743,11 @@ async fn enrich_event_context(
     require_database(&state)?;
     if state.store.get_event(id).await?.is_none() {
         return Err(ApiError::NotFound);
+    }
+    if state.auth.cloud() {
+        return crate::ingestion_jobs::submit_context(&state, id)
+            .await
+            .map(Json);
     }
     let worker = state
         .feed_worker
@@ -655,17 +775,29 @@ pub async fn generate_event_summary(
     automatic: bool,
 ) -> Result<Event, ApiError> {
     require_database(&state)?;
+    if state.auth.cloud()
+        && (model != automation::CLOUD_MODEL || model != automation::settings(state).await?.model)
+    {
+        return Err(ApiError::Forbidden);
+    }
     let _guard = state
         .generation_lock
         .try_lock()
         .map_err(|_| ApiError::RateLimited("已有摘要生成任务正在运行，请稍后重试".into()))?;
     let connection = state.provider.read().await;
     if !connection.eligible {
-        return Err(ApiError::Configuration(
-            "请先在模型与账户页连接并探测 GitHub Copilot".into(),
-        ));
+        return Err(ApiError::Configuration(if state.auth.cloud() {
+            "Cloud Copilot is not configured or verified; contact the preview owner. Original articles remain available.".into()
+        } else {
+            "请先在模型与账户页连接并探测 GitHub Copilot".into()
+        }));
     }
     if !connection.models.iter().any(|available| available == model) {
+        if state.auth.cloud() {
+            return Err(ApiError::Configuration(
+                "The dedicated Copilot account does not provide gpt-5.6-terra; no fallback will be used".into(),
+            ));
+        }
         return Err(ApiError::BadRequest("请选择探测返回的可用模型".into()));
     }
     let mode = connection
@@ -675,10 +807,24 @@ pub async fn generate_event_summary(
     let event = state.store.get_event(id).await?.ok_or(ApiError::NotFound)?;
     let prompt = summary::prompt(&event).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let limit = automation::settings(state).await?.daily_limit;
-    if state.store.summary_attempts().await? >= limit {
+    let used = if state.auth.cloud() {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM admin_audits
+            WHERE action='summarize_attempt' AND created_at>=now()-interval '24 hours'",
+        )
+        .fetch_one(state.auth.pool.as_ref().ok_or(ApiError::Forbidden)?)
+        .await
+        .map_err(anyhow::Error::from)?
+    } else {
+        state.store.summary_attempts().await?
+    };
+    if used >= limit {
         return Err(ApiError::RateLimited(format!(
             "过去24小时摘要调用已达到本地限额{limit}次（含失败调用）"
         )));
+    }
+    if state.auth.cloud() && !automatic {
+        crate::reader_account::rate_limit(&state.reader_db()?, "summarize", 1, 30, 3600).await?;
     }
     let path = if mode == CopilotAuthMode::Local {
         "/v1/generate/local"
@@ -692,7 +838,7 @@ pub async fn generate_event_summary(
         .await?;
     let response = request.timeout(std::time::Duration::from_secs(110))
         .json(&serde_json::json!({"model":model,"system":summary::SYSTEM,"prompt":prompt,"sessionId":format!("scoutnews-{}",Uuid::new_v4())}))
-        .send().await.map_err(|error| { tracing::warn!(?error,"summary gateway request failed"); ApiError::Upstream("摘要网关不可用或请求超时，原始摘录未更改".into()) })?;
+        .send().await.map_err(|_| { tracing::warn!("summary gateway request failed"); ApiError::Upstream("摘要网关不可用或请求超时，原始摘录未更改".into()) })?;
     let status = response.status();
     let value: serde_json::Value = response.json().await?;
     if !status.is_success() {
@@ -713,13 +859,25 @@ pub async fn generate_event_summary(
             connection.eligible = false;
             connection.last_error = Some("账户连接已失效，请在模型与账户页重新探测".into());
         }
-        return Err(ApiError::Upstream(
+        return Err(ApiError::Upstream(if state.auth.cloud() {
+            "Copilot generation failed; original material unchanged".into()
+        } else {
             value
                 .get("error")
                 .and_then(|value| value.as_str())
                 .unwrap_or("Copilot生成失败，原始摘录未更改；请检查模型连接")
-                .into(),
-        ));
+                .into()
+        }));
+    }
+    if state.auth.cloud() {
+        if let Err(error) = validate_cloud_generation_response(&value) {
+            let mut connection = state.provider.write().await;
+            connection
+                .models
+                .retain(|available| available != automation::CLOUD_MODEL);
+            connection.last_error = Some("Required cloud Copilot model/reasoning was not confirmed; no fallback is permitted".into());
+            return Err(error);
+        }
     }
     let content = value
         .get("content")
@@ -742,6 +900,21 @@ pub async fn generate_event_summary(
         .await?
         .ok_or_else(|| ApiError::Conflict("事件证据在生成期间发生变化，请刷新后重新生成".into()))?;
     Ok(event)
+}
+
+fn validate_cloud_generation_response(value: &serde_json::Value) -> Result<(), ApiError> {
+    if value.get("provider").and_then(serde_json::Value::as_str) != Some("github-copilot")
+        || value.get("model").and_then(serde_json::Value::as_str) != Some(automation::CLOUD_MODEL)
+        || value
+            .get("reasoningEffort")
+            .and_then(serde_json::Value::as_str)
+            != Some(automation::CLOUD_REASONING_EFFORT)
+    {
+        return Err(ApiError::Configuration(
+            "Cloud Copilot did not confirm gpt-5.6-terra with low reasoning; no summary was saved and no fallback will be used".into(),
+        ));
+    }
+    Ok(())
 }
 
 async fn processing_status(
@@ -812,6 +985,9 @@ async fn retry_summaries(
 }
 
 async fn run_ingestion(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.auth.cloud() {
+        return crate::ingestion_jobs::submit(&state, None).await.map(Json);
+    }
     let worker = state
         .feed_worker
         .as_ref()
@@ -986,7 +1162,18 @@ fn gateway_request(
         .timeout(std::time::Duration::from_secs(60));
     Ok(match mode {
         CopilotAuthMode::Local => request,
-        CopilotAuthMode::Oauth => request.bearer_auth(oauth_token()?),
+        CopilotAuthMode::Oauth => request.bearer_auth(if state.auth.cloud() {
+            env::var("COPILOT_GITHUB_TOKEN")
+                .ok()
+                .filter(|token| !token.trim().is_empty())
+                .ok_or_else(|| {
+                    ApiError::Configuration(
+                        "Cloud Copilot service credential is not configured".into(),
+                    )
+                })?
+        } else {
+            oauth_token()?
+        }),
     })
 }
 
@@ -1043,6 +1230,11 @@ async fn probe_details(
             "Copilot未返回可用模型，请确认账户资格".into(),
         ));
     }
+    let required_model_unavailable =
+        state.auth.cloud() && !models.iter().any(|model| model == automation::CLOUD_MODEL);
+    if required_model_unavailable {
+        tracing::warn!("required cloud Copilot model is unavailable; no fallback will be used");
+    }
     Ok(ProviderConnection {
         eligible: true,
         models,
@@ -1052,7 +1244,8 @@ async fn probe_details(
             .get("login")
             .and_then(|value| value.as_str())
             .map(str::to_owned),
-        last_error: None,
+        last_error: required_model_unavailable.then(||
+            "The dedicated Copilot account does not provide gpt-5.6-terra; no fallback will be used".into()),
     })
 }
 
@@ -1080,6 +1273,16 @@ async fn probe_connection(state: &AppState, mode: CopilotAuthMode) -> Result<(),
 }
 
 pub async fn restore_copilot(state: &AppState) -> Result<(), ApiError> {
+    if state.auth.cloud() {
+        if !env::var("COPILOT_GITHUB_TOKEN").is_ok_and(|token| !token.trim().is_empty()) {
+            state.provider.write().await.last_error =
+                Some("Cloud Copilot service credential is not configured".into());
+            return Ok(());
+        }
+        let result = probe_connection(state, CopilotAuthMode::Oauth).await;
+        state.provider.write().await.account_login = None;
+        return result;
+    }
     let mode = state.store.provider_auth_mode().await?;
     match mode.as_str() {
         "disconnected" => Ok(()),
@@ -1182,6 +1385,7 @@ fn urlencoding(value: &str) -> String {
 
 #[derive(Debug)]
 pub enum ApiError {
+    Forbidden,
     NotFound,
     BadRequest(String),
     Conflict(String),
@@ -1211,6 +1415,10 @@ impl From<reqwest::Error> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let (status, message) = match self {
+            Self::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "This operation is not permitted".into(),
+            ),
             Self::NotFound => (StatusCode::NOT_FOUND, "not found".into()),
             Self::BadRequest(v) => (StatusCode::BAD_REQUEST, v),
             Self::Conflict(v) => (StatusCode::CONFLICT, v),
@@ -1219,7 +1427,8 @@ impl IntoResponse for ApiError {
             Self::Upstream(v) => (StatusCode::BAD_GATEWAY, v),
             Self::Unauthorized(v) => (StatusCode::UNAUTHORIZED, v),
             Self::Internal(error) => {
-                tracing::error!(?error, "request failed");
+                let _ = error;
+                tracing::error!("request failed; details withheld to protect reader data");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal error".into())
             }
         };
@@ -1237,6 +1446,8 @@ mod tests {
 
     fn test_app() -> Router {
         router(AppState {
+            auth: Arc::new(crate::auth::Auth::default()),
+            identity: None,
             store: Arc::new(MemoryStore::demo()),
             http: Client::new(),
             oauth_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -1262,6 +1473,34 @@ mod tests {
             None
         );
         assert_eq!(select_default_model(&[], "gpt-5.6-terra"), None);
+    }
+
+    #[test]
+    fn cloud_generation_requires_exact_provider_model_and_low_reasoning() {
+        let expected = serde_json::json!({
+            "provider":"github-copilot","model":"gpt-5.6-terra","reasoningEffort":"low"
+        });
+        validate_cloud_generation_response(&expected).unwrap();
+        for (field, value) in [
+            ("provider", serde_json::json!("azure-openai")),
+            ("model", serde_json::json!("gpt-5.5")),
+            ("model", serde_json::json!("gpt-5.6")),
+            ("reasoningEffort", serde_json::json!("high")),
+            ("reasoningEffort", serde_json::json!("medium")),
+            ("reasoningEffort", serde_json::Value::Null),
+        ] {
+            let mut response = expected.clone();
+            response[field] = value;
+            assert!(matches!(
+                validate_cloud_generation_response(&response),
+                Err(ApiError::Configuration(_))
+            ));
+        }
+        for field in ["provider", "model", "reasoningEffort"] {
+            let mut response = expected.clone();
+            response.as_object_mut().unwrap().remove(field);
+            assert!(validate_cloud_generation_response(&response).is_err());
+        }
     }
 
     #[tokio::test]
@@ -1298,6 +1537,8 @@ mod tests {
         let store = Arc::new(MemoryStore::demo());
         store.set_provider_auth_mode("disconnected").await.unwrap();
         let state = AppState {
+            auth: Arc::new(crate::auth::Auth::default()),
+            identity: None,
             store: store.clone(),
             http: Client::new(),
             oauth_states: Arc::new(tokio::sync::Mutex::new(HashMap::new())),

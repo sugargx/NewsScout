@@ -11,22 +11,23 @@
     </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ScoutNews</title>
+    <title>NewsScout</title>
     <style>
 :root {
   color-scheme: light;
-  --cp-bg: #f7f4ef;
-  --cp-bg-elevated: #fcfbf8;
-  --cp-surface: #ffffff;
-  --cp-surface-soft: #f5f5f5;
-  --cp-border: #dedede;
-  --cp-border-strong: #919191;
-  --cp-text: #242424;
-  --cp-text-muted: #5c5c5c;
-  --cp-text-soft: #6f6f6f;
-  --cp-accent: #b11f4b;
-  --cp-accent-hover: #9a1a41;
-  --cp-accent-soft: rgba(177, 31, 75, 0.08);
+  --cp-bg: #f3f4ef;
+  --cp-bg-elevated: #e9ece7;
+  --cp-sidebar: #e9ede7;
+  --cp-surface: #fcfcf9;
+  --cp-surface-soft: #e4eeea;
+  --cp-border: #dce1da;
+  --cp-border-strong: #aeb8b2;
+  --cp-text: #17211e;
+  --cp-text-muted: #66716c;
+  --cp-text-soft: #4f5b56;
+  --cp-accent: #275d52;
+  --cp-accent-hover: #1d4a41;
+  --cp-accent-soft: #e4eeea;
   --cp-accent-fg: #ffffff;
   --cp-success: #16a34a;
   --cp-danger: #dc2626;
@@ -66,8 +67,28 @@ html[data-theme="dark"] {
   --cp-highlight: rgba(253, 142, 161, 0.12);
 }
 html, body, #root { min-height: 100%; margin: 0; }
-body { background: var(--cp-bg); color: var(--cp-text); font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; }
+body { background: var(--cp-bg); color: var(--cp-text); font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; font-size: 14px; }
+/* Static first-paint frame; React replaces it on the first render. */
+.ns-boot { min-height: 100vh; }
+.ns-boot-side { position: fixed; inset: 0 auto 0 0; width: 176px; background: var(--cp-sidebar, var(--cp-bg-elevated)); border-right: 1px solid var(--cp-border); }
+.ns-boot-brand { display: flex; align-items: center; gap: 9px; height: 76px; padding: 0 18px; font: 600 17px/1 Georgia, serif; }
+.ns-boot-brand i { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--cp-text); border-radius: 50%; font-style: normal; }
+.ns-boot-bar { display: none; }
+.ns-boot-main { width: min(calc(100% - 176px), 1120px); margin-left: max(176px, calc(176px + (100vw - 176px - 1120px) / 2)); padding: 40px clamp(24px, 4vw, 56px); box-sizing: border-box; }
+.ns-boot-main span { display: block; height: 14px; margin-bottom: 18px; border-radius: 6px; background: var(--cp-border); opacity: .55; }
+.ns-boot-main span:nth-child(1) { width: 140px; height: 12px; }
+.ns-boot-main span:nth-child(2) { width: min(420px, 70%); height: 38px; }
+.ns-boot-main span:nth-child(3) { width: min(560px, 90%); }
+@media (max-width: 768px) {
+  .ns-boot-side { display: none; }
+  .ns-boot-bar { display: flex; align-items: center; height: 56px; padding: 0 18px; border-bottom: 1px solid var(--cp-border); background: var(--cp-surface); }
+  .ns-boot-bar .ns-boot-brand { height: auto; gap: 4px; padding: 0; font: 700 14px/1 "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif; }
+  .ns-boot-bar .ns-boot-brand i { width: auto; height: auto; border: 0; }
+  .ns-boot-main { width: auto; margin-left: 0; padding: 24px 20px 60px; }
+}
+@media (prefers-reduced-motion: no-preference) { .ns-boot-main span { animation: ns-boot-pulse 1.4s ease-in-out infinite alternate; } }
+@keyframes ns-boot-pulse { to { opacity: .25; } }
     </style>
   </head>
-  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+  <body><div id="root"><div class="ns-boot" aria-hidden="true"><div class="ns-boot-side"><div class="ns-boot-brand"><i>&#x1D4A9;</i>NewsScout</div></div><div class="ns-boot-bar"><div class="ns-boot-brand"><i>&#x1D4A9;</i>NewsScout</div></div><div class="ns-boot-main"><span></span><span></span><span></span></div></div></div><script type="module" src="/src/main.tsx"></script></body>
 </html>

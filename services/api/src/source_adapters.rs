@@ -66,19 +66,28 @@ pub fn validate_adapter_endpoint(adapter: &str, endpoint: &str) -> Result<Url> {
     let valid = match adapter {
         "x_public_preview" => crate::x_public_posts::validate_profile_endpoint(endpoint).is_ok(),
         "x_oembed" => {
-            api_port && host == "publish.x.com" && url.path() == "/oembed"
-                && url.query_pairs().all(|(key, _)| matches!(key.as_ref(), "url" | "omit_script" | "hide_thread" | "lang"))
+            api_port
+                && host == "publish.x.com"
+                && url.path() == "/oembed"
+                && url.query_pairs().all(|(key, _)| {
+                    matches!(key.as_ref(), "url" | "omit_script" | "hide_thread" | "lang")
+                })
                 && query_value(&url, "url").is_some_and(|post| {
-                    Url::parse(&post).ok().and_then(|post_url| {
-                        let handle = post_url.path_segments()?.next()?;
-                        crate::x_public_posts::validate_post_url(&post, handle).ok()
-                    }).is_some()
+                    Url::parse(&post)
+                        .ok()
+                        .and_then(|post_url| {
+                            let handle = post_url.path_segments()?.next()?;
+                            crate::x_public_posts::validate_post_url(&post, handle).ok()
+                        })
+                        .is_some()
                 })
                 && query_value(&url, "omit_script").as_deref() == Some("true")
                 && query_value(&url, "hide_thread").as_deref() == Some("true")
                 && query_value(&url, "lang").as_deref() == Some("en")
         }
-        "reddit_comment_atom" => crate::reddit_comments::validate_comment_rss_endpoint(&url).is_ok(),
+        "reddit_comment_atom" => {
+            crate::reddit_comments::validate_comment_rss_endpoint(&url).is_ok()
+        }
         "rss" | "atom" | "podcast_rss" | "github_release_atom" | "publisher_page" => true,
         "arxiv_atom" => {
             api_port
@@ -605,23 +614,66 @@ fn attribute<'a>(header: &'a str, wanted: &str) -> Option<&'a str> {
     None
 }
 
+fn anthropic_news_url(href: &str, endpoint: &Url) -> Result<String> {
+    let location = href.split(['?', '#']).next().unwrap_or_default();
+    if location.contains(['%', '\\'])
+        || location.split('/').any(|part| matches!(part, "." | ".."))
+    {
+        bail!("ambiguous news card URL");
+    }
+    let resolved = endpoint.join(href).context("invalid news card URL")?;
+    validate_public_https(resolved.as_str())?;
+    let canonical = canonical_url(resolved.as_str())?;
+    let url = Url::parse(&canonical)?;
+    let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
+    let article = match parts.as_slice() {
+        // Featured first-party reports such as /features/ebola-response are publications too.
+        ["news" | "features", article] => Some(*article),
+        [article]
+            if !matches!(
+                *article,
+                "news" | "features" | "research" | "engineering" | "careers" | "about" | "company"
+                    | "products" | "models" | "claude" | "pricing" | "contact"
+                    | "contact-sales" | "api" | "login" | "press" | "press-kit"
+                    | "events" | "learn" | "legal" | "privacy" | "terms"
+                    | "sitemap.xml" | "robots.txt"
+            ) =>
+        {
+            Some(*article)
+        }
+        _ => None,
+    };
+    if url.host_str() != Some("www.anthropic.com")
+        || url.port().is_some_and(|port| port != 443)
+        || url.query().is_some()
+        || !article.is_some_and(slug)
+    {
+        bail!("unsupported first-party news card URL");
+    }
+    Ok(canonical)
+}
+
 fn parse_anthropic(html: &str, endpoint: &Url) -> Result<Vec<FetchedItem>> {
     let mut seen = BTreeSet::new();
     let mut items = Vec::new();
     for (header, body) in elements(html, "a") {
-        let Some(href) = attribute(header, "href") else {
-            continue;
-        };
-        let Ok(url) = endpoint.join(href) else {
-            continue;
-        };
-        if url.host_str() != Some("www.anthropic.com")
-            || url.scheme() != "https"
-            || !url.path().starts_with("/news/")
-            || url.path() == "/news/"
-        {
+        let times = elements(body, "time");
+        let known_card = attribute(header, "class").is_some_and(|classes| {
+            classes.split_ascii_whitespace().any(|class| {
+                (class.starts_with("PublicationList") && class.ends_with("__listItem"))
+                    || (class.starts_with("FeaturedGrid")
+                        && (class.ends_with("__content") || class.ends_with("__sideLink")))
+            })
+        });
+        if times.is_empty() && !known_card {
             continue;
         }
+        // Dated article cards, not URL prefixes, identify news. Reject partial
+        // contract failures instead of reporting a successful but incomplete fetch.
+        let href = attribute(header, "href")
+            .context("Anthropic index contract changed: news card has no URL")?;
+        let canonical = anthropic_news_url(href, endpoint)
+            .context("Anthropic index contract changed: unsupported dated news card URL")?;
         let title = ["h1", "h2", "h3", "h4"]
             .iter()
             .find_map(|tag| {
@@ -638,27 +690,25 @@ fn parse_anthropic(html: &str, endpoint: &Url) -> Result<Vec<FetchedItem>> {
                             .map(|_| plain_text(text))
                     })
             });
-        let Some(title) = title.filter(|text| !text.is_empty()) else {
-            continue;
+        let title = title
+            .filter(|text| !text.is_empty())
+            .context("Anthropic index contract changed: dated news card has no title")?;
+        let [(time_header, time_text)] = times.as_slice() else {
+            bail!("Anthropic index contract changed: news card must have one publication date");
         };
-        let published = elements(body, "time")
-            .first()
-            .and_then(|(header, text)| {
-                attribute(header, "datetime")
-                    .and_then(|date| DateTime::parse_from_rfc3339(date).ok())
-                    .map(|date| date.with_timezone(&Utc))
-                    .or_else(|| {
-                        let value = plain_text(text);
-                        NaiveDate::parse_from_str(&value, "%b %e, %Y")
-                            .or_else(|_| NaiveDate::parse_from_str(&value, "%B %e, %Y"))
-                            .ok()
-                            .and_then(|date| date.and_hms_opt(0, 0, 0))
-                            .map(|date| date.and_utc())
-                    })
-            })
-            .and_then(|date| valid_publication(Some(date), Utc::now()));
-        let Some(published) = published else { continue };
-        let canonical = canonical_url(url.as_str())?;
+        let publication = if let Some(value) = attribute(time_header, "datetime") {
+            anthropic_publication_date(value)
+        } else {
+            let value = plain_text(time_text);
+            NaiveDate::parse_from_str(&value, "%b %e, %Y")
+                .or_else(|_| NaiveDate::parse_from_str(&value, "%B %e, %Y"))
+                .ok()
+                .and_then(|date| date.and_hms_opt(0, 0, 0))
+                .and_then(|date| valid_publication(Some(date.and_utc()), Utc::now()))
+                .map(|date| (date, "day"))
+        };
+        let (published, precision) = publication
+            .context("Anthropic index contract changed: news card has an invalid publication date")?;
         if !seen.insert(canonical.clone()) {
             continue;
         }
@@ -671,15 +721,21 @@ fn parse_anthropic(html: &str, endpoint: &Url) -> Result<Vec<FetchedItem>> {
             canonical,
             published,
             summary,
-            json!({"kind":"official_news_index","datePrecision":"day","articleBodyFetched":false}),
+            json!({"kind":"official_news_index","datePrecision":precision,"articleBodyFetched":false}),
         )?);
-        if items.len() == MAX_FEED_ENTRIES {
-            break;
+        if items.len() > MAX_FEED_ENTRIES {
+            bail!("Anthropic index contract changed: dated news cards exceed the collection limit");
         }
     }
     if items.is_empty() {
         bail!("Anthropic index contract changed: no dated news cards; manual review required");
     }
+    items.sort_by(|left, right| {
+        right
+            .published_at
+            .cmp(&left.published_at)
+            .then(left.url.cmp(&right.url))
+    });
     Ok(items)
 }
 
@@ -720,7 +776,10 @@ fn anthropic_flight_payload(html: &str) -> Result<String> {
 }
 
 fn anthropic_index_date(article: &Value) -> Option<(DateTime<Utc>, &'static str)> {
-    let value = article.get("publishedOn")?.as_str()?;
+    anthropic_publication_date(article.get("publishedOn")?.as_str()?)
+}
+
+fn anthropic_publication_date(value: &str) -> Option<(DateTime<Utc>, &'static str)> {
     if let Ok(published) = DateTime::parse_from_rfc3339(value) {
         return valid_publication(Some(published.with_timezone(&Utc)), Utc::now())
             .map(|published| (published, "time"));
@@ -997,7 +1056,8 @@ mod tests {
     #[test]
     fn x_oembed_transport_is_restricted_to_known_post_api_requests() {
         let mut endpoint = Url::parse("https://publish.x.com/oembed").unwrap();
-        endpoint.query_pairs_mut()
+        endpoint
+            .query_pairs_mut()
             .append_pair("url", "https://x.com/karpathy/status/2083749667410727319")
             .append_pair("omit_script", "true")
             .append_pair("hide_thread", "true")
@@ -1005,16 +1065,27 @@ mod tests {
         assert!(validate_adapter_endpoint("x_oembed", endpoint.as_str()).is_ok());
         assert!(!supported_adapters().contains(&"x_oembed"));
         for invalid in [
-            endpoint.as_str().replace("publish.x.com", "publish.x.com.evil.example"),
+            endpoint
+                .as_str()
+                .replace("publish.x.com", "publish.x.com.evil.example"),
             endpoint.as_str().replace("publish.x.com", "127.0.0.1"),
-            endpoint.as_str().replace("https://publish", "http://publish"),
-            endpoint.as_str().replace("omit_script=true", "omit_script=false"),
-            endpoint.as_str().replace("hide_thread=true", "hide_thread=false"),
+            endpoint
+                .as_str()
+                .replace("https://publish", "http://publish"),
+            endpoint
+                .as_str()
+                .replace("omit_script=true", "omit_script=false"),
+            endpoint
+                .as_str()
+                .replace("hide_thread=true", "hide_thread=false"),
             format!("{endpoint}&url=https%3A%2F%2Fx.com%2Fkarpathy"),
             format!("{endpoint}&callback=script"),
             "https://x.com/karpathy".into(),
         ] {
-            assert!(validate_adapter_endpoint("x_oembed", &invalid).is_err(), "{invalid}");
+            assert!(
+                validate_adapter_endpoint("x_oembed", &invalid).is_err(),
+                "{invalid}"
+            );
         }
     }
 
@@ -1154,6 +1225,197 @@ mod tests {
         assert_eq!(items[0].title, "Example & research");
         assert_eq!(items[0].summary.as_deref(), Some("Actual excerpt."));
         assert!(parse_anthropic("<html>Login required</html>", &endpoint).is_err());
+    }
+
+    #[test]
+    fn anthropic_news_accepts_root_announcements_without_republishing_dates() {
+        let endpoint = Url::parse("https://www.anthropic.com/news").unwrap();
+        let root = r#"<a href="/claude-opus-5-5" class="FeaturedGrid-module__hash__content">
+            <h2>Introducing Claude Opus 5.5</h2><time>Sep 22, 2026</time>
+            <p>Official index summary.</p></a>"#;
+        let legacy = r#"<a href="/news/example"><time>Aug 27, 2025</time>
+            <span class="PublicationList__title">Example &amp; research</span><p>Actual excerpt.</p></a>"#;
+        let duplicate = root.replace(
+            "/claude-opus-5-5\"",
+            "/claude-opus-5-5?utm_source=news#announcement\"",
+        );
+        let navigation = r#"<a href="/claude/opus"><h2>Opus</h2></a>
+            <a href="/news" class="PublicationList__more">See more</a>"#;
+        let html = format!("{legacy}{navigation}{root}{duplicate}<script>{root}</script>");
+        let items = parse("anthropic_news", html.as_bytes(), &endpoint).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].url, "https://www.anthropic.com/claude-opus-5-5");
+        assert_eq!(items[0].title, "Introducing Claude Opus 5.5");
+        assert_eq!(
+            items[0].published_at.unwrap().to_rfc3339(),
+            "2026-09-22T00:00:00+00:00"
+        );
+        assert_eq!(items[0].source_metadata["datePrecision"], "day");
+        assert_eq!(items[0].source_metadata["articleBodyFetched"], false);
+        assert!(items[0].reading_context.is_none());
+        let prior = metadata_item(
+            "https://www.anthropic.com/news/example".into(),
+            "Example & research".into(),
+            "https://www.anthropic.com/news/example".into(),
+            DateTime::parse_from_rfc3339("2025-08-27T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            Some("Actual excerpt.".into()),
+            json!({"kind":"official_news_index","datePrecision":"day","articleBodyFetched":false}),
+        )
+        .unwrap();
+        assert_eq!(items[1].content_hash, prior.content_hash);
+        assert!(official_evidence_url(
+            "anthropic_news",
+            endpoint.as_str(),
+            &items[0].url,
+            &json!(["anthropic.com"]),
+            &Value::Null,
+        ));
+    }
+
+    #[test]
+    fn anthropic_news_preserves_timestamp_and_date_attribute_precision() {
+        let endpoint = Url::parse("https://www.anthropic.com/news").unwrap();
+        let html = r#"<a href="/timed-release"><h2>Timed announcement</h2>
+            <time datetime="2025-08-27T15:12:00-07:00">Aug 27, 2025</time></a>
+            <a href="/dated-release"><h2>Dated announcement</h2>
+            <time datetime="2025-08-27">Aug 27, 2025</time></a>"#;
+        let items = parse_anthropic(html, &endpoint).unwrap();
+        assert_eq!(items[0].source_metadata["datePrecision"], "time");
+        assert_eq!(
+            items[0].published_at.unwrap().to_rfc3339(),
+            "2025-08-27T22:12:00+00:00"
+        );
+        assert_eq!(items[1].source_metadata["datePrecision"], "day");
+        assert_eq!(
+            items[1].published_at.unwrap().to_rfc3339(),
+            "2025-08-27T00:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn anthropic_news_partial_card_failures_are_not_success() {
+        let endpoint = Url::parse("https://www.anthropic.com/news").unwrap();
+        let valid = r#"<a href="/news/valid"><h2>Valid news</h2><time>Aug 27, 2025</time></a>"#;
+        for invalid in [
+            r#"<a href="/new-announcement"><time>Aug 27, 2025</time></a>"#,
+            r#"<a><h2>Missing URL</h2><time>Aug 27, 2025</time></a>"#,
+            r#"<a href="/new-announcement" class="FeaturedGrid__content"><h2>Missing date</h2></a>"#,
+            r#"<a href="/news/entry" class="PublicationList__listItem"><h2>Missing date</h2></a>"#,
+            r#"<a href="/new-announcement"><h2>Bad date</h2><time>yesterday</time></a>"#,
+            r#"<a href="/new-announcement"><h2>Future date</h2><time>Aug 27, 2999</time></a>"#,
+            r#"<a href="/new-announcement"><h2>Bad attribute</h2><time datetime="invalid">Aug 27, 2025</time></a>"#,
+            r#"<a href="/new-announcement"><h2>Ambiguous date</h2><time>Aug 27, 2025</time><time>Aug 28, 2025</time></a>"#,
+        ] {
+            let error = parse_anthropic(&format!("{valid}{invalid}"), &endpoint)
+                .expect_err("a good older card must not hide a failed announcement card");
+            assert!(error.to_string().contains("Anthropic index contract changed"));
+        }
+    }
+
+    #[test]
+    fn anthropic_news_rejects_unsafe_and_navigation_urls_in_dated_cards() {
+        let endpoint = Url::parse("https://www.anthropic.com/news").unwrap();
+        for href in [
+            "http://www.anthropic.com/new-announcement",
+            "https://www.anthropic.com.evil.com/new-announcement",
+            "https://www.anthropic.com@evil.com/new-announcement",
+            "https://user:password@www.anthropic.com/new-announcement",
+            "https://www.anthropic.com:444/new-announcement",
+            "https://127.0.0.1/new-announcement",
+            "/new-announcement?redirect=https://example.com",
+            "/news/%2e%2e/new-announcement",
+            "/news/../new-announcement",
+            "/new%2fannouncement",
+            "/new%252fannouncement",
+            "/news/example/extra",
+            "/features",
+            "/features/",
+            "/features/example/extra",
+            "/claude/opus",
+            "/research/example",
+            "/",
+            "/news/",
+            "/pricing",
+            "/contact-sales",
+            "/careers",
+            "/press-kit",
+            "#latest",
+        ] {
+            let card = format!(
+                r#"<a href="{href}"><h2>Not a valid announcement URL</h2><time>Aug 27, 2025</time></a>"#
+            );
+            assert!(parse_anthropic(&card, &endpoint).is_err(), "{href}");
+        }
+        let card = r#"<a href="https://www.anthropic.com/threat-intelligence-report-september-2026">
+            <h2>Report announcement</h2><time>Sep 10, 2026</time></a>"#;
+        assert_eq!(parse_anthropic(card, &endpoint).unwrap().len(), 1);
+        // Live 2026-09-22 shape: one featured report card must not stop the whole index.
+        let feature = r#"<a href="https://www.anthropic.com/features/ebola-response"
+            class="FeaturedGrid-module-scss-module__W1FydW__sideLink FeaturedGrid-module-scss-module__W1FydW__gridItem">
+            <h3>The Situation Report</h3>
+            <time class="FeaturedGrid-module-scss-module__W1FydW__date caption">Sep 22, 2026</time></a>"#;
+        let items = parse_anthropic(feature, &endpoint).unwrap();
+        assert_eq!(items[0].url, "https://www.anthropic.com/features/ebola-response");
+        assert_eq!(items[0].title, "The Situation Report");
+    }
+
+    #[test]
+    fn anthropic_news_does_not_hide_cards_beyond_the_collection_limit() {
+        let endpoint = Url::parse("https://www.anthropic.com/news").unwrap();
+        let html: String = (0..=MAX_FEED_ENTRIES)
+            .map(|index| format!(
+                r#"<a href="/news/item-{index}"><h2>Article {index}</h2><time>Aug 27, 2025</time></a>"#
+            ))
+            .collect();
+        let error = parse_anthropic(&html, &endpoint).unwrap_err();
+        assert!(error.to_string().contains("collection limit"));
+    }
+
+    #[test]
+    #[ignore = "explicit read-only replay of a saved public News index; no network or database"]
+    fn anthropic_news_saved_index_contract() {
+        let file = std::env::var("SCOUTNEWS_ANTHROPIC_NEWS_SNAPSHOT").unwrap();
+        let expected = std::env::var("SCOUTNEWS_ANTHROPIC_EXPECTED_NEWS_URL").unwrap();
+        let bytes = std::fs::read(file).unwrap();
+        let endpoint = Url::parse("https://www.anthropic.com/news").unwrap();
+        let items = parse("anthropic_news", &bytes, &endpoint).unwrap();
+        let item = items.iter().find(|item| item.url == expected).unwrap();
+        assert!(item.published_at.is_some());
+        assert_eq!(item.source_metadata["articleBodyFetched"], false);
+        println!(
+            "news snapshot: entries={}, expectedUrl={}, publishedAt={:?}, precision={}",
+            items.len(), item.url, item.published_at, item.source_metadata["datePrecision"]
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit opt-in: reads robots and the public News index, never article bodies"]
+    async fn anthropic_news_live_index_contract() {
+        use crate::ingestion::{AdapterSource, FeedAdapter, FetchOutcome};
+        let expected = std::env::var("SCOUTNEWS_ANTHROPIC_EXPECTED_NEWS_URL").unwrap();
+        let adapter = FeedAdapter::new(reqwest::Client::new());
+        let result = adapter
+            .fetch_with_adapter(
+                &AdapterSource {
+                    endpoint: "https://www.anthropic.com/news".into(),
+                    etag: None,
+                    last_modified: None,
+                },
+                "anthropic_news",
+            )
+            .await
+            .unwrap();
+        let FetchOutcome::Items { items, .. } = result else {
+            panic!("unconditional public index fetch returned no body");
+        };
+        let item = items.iter().find(|item| item.url == expected).unwrap();
+        assert_eq!(item.source_metadata["articleBodyFetched"], false);
+        println!(
+            "live news: entries={}, expectedUrl={}, publishedAt={:?}, precision={}",
+            items.len(), item.url, item.published_at, item.source_metadata["datePrecision"]
+        );
     }
 
     fn flight_html(chunks: &[&str]) -> String {

@@ -106,7 +106,7 @@ test("reader is a mobile modal with an inert background and trapped keyboard foc
   await expect(reader).toBeVisible();
   expect(await page.locator(".ns-preview-slot").evaluate(element => getComputedStyle(element).position)).toBe("fixed");
   expect(await page.locator("aside").evaluate(element => (element as HTMLElement).inert)).toBe(true);
-  const close = reader.getByRole("button", { name: "关闭阅读面板", exact: true });
+  const close = reader.getByRole("button", { name: "返回列表", exact: true });
   await reader.focus();
   await page.keyboard.press("Shift+Tab");
   expect(await page.evaluate(() => !!document.activeElement?.closest(".ns-preview"))).toBe(true);
@@ -123,7 +123,7 @@ test("reader is a mobile modal with an inert background and trapped keyboard foc
 test("engineering filter joins frozen radar queries and coverage headings stay concise", async ({ page }) => {
   await page.goto("/radar");
   await page.locator("article[data-event-id]").first().waitFor();
-  await page.getByText("更多筛选 · 来源等级 / T1 / 排序",{exact:true}).click();
+  await page.getByText("更多筛选 · 时间与排序",{exact:true}).click();
   const response = page.waitForResponse(response => response.url().includes("/api/v1/events?") && new URL(response.url()).searchParams.get("includeEngineering") === "true");
   await page.getByLabel("包含开发构建", { exact: true }).check();
   await response;
@@ -137,7 +137,7 @@ test("engineering filter joins frozen radar queries and coverage headings stay c
     await expect(coverage.locator(":scope > summary")).not.toContainText("同名关联");
     await expect(coverage.locator("[data-coverage-member]").first()).toContainText(/.+/);
   }
-  await page.getByRole("tab",{name:"主题关联",exact:true}).click();
+  await page.getByRole("tab",{name:"主题地图",exact:true}).click();
   const graphResponse=page.waitForResponse(response=>response.url().includes("/explore")
     &&new URL(response.url()).searchParams.get("includeEngineering")==="true");
   await page.getByLabel("包含开发构建",{exact:true}).check();
@@ -152,11 +152,15 @@ test("engineering filter joins frozen radar queries and coverage headings stay c
 
 test("visiting the T1 queue never sends opened state before selecting an article", async ({ page }) => {
   const opened = recordOpenedRequests(page);
+  const queueResponse = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/v1/events" && url.searchParams.get("tier") === "T1";
+  });
   await page.goto("/reading");
-  const first = page.locator(".ns-library-item").first();
+  const eventId = (await (await queueResponse).json()).items[0].id;
+  const first = page.getByRole("button",{name:"从第 1 篇开始",exact:true});
   await first.waitFor();
   expect(opened).toEqual([]);
-  const eventId = await first.getAttribute("data-event-id");
   const request = page.waitForRequest(candidate => candidate.method() === "PUT"
     && candidate.url().endsWith(`/api/v1/events/${eventId}/state`)
     && JSON.parse(candidate.postData() ?? "{}").opened === true);
@@ -221,8 +225,9 @@ test("brief cards remain compact, omit item sharing, and reserve a meaningful de
     await page.goto("/");
     const card=page.locator(`article[data-event-id="${event.id}"]`);
     await expect(card).toBeVisible();
-    await expect(card.locator(".ns-summary-points li")).toHaveCount(2);
-    expect((await card.locator(".ns-summary-points").innerText()).length).toBeLessThanOrEqual(240);
+    await expect(card.locator(".ns-summary-points")).toHaveCount(0);
+    await expect(card.locator(".ns-reader-row-preview")).toHaveCount(1);
+    expect((await card.locator(".ns-reader-row-preview").innerText()).length).toBeLessThanOrEqual(240);
     await expect(card.getByText("分享卡片",{exact:true})).toHaveCount(0);
     await card.getByRole("heading").getByRole("button").click();
     const reader=page.getByRole("article",{name:"文章就地阅读",exact:true});

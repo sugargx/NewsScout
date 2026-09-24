@@ -46,6 +46,10 @@ try {
         & (Join-Path $postgresBin 'pg_restore.exe') -w -h 127.0.0.1 -p 55432 -U scoutnews `
             -d $database --no-owner --no-privileges --exit-on-error $backupPath
         if ($LASTEXITCODE -ne 0) { throw "Isolated corpus restore failed with exit code $LASTEXITCODE." }
+        # --no-privileges also drops the reader-role grants that migration 0025 recorded as applied.
+        $grants = 'GRANT USAGE ON SCHEMA public TO scoutnews_reader; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO scoutnews_reader; REVOKE ALL ON _sqlx_migrations,source_directory_imports FROM scoutnews_reader; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO scoutnews_reader;'
+        & (Join-Path $postgresBin 'psql.exe') -w -h 127.0.0.1 -p 55432 -U scoutnews -d $database -v ON_ERROR_STOP=1 -q -c $grants
+        if ($LASTEXITCODE -ne 0) { throw "Reader-role grant restore failed with exit code $LASTEXITCODE." }
     }
     Start-ScoutNewsApplication -WebPort 15173 -LogDirectory $runDirectory -Owned $owned -ApiExecutable $ApiExecutable
     Write-Host "Isolated live E2E: $($env:SCOUTNEWS_E2E_BASE_URL), database $database"

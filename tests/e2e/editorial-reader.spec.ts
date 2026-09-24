@@ -1,5 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-import type { Brief, CoverageMember, Event, EventState } from "../../apps/web/src/types";
+import { chromium, expect, test, type Page } from "@playwright/test";
+import type { Brief, CoverageMember, Event, EventState, Topic } from "../../apps/web/src/types";
 import { editionGroups, refreshOutcome } from "../../apps/web/src/editorial";
 import { QueryClient } from "@tanstack/react-query";
 import { updateReaderState } from "../../apps/web/src/reader";
@@ -39,6 +39,8 @@ function edition(items:Event[]):Brief {
 }
 async function stub(page:Page,publicMode=false) {
   let items=titles.map((_,index)=>fixture(index));
+  let cutoff="2026-09-15T02:00:00Z";
+  let latest:Partial<Brief>={};
   let manyWeeklyTopics=false;
   const stateWrites:{id:string;value:EventState}[]=[],unexpectedWrites:string[]=[],reads:string[]=[];
   const graph={sampleSize:12,limit:100,meaning:"关键词共现",nodes:[{id:"模型与研究",count:8},{id:"工程实践",count:4},{id:"评测",count:2}],
@@ -63,12 +65,13 @@ async function stub(page:Page,publicMode=false) {
     if(path.endsWith("/me/interests"))return send({items:[{id:"topic",label:"模型与研究",enabled:true,weight:1,group:"test",context:""}]});
     if(path.endsWith("/sources"))return send({items:[{id:"publisher",name:"原始发布者",tier:"T1",contentType:"blog"}]});
     if(path.endsWith("/explore"))return send(graph);
+    if(publicMode&&path.endsWith("/reading"))return send({items:items.map(project),nextOffset:null});
     if(path.endsWith("/briefs"))return send({items:[{localDate:"2026-09-01",generatedAt:"2026-09-01T01:00:00Z",itemCount:2}]});
     if(path.endsWith("/briefs/2026-09-01")) {
       const legacy=items.slice(0,2).map(({displayTitle,editorial,notInterestedReason,...rest})=>rest);
       return send({...edition(legacy),localDate:"2026-09-01",isSnapshot:true,sections:undefined});
     }
-    if(/\/briefs\/(?:latest|today)$/.test(path)||path.endsWith("/brief"))return send({...edition(items),items:publicMode?items.map(project):items});
+    if(/\/briefs\/(?:latest|today)$/.test(path)||path.endsWith("/brief"))return send({...edition(items),windowEnd:cutoff,generatedAt:cutoff,...latest,items:publicMode?items.map(project):items});
     if(path.endsWith("/weekly"))return send({...edition(items),sections:manyWeeklyTopics
       ?["评测与安全","记忆与检索","工程与开源","Agent 与工具","模型与多模态","芯片与硬件","AI 编程","治理与政策"].map((title,index)=>({
         key:`topic-${index}`,kind:"topic",title,description:"本周这一主题下值得回顾的进展。",
@@ -90,6 +93,9 @@ async function stub(page:Page,publicMode=false) {
     const observer=new MutationObserver(mark);observer.observe(document,{childList:true,subtree:true});mark();
   });
   return {stateWrites,unexpectedWrites,reads,
+    setCutoff:(value:string)=>{cutoff=value;},
+    latest:(value:Partial<Brief>)=>{latest=value;},
+    dayOnlyPublication:()=>{items=items.map((item,index)=>index===1?{...item,publicationPrecision:"day"}:item);},
     articleValue:(importance:string,summaryKind:Event["summaryKind"]="copilot")=>{
       items=items.map(item=>({...item,importance,summaryKind}));
     },
@@ -135,6 +141,130 @@ test.beforeEach(async({page})=>{
   await page.route(/\/(?:api|beta\/api)\//,route=>route.abort("blockedbyclient"));
 });
 
+for (const publicMode of [false, true]) for (const width of [1440, 1024, 768, 390]) {
+  test(`CoDesign reading contract ${publicMode ? "public" : "owner"} ${width}`, async ({page}, info) => {
+    const state = await stub(page, publicMode);
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.emulateMedia({colorScheme:"light", reducedMotion:"reduce"});
+    await page.setViewportSize({width, height: width === 390 ? 844 : 1000});
+    await page.goto("/");
+    await expect(page.getByRole("heading", {name:"今日精选", exact:true})).toBeVisible();
+    const cardSelector = publicMode ? ".ns-beta-feed [data-public-event]" : ".ns-edition-list [data-event-id]";
+    const cards = page.locator(cardSelector);
+    await expect(cards).toHaveCount(12);
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim())).toBe("#275d52");
+    if (width > 768) {
+      expect((await page.locator(".ns-reader-sidebar").boundingBox())?.width).toBe(176);
+    } else {
+      await expect(page.getByRole("button", {name:"打开导航", exact:true})).toBeVisible();
+      await expect(page.locator(".ns-reader-sidebar")).toBeHidden();
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({path:info.outputPath("selection.png"), fullPage:false});
+    const opener = cards.nth(2).locator("h3 button");
+    await opener.scrollIntoViewIfNeeded();
+    const beforeScroll = await page.evaluate(() => window.scrollY);
+    await opener.click();
+    const pane = page.getByRole(publicMode ? "complementary" : "article", {name:publicMode ? "公开文章阅读区" : "文章就地阅读", exact:true});
+    await expect(pane.getByRole("heading", {name:titles[2], exact:true})).toBeVisible();
+    const bounds = await pane.boundingBox();
+    expect(bounds?.y).toBe(0);
+    expect(bounds?.height).toBe(width === 390 ? 844 : 1000);
+    if (width <= 1024) {
+      await expect(page.getByRole("dialog", {name:"文章阅读窗口", exact:true})).toBeVisible();
+      await page.keyboard.press("Tab");
+      expect(await pane.evaluate(element => element.contains(document.activeElement))).toBe(true);
+      await page.keyboard.press("Shift+Tab");
+      expect(await pane.evaluate(element => element.contains(document.activeElement))).toBe(true);
+    } else {
+      expect(bounds!.width).toBeGreaterThanOrEqual(440);
+      expect(bounds!.width).toBeLessThanOrEqual(720);
+    }
+    await page.screenshot({path:info.outputPath("reader.png"), fullPage:false});
+    await page.keyboard.press("Escape");
+    await expect(pane).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    expect(Math.abs(await page.evaluate(() => window.scrollY) - beforeScroll)).toBeLessThanOrEqual(2);
+    await page.getByRole("button", {name:/^最近 24 小时的新内容/}).click();
+    await expect(page.getByRole("heading", {name:"新闻雷达", exact:true})).toBeVisible();
+    const tasks = page.getByRole("group", {name:"雷达浏览任务", exact:true});
+    await expect(tasks.getByRole("button", {name:/最近 24 小时/})).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => {
+      const url = new URL(state.reads.filter(value => /\/events\?/.test(value)).at(-1)!, "http://localhost");
+      return [url.searchParams.get("hours"), url.searchParams.get("sort")];
+    }).toEqual(["24", "newest"]);
+    const filters = page.locator('[data-ui="radar-filters"]');
+    await filters.getByLabel("主题筛选").selectOption("模型与研究");
+    await tasks.getByRole("button", {name:/值得阅读/}).click();
+    await expect(filters.getByLabel("主题筛选")).toHaveValue("模型与研究");
+    await page.getByText("更多筛选 · 时间与排序",{exact:true}).click();
+    await expect(page.getByLabel("时间范围",{exact:true})).toHaveValue("72");
+    await expect(page.getByLabel("排序", {exact:true})).toHaveValue("recommended");
+    await expect(page.locator(publicMode ? ".ns-beta-feed [data-public-event]" : ".ns-reader-list [data-event-id]")).toHaveCount(8);
+    await page.screenshot({path:info.outputPath("radar.png"), fullPage:false});
+    await page.getByRole("tab", {name:"主题地图", exact:true}).click();
+    await expect(page.getByRole("heading", {name:/^主题共现地图 · \d+ 个主题$/})).toBeAttached();
+    await expect(page.getByRole("group", {name:"关联文章", exact:true})).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({path:info.outputPath("topics.png"), fullPage:false});
+    await page.goto(publicMode ? "/?tab=weekly" : "/weekly");
+    await expect(page.getByRole("heading", {name:"选择一个主题开始回顾", exact:true})).toBeVisible();
+    await page.getByRole("navigation", {name:"本周主题导航", exact:true}).getByRole("button", {name:/模型与研究/}).click();
+    await expect(page.locator(cardSelector)).toHaveCount(8);
+    await page.screenshot({path:info.outputPath("weekly.png"), fullPage:false});
+    await page.goto(publicMode ? "/?tab=reading" : "/reading");
+    await expect(page.getByRole("heading", {name:titles[0], exact:true})).toBeVisible();
+    await page.screenshot({path:info.outputPath("deep-reading.png"), fullPage:false});
+    await page.getByRole("button", {name:"从第 1 篇开始", exact:true}).click();
+    await expect(page.getByRole(publicMode ? "complementary" : "article", {name:publicMode ? "公开文章阅读区" : "文章就地阅读", exact:true})).toBeVisible();
+    expect(state.unexpectedWrites).toEqual([]);
+    if (publicMode) expect(state.stateWrites).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+}
+
+for (const publicMode of [false, true]) test(`CoDesign mobile navigation ${publicMode ? "public" : "owner"}`, async ({page}) => {
+  await stub(page, publicMode);
+  await page.setViewportSize({width:390,height:844});
+  await page.emulateMedia({reducedMotion:"reduce"});
+  await page.goto("/");
+  await expect(page.getByRole("heading", {name:"今日精选", exact:true})).toBeVisible();
+  const toggle = page.getByRole("button", {name:"打开导航", exact:true});
+  await toggle.click();
+  const drawer = page.getByRole("dialog");
+  await expect(drawer).toBeVisible();
+  const nav = drawer.getByRole("navigation", {name:publicMode ? "公开阅读视图" : "主导航", exact:true});
+  await expect(nav.getByRole(publicMode ? "button" : "link")).toHaveCount(5);
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+  await expect(toggle).toBeFocused();
+  await toggle.click();
+  await nav.getByRole(publicMode ? "button" : "link", {name:"每周回顾", exact:true}).click();
+  await expect(drawer).toBeHidden();
+  await expect(page.getByRole("heading", {name:"每周回顾", exact:true})).toBeVisible();
+});
+
+for(const width of [1440,390])test(`CoDesign public utility interests returns focus ${width}`,async({page})=>{
+  const state=await stub(page,true);
+  await page.setViewportSize({width,height:900});
+  await page.emulateMedia({reducedMotion:"reduce"});
+  await page.goto("/");
+  await expect(page.getByRole("heading",{name:"今日精选",exact:true})).toBeVisible();
+  if(width<=1024)await page.getByRole("button",{name:"打开导航",exact:true}).click();
+  const utility=page.locator(width<=1024?".ns-reader-mobile-nav":".ns-reader-sidebar");
+  const opener=utility.getByRole("button",{name:"兴趣设置",exact:true});
+  await opener.click();
+  const dialog=page.getByRole("dialog",{name:"兴趣主题",exact:true});
+  await expect(dialog).toBeVisible();
+  if(width<=1024)await expect(utility).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(width<=1024?page.getByRole("button",{name:"兴趣主题",exact:true}):opener).toBeFocused();
+  expect(state.unexpectedWrites).toEqual([]);
+  expect(state.stateWrites).toEqual([]);
+});
+
 test("section annotations preserve order, membership and legacy editions without making classifications",()=>{
   const items=titles.map((_,index)=>fixture(index)),data=edition(items);
   expect(editionGroups(items,data.sections).flatMap(group=>group.items.map(item=>item.id))).toEqual(items.map(item=>item.id));
@@ -166,10 +296,11 @@ for(const theme of ["light","dark"])for(const width of [1440,390]) {
     await page.evaluate(value=>{document.documentElement.dataset.theme=value;},theme);
     const cards=page.locator(".ns-edition-list article[data-event-id]");
     await expect(cards).toHaveCount(12);
-    const titles=cards.locator("h2 button");
+    const titles=cards.locator(".ns-reader-row-title button");
     const boxes=await titles.evaluateAll(elements=>elements.map(element=>{const r=element.getBoundingClientRect();return {top:r.top,bottom:r.bottom};}));
-    expect(boxes[0].top).toBeLessThanOrEqual(350);
-    expect(boxes.filter(box=>box.top>=0&&box.bottom<=(width===390?844:900)).length).toBeGreaterThanOrEqual(width===390?2:4);
+    await expect(page.getByRole("button",{name:/^最近 24 小时的新内容/})).toBeVisible();
+    expect(boxes[0].bottom).toBeLessThanOrEqual(width===390?744:800);
+    expect(boxes.filter(box=>box.top>=0&&box.bottom<=(width===390?844:900)).length).toBeGreaterThanOrEqual(width===390?1:2);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
     expect(await cards.evaluateAll(elements=>elements.map(element=>element.getAttribute("data-event-id")))).toEqual(titlesForIds());
     await expect(page.locator('[data-section="catch_up"] [data-event-id]')).toHaveCount(3);
@@ -201,56 +332,35 @@ for(const publicMode of [false,true])for(const width of [1280,1440,1920,2560,390
   test(`${publicMode?"public":"owner"} reading text uses the available column ${width}`,async({page},info)=>{
     const state=await stub(page,publicMode);state.longReadingText();
     await page.setViewportSize({width,height:900});
-    await page.goto("/radar?view=cards");
-    const card=page.locator(".ns-reader-story").first();
-    await expect(card).toBeVisible();
-    const geometry=await card.evaluate(element=>{
-      const rect=element.getBoundingClientRect(),style=getComputedStyle(element);
-      const innerWidth=rect.width-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight)-parseFloat(style.borderLeftWidth)-parseFloat(style.borderRightWidth);
-      const title=element.querySelector(".ns-reader-story-title")!.getBoundingClientRect();
-      const body=element.querySelector(".ns-reader-story-body")!.getBoundingClientRect();
-      const actions=element.querySelector(".ns-reader-story-actions")!.getBoundingClientRect();
-      return {innerWidth,titleWidth:title.width,bodyWidth:body.width,bodyRight:body.right,bodyBottom:body.bottom,
-        titleBottom:title.bottom,actionsX:actions.x,actionsY:actions.y,actionsRight:actions.right,actionsBottom:actions.bottom,cardRight:rect.right,cardBottom:rect.bottom};
+    await page.goto("/radar");
+    const row=page.locator("article.ns-reader-row").first();
+    await expect(row).toBeVisible();
+    const geometry=await row.evaluate(element=>{
+      const rect=element.getBoundingClientRect(),content=element.querySelector(".ns-reader-row-content")!.getBoundingClientRect();
+      const preview=element.querySelector<HTMLElement>(".ns-reader-row-preview")!,actions=element.querySelector(".ns-reader-row-actions")!.getBoundingClientRect();
+      const width=(selector:string)=>element.querySelector(selector)!.getBoundingClientRect().width;
+      return {rowLeft:rect.left,rowRight:rect.right,rowBottom:rect.bottom,contentWidth:content.width,contentTop:content.top,contentRight:content.right,contentBottom:content.bottom,
+        titleWidth:width(".ns-reader-row-title"),previewWidth:preview.getBoundingClientRect().width,previewScroll:preview.scrollWidth,previewClient:preview.clientWidth,
+        metaWidth:width(".ns-reader-story-meta"),actionsX:actions.x,actionsY:actions.y,actionsRight:actions.right,actionsBottom:actions.bottom};
     });
-    expect(geometry.titleWidth).toBeCloseTo(geometry.innerWidth,0);
-    expect(geometry.bodyWidth).toBeCloseTo(geometry.innerWidth-(geometry.innerWidth>=1000?184:0),0);
-    expect(geometry.actionsY).toBeGreaterThanOrEqual(geometry.titleBottom);
-    expect(geometry.actionsRight).toBeLessThanOrEqual(geometry.cardRight);
-    expect(geometry.actionsBottom).toBeLessThanOrEqual(geometry.cardBottom);
-    if(geometry.innerWidth>=1000)expect(geometry.actionsX-geometry.bodyRight).toBeGreaterThanOrEqual(24);
-    else expect(geometry.actionsY).toBeGreaterThanOrEqual(geometry.bodyBottom);
-    await expect(card).not.toContainText("第三条完整摘要");
-    expect((await card.locator(".ns-summary-compact").textContent())!.length).toBeLessThanOrEqual(240);
-    await page.screenshot({path:info.outputPath(`card-column-${publicMode?"public":"owner"}-${width}.png`)});
-    const value=card.locator(".ns-reading-value");
-    await value.locator("summary").click();
-    const expanded=await card.evaluate(element=>{
-      const body=element.querySelector(".ns-reader-story-body")!.getBoundingClientRect();
-      const actions=element.querySelector(".ns-reader-story-actions")!.getBoundingClientRect();
-      const paragraph=element.querySelector(".ns-reading-value p")!.getBoundingClientRect();
-      return {bodyWidth:body.width,bodyBottom:body.bottom,actionsY:actions.y,valueWidth:paragraph.width};
-    });
-    expect(expanded.bodyWidth).toBeCloseTo(geometry.innerWidth,0);
-    expect(expanded.valueWidth).toBeCloseTo(geometry.innerWidth,0);
-    expect(expanded.actionsY).toBeGreaterThanOrEqual(expanded.bodyBottom);
-    await value.locator("summary").click();
-    await expect.poll(()=>card.locator(".ns-reader-story-body").evaluate(element=>element.getBoundingClientRect().width)).toBe(geometry.bodyWidth);
-    await page.getByRole("tab",{name:"紧凑列表",exact:true}).click();
-    const rowValue=page.locator(".ns-reader-row .ns-reading-value").first();
-    await rowValue.locator("summary").click();
-    const rowMeasure=await rowValue.evaluate(element=>{
-      const row=element.closest("article")!.getBoundingClientRect();
-      const content=element.parentElement!.getBoundingClientRect();
-      const paragraph=element.querySelector("p")!;
-      return {available:content.width,valueWidth:paragraph.getBoundingClientRect().width,
-        textWidth:paragraph.scrollWidth,paragraphWidth:paragraph.clientWidth,rowRight:row.right};
-    });
-    expect(rowMeasure.valueWidth).toBeCloseTo(rowMeasure.available,0);
-    expect(rowMeasure.textWidth).toBeLessThanOrEqual(rowMeasure.paragraphWidth);
-    expect(rowMeasure.rowRight).toBeLessThanOrEqual(width);
+    expect(geometry.titleWidth).toBeCloseTo(geometry.contentWidth,0);
+    expect(geometry.previewWidth).toBeCloseTo(geometry.contentWidth,0);
+    expect(geometry.metaWidth).toBeCloseTo(geometry.contentWidth,0);
+    expect(geometry.previewScroll).toBeLessThanOrEqual(geometry.previewClient);
+    expect(geometry.actionsRight).toBeLessThanOrEqual(geometry.rowRight+.5);
+    expect(geometry.actionsBottom).toBeLessThanOrEqual(geometry.rowBottom);
+    if(width>768) {
+      expect(geometry.actionsX).toBeGreaterThanOrEqual(geometry.contentRight+17);
+      expect(geometry.actionsY).toBeCloseTo(geometry.contentTop,0);
+      expect(geometry.rowRight-geometry.actionsRight).toBeLessThan(1);
+    } else {
+      expect(geometry.contentWidth).toBeCloseTo(geometry.rowRight-geometry.rowLeft,0);
+      expect(geometry.actionsY).toBeGreaterThanOrEqual(geometry.contentBottom);
+      expect(geometry.actionsRight).toBeCloseTo(geometry.rowRight,0);
+    }
+    await expect(row).not.toContainText("第三条完整摘要");
+    await page.screenshot({path:info.outputPath(`row-column-${publicMode?"public":"owner"}-${width}.png`)});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({path:info.outputPath(`value-column-${publicMode?"public":"owner"}-${width}.png`)});
     expect(state.stateWrites).toEqual([]);expect(state.unexpectedWrites).toEqual([]);
   });
 }
@@ -261,60 +371,45 @@ for(const publicMode of [false,true])for(const theme of ["light","dark"])for(con
     await page.emulateMedia({colorScheme:theme,reducedMotion:"reduce"});
     await page.setViewportSize({width,height:900});
     await page.goto("/");
-    const edition=page.getByLabel(publicMode?"晨报版本":"简报日期",{exact:true});
-    const outline=()=>edition.evaluate(element=>{
-      const style=getComputedStyle(element);
-      return style.outlineStyle!=="none"&&parseFloat(style.outlineWidth)>0&&style.outlineColor!=="rgba(0, 0, 0, 0)";
-    });
-    const underline=()=>edition.evaluate(element=>getComputedStyle(element.closest(".fui-Select")!,"::after").transform);
-    await edition.click();
-    expect(await outline()).toBe(false);
-    await expect.poll(underline).toBe("matrix(1, 0, 0, 1, 0, 0)");
-    await page.keyboard.press("Escape");
-    await page.keyboard.press("Tab");await page.keyboard.press("Shift+Tab");
+    const edition=page.getByLabel(publicMode?"晨报版本":"精选日期",{exact:true});
+    const ring=(locator=edition)=>locator.evaluate(element=>{const style=getComputedStyle(element);return {style:style.outlineStyle,width:style.outlineWidth,offset:style.outlineOffset,color:style.outlineColor};});
+    await expect(edition).toBeVisible();
+    expect(await edition.evaluate(element=>element.tagName==="SELECT"&&!element.closest(".fui-Select"))).toBe(true);
+    await edition.focus();await page.keyboard.press("Tab");await page.keyboard.press("Shift+Tab");
     await expect(edition).toBeFocused();
     expect(await edition.evaluate(element=>element.matches(":focus-visible"))).toBe(true);
-    expect(await outline()).toBe(false);
-    await expect.poll(underline).toBe("matrix(1, 0, 0, 1, 0, 0)");
-    expect(await edition.evaluate(element=>{
-      const style=getComputedStyle(element.closest(".fui-Select")!,"::after");
-      return {stroke:style.borderBottomWidth,style:style.borderBottomStyle,gradient:style.backgroundImage};
-    })).toEqual({stroke:"2px",style:"solid",gradient:"none"});
+    const focus=await ring();
+    expect(focus).toMatchObject({style:"solid",width:"3px",offset:"2px"});
+    expect(focus.color).not.toBe("rgba(0, 0, 0, 0)");
     await page.keyboard.press("End");await page.keyboard.press("Enter");
     await expect(edition).toHaveValue("2026-09-01");
-    await expect(page.locator(".ns-reader-story")).toHaveCount(2);
+    await expect(page.locator(publicMode?"[data-public-event]":".ns-edition-list article[data-event-id]")).toHaveCount(2);
     await page.screenshot({path:info.outputPath(`edition-focus-${publicMode?"public":"owner"}-${theme}-${width}.png`)});
-    const title=page.locator(".ns-reader-story-title>button").first();
+    const title=page.locator(publicMode?".ns-reader-story-title>button":".ns-reader-row-title>button").first();
     await title.focus();
-    await expect(title).toHaveCSS("outline-offset","4px");
+    expect(await ring(title)).toEqual(focus);
     await page.goto("/radar");
-    const search=page.locator(".ns-radar-primary input");
+    const search=page.locator(".ns-filter-search input");
     await search.click();
-    expect(await search.evaluate(element=>{
-      const style=getComputedStyle(element);
-      return style.outlineStyle!=="none"&&parseFloat(style.outlineWidth)>0&&style.outlineColor!=="rgba(0, 0, 0, 0)";
-    })).toBe(false);
-    await expect.poll(()=>search.evaluate(element=>getComputedStyle(element.closest(".fui-Input")!,"::after").transform)).toBe("matrix(1, 0, 0, 1, 0, 0)");
+    expect(await search.evaluate(element=>getComputedStyle(element).outlineStyle)).toBe("none");
+    expect(await ring(page.locator(".ns-filter-search"))).toEqual(focus);
     expect(state.stateWrites).toEqual([]);expect(state.unexpectedWrites).toEqual([]);
   });
 }
 
 for(const publicMode of [false,true]) {
-  test(`${publicMode?"public":"owner"} grouped cards do not reserve an empty action column`,async({page})=>{
+  test(`${publicMode?"public":"owner"} grouped rows do not reserve an empty action column`,async({page})=>{
     const state=await stub(page,publicMode);state.group("same_event");
     await page.setViewportSize({width:1920,height:900});
-    await page.goto("/radar?view=cards");
-    const card=page.locator(".ns-reader-story").first();
-    await expect(card).toBeVisible();
-    await expect(card.locator(".ns-reader-story-actions")).toHaveCount(0);
-    const dimensions=await card.evaluate(element=>{
-      const style=getComputedStyle(element);
-      return {innerWidth:element.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight),
-        titleWidth:element.querySelector(".ns-reader-story-title")!.getBoundingClientRect().width,
-        bodyWidth:element.querySelector(".ns-reader-story-body")!.getBoundingClientRect().width};
-    });
-    expect(dimensions.titleWidth).toBeCloseTo(dimensions.innerWidth,0);
-    expect(dimensions.bodyWidth).toBeCloseTo(dimensions.innerWidth,0);
+    await page.goto("/radar");
+    const row=page.locator("article.ns-reader-row").first();
+    await expect(row).toBeVisible();
+    await expect(row.locator(".ns-reader-row-actions")).toHaveCount(0);
+    const dimensions=await row.evaluate(element=>({width:element.clientWidth,
+      contentWidth:element.querySelector(".ns-reader-row-content")!.getBoundingClientRect().width,
+      titleWidth:element.querySelector(".ns-reader-row-title")!.getBoundingClientRect().width}));
+    expect(dimensions.contentWidth).toBeCloseTo(dimensions.width,0);
+    expect(dimensions.titleWidth).toBeCloseTo(dimensions.width,0);
     expect(state.stateWrites).toEqual([]);expect(state.unexpectedWrites).toEqual([]);
   });
 
@@ -322,16 +417,13 @@ for(const publicMode of [false,true]) {
     await stub(page,publicMode);
     await page.emulateMedia({forcedColors:"active",reducedMotion:"reduce"});
     await page.goto("/");
-    const edition=page.getByLabel(publicMode?"晨报版本":"简报日期",{exact:true});
+    const edition=page.getByLabel(publicMode?"晨报版本":"精选日期",{exact:true});
     await edition.focus();await page.keyboard.press("Tab");await page.keyboard.press("Shift+Tab");
     await expect(edition).toBeFocused();
-    await expect.poll(()=>edition.evaluate(element=>getComputedStyle(element.closest(".fui-Select")!,"::after").transform)).toBe("matrix(1, 0, 0, 1, 0, 0)");
-    const focus=await edition.evaluate(element=>{
-      const style=getComputedStyle(element.closest(".fui-Select")!,"::after");
-      return {stroke:style.borderBottomWidth,style:style.borderBottomStyle,color:style.borderBottomColor,background:getComputedStyle(element).backgroundColor};
-    });
-    expect(focus.stroke).toBe("2px");expect(focus.style).toBe("solid");expect(focus.color).not.toBe(focus.background);
-    expect(focus.color).not.toBe("rgba(0, 0, 0, 0)");
+    const focus=await edition.evaluate(element=>{const style=getComputedStyle(element);
+      return {style:style.outlineStyle,width:parseFloat(style.outlineWidth),color:style.outlineColor,background:style.backgroundColor};});
+    expect(focus.style).toBe("solid");expect(focus.width).toBeGreaterThanOrEqual(2);
+    expect(focus.color).not.toBe(focus.background);expect(focus.color).not.toBe("rgba(0, 0, 0, 0)");
   });
 }
 
@@ -345,9 +437,11 @@ test("wide card pending and error feedback stays inside its surface",async({page
   });
   try {
     await page.goto("/");
-    const cards=page.locator(".ns-reader-story"),first=cards.first();
+    const cards=page.locator(".ns-edition-list article[data-event-id]"),first=cards.first();
     await first.getByRole("button",{name:/^收藏：/}).click();
-    await expect(first.getByRole("status")).toContainText("正在保存");
+    await expect(first.locator(".ns-event-actions")).toHaveAttribute("aria-busy","true");
+    await expect(first.getByRole("button",{name:/^取消收藏：/})).toHaveAttribute("aria-pressed","true");
+    await expect(first.getByText("正在保存…",{exact:true})).toHaveCount(0);
     const assertContained=async()=>{
       const card=(await first.boundingBox())!,feedback=(await first.locator(".ns-event-actions").boundingBox())!;
       expect(feedback.y+feedback.height).toBeLessThanOrEqual(card.y+card.height);
@@ -361,16 +455,21 @@ test("wide card pending and error feedback stays inside its surface",async({page
   } finally {release();}
 });
 
-for(const width of [1024,768,390]) {
-  test(`owner navigation keeps reading and management reachable ${width}`,async({page},info)=>{
+for(const width of [768,390]) {
+  test(`owner navigation keeps reading and tools reachable ${width}`,async({page},info)=>{
     const state=await stub(page);
     await page.setViewportSize({width,height:900});
     await page.goto("/");
-    await expect(page.getByRole("navigation",{name:"主导航",exact:true}).getByRole("link")).toHaveCount(5);
-    const trigger=page.locator(".ns-owner-management>summary");
-    await trigger.click();
-    const links=page.getByRole("navigation",{name:"管理导航",exact:true}).getByRole("link");
+    await expect(page.getByRole("heading",{name:"今日精选",exact:true})).toBeVisible();
+    const navigation=page.getByRole("button",{name:"打开导航",exact:true});
+    await navigation.click();
+    const drawer=page.getByRole("dialog");
+    await expect(drawer.getByRole("navigation",{name:"主导航",exact:true}).getByRole("link")).toHaveCount(5);
+    await page.evaluate(()=>Promise.all(document.getAnimations().filter(animation=>animation.effect?.getComputedTiming().endTime!==Infinity).map(animation=>animation.finished.catch(()=>undefined))));
+    const links=drawer.getByRole("navigation",{name:"工具",exact:true}).getByRole("link");
     await expect(links).toHaveCount(4);
+    await expect(drawer.getByRole("link",{name:"兴趣权重",exact:true})).toHaveAttribute("href","/topics");
+    await expect(drawer.getByRole("link",{name:"设置",exact:true})).toHaveAttribute("href","/settings");
     for(const link of await links.all()) {
       const box=(await link.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0);
@@ -380,14 +479,13 @@ for(const width of [1024,768,390]) {
     await page.screenshot({path:info.outputPath(`owner-navigation-${width}.png`)});
     await links.first().focus();
     await page.keyboard.press("Escape");
-    await expect(page.locator(".ns-owner-management")).not.toHaveAttribute("open","");
-    await expect(trigger).toBeFocused();
+    await expect(drawer).toBeHidden();
+    await expect(navigation).toBeFocused();
     expect(state.unexpectedWrites).toEqual([]);
   });
 }
-
 for(const width of [1280,390]) {
-  test(`owner and public stories use the same design contract ${width}`,async({browser})=>{
+  test(`owner and public rows use the same design contract ${width}`,async({browser})=>{
     const shapes:unknown[]=[];
     for(const publicMode of [false,true]) {
       const context=await browser.newContext({viewport:{width,height:900}});
@@ -395,40 +493,100 @@ for(const width of [1280,390]) {
         const page=await context.newPage();
         await page.route(/\/(?:api|beta\/api)\//,route=>route.abort("blockedbyclient"));
         await stub(page,publicMode);
-        await page.goto(process.env.SCOUTNEWS_E2E_BASE_URL!+"/");
-        const card=page.locator(".ns-reader-story").first();
-        await expect(card).toBeVisible();
-        shapes.push(await card.evaluate(element=>{
-          const title=element.querySelector(".ns-reader-story-title")!,button=element.querySelector(".ns-reader-button")!;
-          const style=getComputedStyle(element),heading=getComputedStyle(title),control=getComputedStyle(button);
-          return {radius:style.borderRadius,padding:style.padding,titleSize:heading.fontSize,titleLine:heading.lineHeight,
-            buttonRadius:control.borderRadius,buttonHeight:button.getBoundingClientRect().height};
+        await page.goto(process.env.SCOUTNEWS_E2E_BASE_URL!+"/radar");
+        const row=page.locator("article.ns-reader-row").first();
+        await expect(row).toBeVisible();
+        shapes.push(await row.evaluate(element=>{
+          const title=element.querySelector(".ns-reader-row-title")!,button=element.querySelector(".ns-read-button")!,preview=element.querySelector(".ns-reader-row-preview")!;
+          const style=getComputedStyle(element),heading=getComputedStyle(title),control=getComputedStyle(button),copy=getComputedStyle(preview);
+          return {radius:style.borderRadius,padding:style.padding,columns:style.gridTemplateColumns.split(" ").length,
+            titleFont:heading.fontFamily,titleSize:heading.fontSize,titleLine:heading.lineHeight,titleWeight:heading.fontWeight,
+            previewSize:copy.fontSize,previewLine:copy.lineHeight,buttonRadius:control.borderRadius,buttonHeight:button.getBoundingClientRect().height};
         }));
       } finally {await context.close();}
     }
     expect(shapes[1]).toEqual(shapes[0]);
-    expect(shapes[0]).toMatchObject({radius:"16px",buttonRadius:"10px"});
+    expect(shapes[0]).toMatchObject({radius:"0px",buttonRadius:"6px",titleWeight:"600"});
   });
 }
 
-test("manual updates report actual changes and never collect; archives without editorial fields stay faithful",async({page})=>{
+test("the daily edition stays fixed without manual updates; archives without editorial fields stay faithful",async({page})=>{
   const state=await stub(page);
   await page.goto("/");
   await expect(page.locator("article[data-event-id]")).toHaveCount(12);
-  await page.locator(".ns-edition-options > summary").click();
-  await expect(page.locator(".ns-edition-options")).toContainText("本次阅读内容与顺序保持不变");
-  await expect(page.locator(".ns-edition-options")).not.toContainText(/article-value-v1|确定性|基础值/);
-  await page.locator(".ns-edition-options > summary").click();
-  await page.getByRole("button",{name:"应用更新",exact:true}).click();
-  await expect(page.getByRole("status").filter({hasText:"没有新增内容"})).toBeVisible();
+  await expect(page.getByText("每天定时生成当天精选，生成后全天固定，按价值从高到低排列。",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:/应用更新|保存今日简报|分享卡片/})).toHaveCount(0);
+  await expect(page.getByText("版本与分享",{exact:true})).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(/article-value-v1|editorial-significance|确定性|基础值/);
+  await expect(page.getByRole("link",{name:"生成今日分享图",exact:true})).toHaveAttribute("href","/share");
+  const before=state.reads.filter(path=>path.endsWith("/briefs/latest")).length;
   state.change();
-  await page.getByRole("button",{name:"应用更新",exact:true}).click();
-  await expect(page.getByRole("status").filter({hasText:"新增 1 条 · 更新 1 条"})).toBeVisible();
-  await page.getByLabel("简报日期",{exact:true}).selectOption("2026-09-01");
+  await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+  await page.waitForTimeout(250);
+  expect(state.reads.filter(path=>path.endsWith("/briefs/latest")).length).toBe(before);
+  await expect(page.locator("article[data-event-id]")).toHaveCount(12);
+  const edition=page.getByLabel("精选日期",{exact:true});
+  await expect(edition.locator("option")).toHaveText(["今日精选（最新）","2026-09-01 · 2 条"]);
+  await edition.selectOption("2026-09-01");
+  await expect(page.getByRole("heading",{name:"往期精选",exact:true})).toBeVisible();
   await expect(page.locator('.ns-edition-list [data-event-id]')).toHaveCount(2);
   await expect(page.locator('.ns-edition-list')).toContainText("Original publisher title 1");
   await expect(page.locator('[data-section="essential"],[data-section="catch_up"]')).toHaveCount(0);
-  await expect(page.getByText("已保存历史版",{exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"生成今日分享图",exact:true})).toHaveCount(0);
+  expect(state.unexpectedWrites).toEqual([]);
+});
+
+for(const width of [1440,390])test(`edition cutoff and next refresh stay fixed and respect source precision ${width}`,async({page},info)=>{
+  const state=await stub(page);
+  state.dayOnlyPublication();
+  state.latest({isSnapshot:true,nextRefreshAt:"2026-09-15T22:00:00Z"});
+  await page.setViewportSize({width,height:width===390?844:1000});
+  await page.emulateMedia({colorScheme:"light",reducedMotion:"reduce"});
+  await page.goto("/");
+  const cutoff=page.getByLabel("本版选文截止",{exact:true});
+  await expect(cutoff).toHaveAttribute("datetime","2026-09-15T02:00:00Z");
+  await expect(cutoff).toHaveText("选文截至 9月15日 10:00");
+  await expect(page.getByLabel("下次更新",{exact:true})).toHaveText("下次更新 9月16日 06:00");
+  // Meta parts wrap as whole units, so no line starts with a separator.
+  expect(await page.locator(".ns-batch-meta .ns-meta-part").evaluateAll(parts=>parts.map(part=>part.textContent))).toEqual(
+    ["9月15日版\u00a0·","12 篇\u00a0·",expect.stringMatching(/^约 \d+ 分钟\u00a0·$/),"选文截至 9月15日 10:00\u00a0·","下次更新 9月16日 06:00"]);
+  await expect(page.getByText(/尚未生成|正在生成/)).toHaveCount(0);
+  const cards=page.locator(".ns-edition-list article[data-event-id]");
+  await expect(cards.first().locator("time")).toHaveText("2026/9/15 09:00:00");
+  await expect(cards.nth(1).locator("time")).toHaveText("2026/9/15");
+  await expect(cards.first().locator("time")).toHaveAttribute("datetime","2026-09-15T01:00:00Z");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.screenshot({path:info.outputPath(`freshness-cutoff-${width}.png`),fullPage:false});
+  const before=state.reads.filter(path=>path.endsWith("/briefs/latest")).length;
+  state.setCutoff("2026-09-15T03:00:00Z");
+  state.change();
+  await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+  await page.waitForTimeout(250);
+  expect(state.reads.filter(path=>path.endsWith("/briefs/latest")).length).toBe(before);
+  await expect(cutoff).toHaveAttribute("datetime","2026-09-15T02:00:00Z");
+  await expect(cards).toHaveCount(12);
+  await page.getByLabel("精选日期",{exact:true}).selectOption("2026-09-01");
+  await expect(page.getByLabel("本版选文截止",{exact:true})).toHaveAttribute("datetime","2026-09-15T02:00:00Z");
+  await expect(page.getByLabel("下次更新",{exact:true})).toHaveCount(0);
+  await expect(page.locator(".ns-edition-list")).toContainText("Original publisher title 1");
+  expect(state.unexpectedWrites).toEqual([]);
+});
+
+test("a pending morning edition keeps the previous one readable and switches over by itself",async({page})=>{
+  await page.clock.install({time:new Date("2026-09-15T22:03:00Z")});
+  const state=await stub(page);
+  state.latest({isSnapshot:true,refreshPending:true,nextRefreshAt:null});
+  await page.goto("/");
+  const cards=page.locator(".ns-edition-list article[data-event-id]");
+  await expect(cards).toHaveCount(12);
+  await expect(page.getByRole("status").filter({hasText:"今日精选正在生成，先为你展示上一期"})).toBeVisible();
+  state.change();
+  state.latest({localDate:"2026-09-16",isSnapshot:true,refreshPending:false,nextRefreshAt:"2026-09-16T22:00:00Z"});
+  await page.clock.fastForward("01:05");
+  await expect(page.getByRole("status").filter({hasText:"今日精选已更新为 9月16日版。"})).toBeVisible();
+  await expect(cards).toHaveCount(13);
+  await expect(page.getByRole("status").filter({hasText:"今日精选正在生成"})).toHaveCount(0);
+  await expect(page.getByLabel("下次更新",{exact:true})).toHaveText("下次更新 9月17日 06:00");
   expect(state.unexpectedWrites).toEqual([]);
 });
 
@@ -438,13 +596,13 @@ test("Radar keeps primary filters compact, preserves them between views and expo
   await page.goto("/radar");
   const first=page.locator("article[data-event-id] h2 button").first();
   await expect(first).toBeVisible();
-  expect((await first.boundingBox())!.y).toBeLessThanOrEqual(350);
+  expect((await first.boundingBox())!.y).toBeLessThanOrEqual(700);
   await page.screenshot({path:info.outputPath("radar-mobile.png")});
-  await page.getByText("更多筛选 · 来源等级 / T1 / 排序",{exact:true}).click();
-  await page.getByLabel("来源等级",{exact:true}).selectOption("T1");
-  await page.getByText("更多筛选 · 来源等级 / T1 / 排序",{exact:true}).click();
-  await page.getByRole("tab",{name:"摘要卡片",exact:true}).click();
-  await expect(page.getByLabel("来源等级",{exact:true})).toHaveValue("T1");
+  await page.getByLabel("来源筛选",{exact:true}).selectOption("T1");
+  await page.getByRole("tab",{name:"主题地图",exact:true}).click();
+  await expect(page.getByLabel("来源筛选",{exact:true})).toHaveValue("T1");
+  await page.getByRole("tab",{name:"列表",exact:true}).click();
+  await expect(page.getByLabel("来源筛选",{exact:true})).toHaveValue("T1");
   await expect(page.getByLabel("当前筛选")).toContainText("T1");
   await expect(page).toHaveURL(/tier=T1/);
   await page.getByRole("button",{name:"应用更新",exact:true}).click();
@@ -457,14 +615,15 @@ test("mobile Radar and weekly keep long publisher labels and a large outline bel
   await page.setViewportSize({width:390,height:844});
   for(const route of ["/radar","/weekly"]) {
     await page.goto(route);
-    const title=page.locator("article[data-event-id] h2 button").first();
+    if(route==="/weekly")await page.getByRole("navigation",{name:"本周主题导航",exact:true}).getByRole("button",{name:/评测与安全/}).click();
+    const title=page.locator("article[data-event-id] .ns-reader-row-title button").first();
     await expect(title).toBeVisible();
-    expect((await title.boundingBox())!.y).toBeLessThanOrEqual(350);
+    expect((await title.boundingBox())!.y).toBeLessThanOrEqual(744);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await expect(page.locator("article[data-event-id]").first().locator(".ns-article-source"))
       .toHaveAttribute("title","Anthropic Research · 官方研究索引");
   }
-  await expect(page.getByRole("navigation",{name:"本周主题目录"}).getByRole("link")).toHaveCount(8);
+  await expect(page.getByRole("navigation",{name:"本周主题导航"}).getByRole("button")).toHaveCount(9);
   expect(state.stateWrites).toEqual([]);
   expect(state.unexpectedWrites).toEqual([]);
 });
@@ -491,18 +650,22 @@ test("dismissal is immediate, reason optional, undo restores the same frozen pos
 test("weekly has a theme outline and full summary only after selection; deep reading never auto-opens",async({page})=>{
   const state=await stub(page);
   await page.goto("/weekly");
-  await expect(page.getByRole("navigation",{name:"本周主题目录"})).toBeVisible();
+  await expect(page.getByRole("navigation",{name:"本周主题导航"})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"选择一个主题开始回顾",exact:true})).toBeVisible();
+  await expect(page.locator(".ns-edition-list article[data-event-id]")).toHaveCount(0);
+  await page.getByRole("navigation",{name:"本周主题导航"}).getByRole("button",{name:"全部主题",exact:true}).click();
   await expect(page.locator('[data-section="topic"]')).toHaveCount(2);
   await expect(page.locator(".ns-edition-list article[data-event-id]")).toHaveCount(12);
   expect(state.stateWrites).toEqual([]);
-  await page.locator("article[data-event-id] h2 button").first().click();
+  await page.locator("article[data-event-id] .ns-reader-row-title button").first().click();
   await expect(page.getByRole("article",{name:"文章就地阅读",exact:true})).toContainText("第三条完整摘要");
   await page.keyboard.press("Escape");
   state.stateWrites.length=0;
   await page.goto("/reading");
   await expect(page.getByRole("heading",{level:1,name:"深度阅读"})).toBeVisible();
   await expect(page.getByLabel("阅读时间范围",{exact:true})).toHaveValue("720");
-  await expect(page.locator(".ns-library-item")).toHaveCount(12);
+  await expect(page.locator(".ns-reader-start")).toContainText(titles[0]);
+  await expect(page.locator(".ns-library-item")).toHaveCount(11);
   await expect(page.locator(".ns-library-list")).not.toContainText("原始研究栏目");
   expect(state.stateWrites).toEqual([]);
 });
@@ -560,7 +723,7 @@ test("public topic bundles never display material outside the selected filter",a
   const bundle=page.locator('.ns-topic-article-list [data-coverage-key="fixture-group"]');
   await expect(bundle).toBeVisible();
   await expect(page.getByRole("heading",{level:1,name:"新闻雷达",exact:true})).toBeVisible();
-  await expect(page.getByRole("tab",{name:"主题关联",exact:true})).toHaveAttribute("aria-selected","true");
+  await expect(page.getByRole("tab",{name:"主题地图",exact:true})).toHaveAttribute("aria-selected","true");
   expect(state.reads.some(path=>path.includes("/events?")&&path.includes("facet="))).toBe(false);
   await page.locator('[data-topic-id="模型与研究"]').click();
   await expect.poll(()=>state.reads.some(path=>path.includes("/events?")&&path.includes("facet="))).toBe(true);
@@ -586,18 +749,14 @@ for(const publicMode of [false,true])for(const width of [1280,1024,768,390]) {
     await page.setViewportSize({width,height:width===390?844:900});
     await page.goto("/radar");
     const modes=page.getByRole("tablist",{name:"新闻排列方式",exact:true});
-    await expect(modes.getByRole("tab")).toHaveCount(3);
-    for(const [index,label] of ["紧凑列表","摘要卡片","主题关联"].entries())await expect(modes.getByRole("tab").nth(index)).toHaveAccessibleName(label);
+    await expect(modes.getByRole("tab")).toHaveCount(2);
+    for(const [index,label] of ["列表","主题地图"].entries())await expect(modes.getByRole("tab").nth(index)).toHaveAccessibleName(label);
     await expect(page.locator(".ns-reader-row")).toHaveCount(12);
     await expect(page.getByLabel("主题筛选",{exact:true})).toBeVisible();
-    await expect(page.getByLabel("时间范围",{exact:true})).toBeVisible();
+    await expect(page.getByLabel("来源筛选",{exact:true})).toBeVisible();
     await expect(page.getByLabel("搜索事件",{exact:true})).toBeVisible();
     await page.screenshot({path:info.outputPath(`radar-${publicMode?"public":"owner"}-compact-${width}.png`)});
-    await modes.getByRole("tab",{name:"摘要卡片",exact:true}).click();
-    await expect(page.locator(".ns-reader-story")).toHaveCount(12);
-    await expect(page.locator(".ns-reader-row")).toHaveCount(0);
-    await page.screenshot({path:info.outputPath(`radar-${publicMode?"public":"owner"}-cards-${width}.png`)});
-    await modes.getByRole("tab",{name:"主题关联",exact:true}).click();
+    await modes.getByRole("tab",{name:"主题地图",exact:true}).click();
     await expect(page.locator(".ns-topic-article")).toHaveCount(12);
     await expect(page.locator(".ns-topic-sample")).toContainText("12");
     await expect(page.locator('[data-topic-id][aria-pressed=true]')).toHaveCount(0);
@@ -617,7 +776,7 @@ for(const publicMode of [false,true])for(const width of [1280,1024,768,390]) {
     await reader.getByRole("tab",{name:"已收录原文 / 来源内容",exact:true}).click();
     await expect(reader).toContainText("已收录的原始研究正文");
     await expect(reader.getByRole("alert")).toHaveCount(0);
-    if(width<=980) {
+    if(width<=1024) {
       await expect(page.getByRole("dialog",{name:"文章阅读窗口",exact:true})).toBeVisible();
       await reader.focus();await page.keyboard.press("Shift+Tab");
       expect(await page.evaluate(()=>!!document.activeElement?.closest(".ns-preview"))).toBe(true);
@@ -649,16 +808,16 @@ for(const publicMode of [false,true])test(`Radar filters and frozen ordering ${p
   expect(first.searchParams.get("sort")).toBe("recommended");
   await page.getByLabel("主题筛选",{exact:true}).selectOption("工程实践");
   await expect(page.locator(".ns-reader-row")).toHaveCount(4);
-  await page.getByText("更多筛选 · 来源等级 / T1 / 排序",{exact:true}).click();
+  await page.getByText("更多筛选 · 时间与排序",{exact:true}).click();
   await page.getByLabel("排序",{exact:true}).selectOption("newest");
-  await page.getByLabel("来源等级",{exact:true}).selectOption("T1");
+  await page.getByLabel("来源筛选",{exact:true}).selectOption("T1");
   await page.getByLabel("时间范围",{exact:true}).selectOption("0");
   await page.getByLabel("包含开发构建",{exact:true}).check();
   await page.getByLabel("搜索事件",{exact:true}).fill("实践");
   await expect.poll(()=>requests().at(-1)?.searchParams.get("q")).toBe("实践");
   const last=requests().at(-1)!.searchParams;
   expect(Object.fromEntries(last)).toMatchObject({topic:"工程实践",tier:"T1",sort:"newest",hours:"0",q:"实践",includeEngineering:"true",asOf});
-  await page.getByRole("tab",{name:"主题关联",exact:true}).click();
+  await page.getByRole("tab",{name:"主题地图",exact:true}).click();
   await expect(page.locator(".ns-topic-article")).toHaveCount(4);
   expect(Object.fromEntries(requests().at(-1)!.searchParams)).toMatchObject({topic:"工程实践",sort:"newest",limit:"24",asOf});
   await expect(page.locator(".ns-topic-results-status")).toContainText("最新优先");
@@ -740,15 +899,20 @@ for(const theme of ["light","dark"])test(`public reader keeps editorial density 
   const state=await stub(page,true);
   await page.setViewportSize({width:390,height:844});
   await page.goto("/");
-  await expect(page.getByRole("button",{name:"切换明暗主题",exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"今日精选",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"打开导航",exact:true}).click();
+  const drawer=page.getByRole("dialog");
+  await expect(drawer.getByRole("button",{name:"切换明暗主题",exact:true})).toBeVisible();
   if(await page.locator("html").getAttribute("data-theme")!==theme)
-    await page.getByRole("button",{name:"切换明暗主题",exact:true}).click();
+    await drawer.getByRole("button",{name:"切换明暗主题",exact:true}).click();
+  else await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
   await expect(page.locator("html")).toHaveAttribute("data-theme",theme);
   const cards=page.locator("[data-public-event]");
   await expect(cards).toHaveCount(12);
   const boxes=await cards.locator("h3 button").evaluateAll(elements=>elements.map(element=>{const r=element.getBoundingClientRect();return {top:r.top,bottom:r.bottom};}));
-  expect(boxes[0].top).toBeLessThanOrEqual(350);
-  expect(boxes.filter(box=>box.bottom<=844).length).toBeGreaterThanOrEqual(2);
+  expect(boxes[0].bottom).toBeLessThanOrEqual(744);
+  expect(boxes.filter(box=>box.bottom<=844).length).toBeGreaterThanOrEqual(1);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.screenshot({path:info.outputPath(`public-${theme}-390.png`)});
   await page.getByRole("button",{name:"更新内容",exact:true}).click();
@@ -787,7 +951,7 @@ for(const theme of ["light","dark"])for(const width of [1920,390]) {
     await page.setViewportSize({width,height:width===390?844:1080});
     await page.emulateMedia({colorScheme:theme,reducedMotion:"reduce"});
     for(const entry of [
-      {name:"brief",path:"/",pattern:/\/api\/v1\/briefs\/latest(?:\?|$)/,variant:"cards",loaded:".ns-edition-list [data-event-id]"},
+      {name:"brief",path:"/",pattern:/\/api\/v1\/briefs\/latest(?:\?|$)/,variant:"rows",loaded:".ns-edition-list [data-event-id]"},
       {name:"radar",path:"/radar",pattern:/\/api\/v1\/events(?:\?|$)/,variant:"rows",loaded:"article[data-event-id]"},
       {name:"reading",path:"/reading",pattern:/\/api\/v1\/events(?:\?|$)/,variant:"queue",loaded:".ns-library-item"},
       {name:"weekly",path:"/weekly",pattern:/\/api\/v1\/weekly(?:\?|$)/,variant:"cards",loaded:".ns-edition-list [data-event-id]"},
@@ -808,7 +972,9 @@ for(const theme of ["light","dark"])for(const width of [1920,390]) {
         expect(state.stateWrites).toEqual([]);
         await page.screenshot({path:info.outputPath(`loading-${entry.name}-${theme}-${width}.png`)});
         hold.release();await hold.completed;
-        await expect(page.locator(entry.loaded)).toHaveCount(12);
+        if(entry.name==="weekly")await page.getByRole("navigation",{name:"本周主题导航"}).getByRole("button",{name:"全部主题",exact:true}).click();
+        if(entry.name==="reading")await expect(page.locator(".ns-reader-start")).toContainText(titles[0]);
+        await expect(page.locator(entry.loaded)).toHaveCount(entry.name==="reading"?11:12);
         await expect(page.locator("[data-reader-skeleton]")).toHaveCount(0);
       } finally {hold.release();}
       await page.unroute(entry.pattern);
@@ -818,7 +984,7 @@ for(const theme of ["light","dark"])for(const width of [1920,390]) {
 }
 
 for(const publicMode of [false,true]) {
-  test(`reader polish aligns wide split panes without heading offsets ${publicMode?"public":"owner"}`,async({page},info)=>{
+  test(`reader polish fixes the wide reader to the viewport without heading offsets ${publicMode?"public":"owner"}`,async({page},info)=>{
     const state=await stub(page,publicMode);
     const items=titles.map((_,index)=>fixture(index)),data=edition(items);
     data.sections![0].description="说明文字可能在窄列里换行；分组标题应该属于双栏共同的标题行，而不应该只把左边的第一张新闻卡片向下挤。".repeat(2);
@@ -833,49 +999,56 @@ for(const publicMode of [false,true]) {
       await page.setViewportSize({width,height:1080});
       await page.evaluate(()=>scrollTo(0,0));
       const boxes=[await card.boundingBox(),await pane.boundingBox(),await page.locator(".ns-reader-sidebar").boundingBox()];
-      expect(Math.abs(boxes[0]!.y-boxes[1]!.y)).toBeLessThanOrEqual(1);
+      expect(boxes[1]!.y).toBe(0);
+      expect(boxes[1]!.height).toBe(1080);
+      expect(boxes[0]!.x+boxes[0]!.width).toBeLessThanOrEqual(boxes[1]!.x);
       expect(boxes[2]!.x).toBe(0);
-      expect(boxes[2]!.width).toBe(208);
+      expect(boxes[2]!.width).toBe(176);
       expect(boxes[0]!.width).toBeGreaterThan(280);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await page.screenshot({path:info.outputPath(`aligned-${publicMode?"public":"owner"}-${width}.png`)});
     }
     await page.setViewportSize({width:1920,height:1080});
     await page.evaluate(()=>scrollTo(0,500));
-    await expect.poll(async()=>(await pane.boundingBox())!.y).toBeLessThanOrEqual(21);
+    await expect.poll(async()=>(await pane.boundingBox())!.y).toBe(0);
     await page.keyboard.press("Escape");
     await expect(card.getByRole("button",{name:titles[0],exact:true})).toBeFocused();
     expect(state.unexpectedWrites).toEqual([]);
     if(publicMode) {
       expect(state.stateWrites).toEqual([]);
       expect(state.reads.every(path=>path.startsWith("/beta/api/"))).toBe(true);
-      await expect(page.locator(".ns-reader-sidebar")).not.toContainText(/管理与分享|设置|来源与采集|摘要队列/);
+      await expect(page.locator(".ns-reader-sidebar")).not.toContainText(/管理与分享|来源与采集|摘要队列/);
+      await expect(page.locator(".ns-reader-sidebar").getByRole("link",{name:"设置",exact:true})).toHaveCount(0);
     }
   });
 
   test(`reader polish uses article value, not selection diagnostics ${publicMode?"public":"owner"}`,async({page})=>{
     const state=await stub(page,publicMode);
     const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
+    const valueSelector=publicMode?".ns-reading-value":".ns-reader-row-value";
     for(const path of publicMode?["/","/?tab=radar"]:["/","/radar","/radar?view=cards","/weekly"]) {
       await page.goto(path);
+      if(path==="/weekly")await page.getByRole("navigation",{name:"本周主题导航"}).getByRole("button",{name:"全部主题",exact:true}).click();
       const card=page.locator(publicMode?"[data-public-event]":"article[data-event-id]").first();
       await expect(card).toBeVisible();
-      const value=card.locator(".ns-reading-value");
-      await value.locator("summary").click();
-      await expect(value.locator("p")).toHaveText(fixture(0).importance);
+      const value=card.locator(valueSelector);
+      if(publicMode) {
+        await value.locator("summary").click();
+        await expect(value.locator("p")).toHaveText(fixture(0).importance);
+      } else await expect(value).toHaveText(fixture(0).importance);
       await card.getByRole("button",{name:titles[0],exact:true}).click();
-      await expect(page.locator(".ns-reading-value-expanded p")).toHaveText(fixture(0).importance);
+      await expect(page.locator(publicMode?".ns-reading-value-expanded p":".ns-preview-deck")).toHaveText(fixture(0).importance);
       await expect(page.locator("#main-content")).not.toContainText(/为什么入选|确定性规则|article-value-v1|基础值|加8|入选与分类依据|原始研究栏目/);
       await page.keyboard.press("Escape");
     }
     state.articleValue("");
     await page.goto("/");
     await expect(page.locator(publicMode?"[data-public-event]":"article[data-event-id]")).toHaveCount(12);
-    await expect(page.locator(".ns-reading-value")).toHaveCount(0);
+    await expect(page.locator(valueSelector)).toHaveCount(0);
     state.articleValue("只有来源摘录，未生成文章解读。","feed");
     await page.reload();
     await expect(page.locator(publicMode?"[data-public-event]":"article[data-event-id]")).toHaveCount(12);
-    await expect(page.locator(".ns-reading-value")).toHaveCount(0);
+    await expect(page.locator(valueSelector)).toHaveCount(0);
     expect(state.unexpectedWrites).toEqual([]);
     expect(errors).toEqual([]);
   });
@@ -960,9 +1133,335 @@ for(const publicMode of [false,true])test(`reader polish keeps the shell while r
     await expect(page.getByRole("status").filter({hasText:/正在加载/})).toBeVisible();
     expect(state.stateWrites).toEqual([]);
     hold.release();await hold.completed;
-    await expect(page.locator(publicMode?"[data-public-event]":".ns-library-item")).toHaveCount(12);
+    await expect(page.locator(publicMode?"[data-public-event]":".ns-library-item")).toHaveCount(publicMode?12:11);
     await expect(page.locator(".ns-route-loading-heading")).toHaveCount(0);
     expect(state.unexpectedWrites).toEqual([]);
     if(publicMode)expect(state.reads.every(path=>path.startsWith("/beta/api/"))).toBe(true);
   } finally {hold.release();}
+});
+
+for(const publicMode of [false,true])test(`reported polish category labels are plain ${publicMode?"public":"owner"}`,async({page},info)=>{
+  await stub(page,publicMode);
+  await page.setViewportSize({width:2175,height:1476});
+  await page.goto(publicMode?"/?tab=radar":"/radar");
+  const meta=page.locator(".ns-reader-row .ns-reader-story-meta").first();
+  const topic=meta.locator(".ns-reader-story-topic");
+  await expect(topic).toHaveText("模型与研究");
+  await expect(topic).toHaveCSS("border-top-width","0px");
+  await expect(topic).toHaveCSS("outline-style","none");
+  await expect(meta.locator(".fui-Badge")).toHaveCount(0);
+  await expect(page.locator(".ns-reader-row").first()).toHaveCSS("border-bottom-width","1px");
+  await page.screenshot({path:info.outputPath("plain-topic-labels.png")});
+});
+
+test("reported polish bookmark feedback is immediate, shared and failure-safe",async({page},info)=>{
+  const state=await stub(page);
+  await page.setViewportSize({width:2175,height:1476});
+  let release!:()=>void,fail=true,requests=0;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  await page.route(`**/api/v1/events/${id(0)}/state`,async route=>{
+    const input=route.request().postDataJSON() as EventState;
+    if(input.saved===undefined)return route.fallback();
+    requests++;
+    if(fail){await gate;return route.fulfill({status:503,json:{error:"受控测试：收藏暂时无法同步。"}});}
+    return route.fallback();
+  });
+  try {
+    await page.goto("/");
+    const card=page.locator(`.ns-edition-list [data-event-id="${id(0)}"]`);
+    const original=(await card.locator(".ns-event-actions").boundingBox())!;
+    await card.getByRole("button",{name:/^收藏：/}).evaluate(button=>{button.click();button.click();});
+    await expect(card.getByRole("button",{name:/^取消收藏：/})).toHaveAttribute("aria-pressed","true");
+    await expect(card.getByRole("button",{name:/^取消收藏：/})).toHaveAttribute("aria-busy","true");
+    await expect(card.getByRole("button",{name:/^取消收藏：/})).toHaveCSS("opacity","1");
+    await expect(card.locator(".ns-event-actions")).toHaveAttribute("aria-busy","true");
+    await expect(card.getByText("正在保存…",{exact:true})).toHaveCount(0);
+    const pending=(await card.locator(".ns-event-actions").boundingBox())!;
+    await info.attach("bookmark-control-geometry",{body:JSON.stringify({original,pending}),contentType:"application/json"});
+    expect(pending.width).toBeCloseTo(original.width,0);
+    expect(pending.height).toBeCloseTo(original.height,0);
+    await card.getByRole("button",{name:titles[0],exact:true}).click();
+    const pane=page.getByRole("article",{name:"文章就地阅读",exact:true});
+    await expect(pane.getByRole("button",{name:/^取消收藏：/})).toHaveAttribute("aria-pressed","true");
+    await expect(pane.getByRole("button",{name:/^取消收藏：/})).toBeDisabled();
+    await pane.getByRole("button",{name:/^取消收藏：/}).evaluate(button=>button.click());
+    await expect.poll(()=>requests).toBe(1);
+    await expect.poll(()=>state.stateWrites.filter(write=>write.value.opened===true).length).toBe(1);
+    await page.screenshot({path:info.outputPath("bookmark-pending.png")});
+    release();
+    await expect(card.getByRole("alert")).toContainText("阅读状态保存失败");
+    for(const surface of [card,pane])await expect(surface.getByRole("button",{name:/^收藏：/})).toHaveAttribute("aria-pressed","false");
+    await expect(card).toContainText("已打开");
+    await page.screenshot({path:info.outputPath("bookmark-error.png")});
+    fail=false;
+    await card.getByRole("button",{name:/重试/}).click();
+    await expect(card.getByRole("alert")).toHaveCount(0);
+    await expect(pane.getByRole("button",{name:/^取消收藏：/})).toBeEnabled();
+    await expect(card).toContainText("已打开");
+    await expect(pane).toContainText("已打开");
+    await page.screenshot({path:info.outputPath("bookmark-saved.png")});
+    expect(requests).toBe(2);
+    expect(state.stateWrites.filter(write=>write.value.saved===true)).toHaveLength(1);
+    expect(state.unexpectedWrites).toEqual([]);
+  } finally {release();}
+});
+
+test("reported polish dismissal waits for persistence and retains its failed retry",async({page},info)=>{
+  const state=await stub(page);
+  await page.setViewportSize({width:1440,height:1000});
+  let release!:()=>void,fail=true,requests=0;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  await page.route(`**/api/v1/events/${id(0)}/state`,async route=>{
+    if((route.request().postDataJSON() as EventState).notInterested===undefined)return route.fallback();
+    requests++;
+    if(fail){await gate;return route.fulfill({status:503,json:{error:"受控测试：偏好暂时无法保存。"}});}
+    return route.fallback();
+  });
+  try {
+    await page.goto("/radar");
+    const rows=page.locator(".ns-reader-list [data-event-id]"),row=rows.first();
+    await expect(rows).toHaveCount(12);
+    const before=await rows.evaluateAll(elements=>elements.map(element=>element.getAttribute("data-event-id")));
+    const original=await row.locator(".ns-event-actions").boundingBox();
+    await row.getByRole("button",{name:/^不感兴趣：/}).evaluate(button=>{button.click();button.click();});
+    await expect(row.getByRole("button",{name:/^撤销不感兴趣：/})).toHaveAttribute("aria-pressed","true");
+    await expect(rows).toHaveCount(12);
+    await expect(page.locator(".ns-feedback-undo")).toHaveCount(0);
+    const pending=await row.locator(".ns-event-actions").boundingBox();
+    expect(pending?.width).toBe(original?.width);
+    await info.attach("dismissal-control-geometry",{body:JSON.stringify({original,pending}),contentType:"application/json"});
+    await rows.nth(1).getByRole("button",{name:/^收藏：/}).click();
+    await expect(rows.nth(1).getByRole("button",{name:/^取消收藏：/})).toBeEnabled();
+    await page.screenshot({path:info.outputPath("dismissal-pending.png")});
+    release();
+    await expect(row.getByRole("alert")).toContainText("阅读状态保存失败");
+    await expect(row.getByRole("button",{name:/^不感兴趣：/})).toHaveAttribute("aria-pressed","false");
+    expect(await rows.evaluateAll(elements=>elements.map(element=>element.getAttribute("data-event-id")))).toEqual(before);
+    await page.screenshot({path:info.outputPath("dismissal-error.png")});
+    fail=false;
+    await row.getByRole("button",{name:/重试/}).click();
+    await expect(rows).toHaveCount(11);
+    await expect(page.locator(".ns-feedback-undo")).toBeVisible();
+    await expect(rows.first()).toHaveAttribute("data-event-id",id(1));
+    await expect(rows.first().getByRole("button",{name:/^取消收藏：/})).toHaveAttribute("aria-pressed","true");
+    expect(requests).toBe(2);
+    expect(state.stateWrites.filter(write=>write.value.notInterested===true)).toHaveLength(1);
+    expect(state.unexpectedWrites).toEqual([]);
+  } finally {release();}
+});
+
+async function checkShellScrollLocks(page:Page,publicMode:boolean,capture:(name:string)=>Promise<void>) {
+  const measure=()=>page.evaluate(()=>{
+    const main=document.getElementById("main-content")!.getBoundingClientRect();
+    return {x:main.x,width:main.width,rootWidth:document.documentElement.getBoundingClientRect().width,overflow:getComputedStyle(document.body).overflowY};
+  });
+  const openNavigation=page.getByRole("button",{name:"打开导航",exact:true});
+  await expect(openNavigation).toBeVisible();
+  const before=await measure();
+  await openNavigation.click();
+  const drawer=page.getByRole("dialog");
+  await expect(drawer).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>getComputedStyle(document.body).overflowY)).toBe("hidden");
+  const drawerOpen=await measure();
+  await capture("drawer");
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+  await expect(openNavigation).toBeFocused();
+  const drawerClosed=await measure();
+  await page.locator(publicMode?".ns-reader-story":".ns-reader-row").first().locator("h3 button").click();
+  const reader=page.getByRole("dialog",{name:"文章阅读窗口",exact:true});
+  await expect(reader).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>getComputedStyle(document.body).overflowY)).toBe("hidden");
+  const readerOpen=await measure();
+  await capture("reader");
+  await page.keyboard.press("Escape");
+  await expect(reader).toHaveCount(0);
+  const readerClosed=await measure();
+  for(const state of [drawerOpen,drawerClosed,readerOpen,readerClosed]) {
+    expect(state.x).toBe(before.x);
+    expect(state.width).toBe(before.width);
+    expect(state.rootWidth).toBe(before.rootWidth);
+  }
+  expect(drawerClosed.overflow).toBe(before.overflow);
+  expect(readerClosed.overflow).toBe(before.overflow);
+  return {before,drawerOpen,drawerClosed,readerOpen,readerClosed};
+}
+
+for(const publicMode of [false,true])test(`reported polish classic scrollbar preserves content width ${publicMode?"public":"owner"}`,async({},info)=>{
+  const browser=await chromium.launch({ignoreDefaultArgs:["--hide-scrollbars"]});
+  try {
+    const context=await browser.newContext({baseURL:process.env.SCOUTNEWS_E2E_BASE_URL,viewport:{width:2175,height:1800},reducedMotion:"reduce",serviceWorkers:"block"});
+    const page=await context.newPage();
+    await page.route(/\/(?:api|beta\/api)\//,route=>route.abort("blockedbyclient"));
+    const state=await stub(page,publicMode);
+    const items=titles.slice(0,4).map((_,index)=>({...fixture(index),importance:"受控说明：对照原始方法与限制理解这项变化，不把来源自述当成已验证结论。".repeat(10)}));
+    await page.route(publicMode?/\/beta\/api\/brief$/:/\/api\/v1\/briefs\/latest$/,route=>route.fulfill({json:edition(items)}));
+    await page.goto("/");
+    await expect(page.locator(publicMode?".ns-reading-invitation":".ns-edition-list")).toBeVisible();
+    await page.addStyleTag({content:"::-webkit-scrollbar { width: 16px; height: 16px; }"});
+    await expect(page.locator(publicMode?"[data-public-event]":".ns-edition-list article[data-event-id]")).toHaveCount(4);
+    await page.evaluate(()=>document.fonts.ready);
+    await page.setViewportSize({width:2175,height:480});
+    const settledHeight=()=>page.evaluate(()=>new Promise<number>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{const main=document.querySelector(".ns-reader-main");resolve(innerHeight===480&&(!main||getComputedStyle(main).minHeight==="480px")?Math.ceil(document.documentElement.scrollHeight):0);}))));
+    await expect.poll(async()=>{const first=await settledHeight();return first>480&&first===await settledHeight();}).toBe(true);
+    const height=await settledHeight();
+    await page.setViewportSize({width:2175,height});
+    await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollHeight>document.documentElement.clientHeight)).toBe(false);
+    const selectors=publicMode?["#main-content",".ns-selection-overview",".ns-reader-story-title",".ns-reading-invitation"]:["#main-content",".ns-page-head",".ns-batch-bar",".ns-reader-row-title"];
+    const measure=()=>page.evaluate(selectors=>({overflow:document.documentElement.scrollHeight>document.documentElement.clientHeight,rects:selectors.map(selector=>{
+        const box=document.querySelector(selector)!.getBoundingClientRect();return {selector,x:box.x,width:box.width};
+      }),gutter:getComputedStyle(document.documentElement).scrollbarGutter}),selectors);
+    const before=await measure();
+    expect(before.overflow).toBe(false);
+    await page.screenshot({path:info.outputPath("value-closed-classic.png")});
+    if(publicMode)await page.locator(".ns-reading-value").first().locator("summary").click();
+    else await page.evaluate(()=>{const growth=document.createElement("div");growth.style.height="480px";growth.dataset.fixture="growth";document.body.append(growth);});
+    await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollHeight>document.documentElement.clientHeight)).toBe(true);
+    const after=await measure();
+    expect(after.overflow).toBe(true);
+    await info.attach("classic-scrollbar-geometry",{body:JSON.stringify({before,after}),contentType:"application/json"});
+    await page.screenshot({path:info.outputPath("value-open-classic.png")});
+    for(let index=0;index<before.rects.length;index++) {
+      expect(after.rects[index].x,before.rects[index].selector).toBeCloseTo(before.rects[index].x,0);
+      expect(after.rects[index].width,before.rects[index].selector).toBeCloseTo(before.rects[index].width,0);
+    }
+    expect(after.gutter).toContain("stable");
+    await page.setViewportSize({width:768,height:900});
+    const locks=await checkShellScrollLocks(page,publicMode,async name=>{await page.screenshot({path:info.outputPath(`classic-${name}.png`)});});
+    await info.attach("classic-scroll-lock-geometry",{body:JSON.stringify(locks),contentType:"application/json"});
+    expect(state.unexpectedWrites).toEqual([]);
+  } finally {await browser.close();}
+});
+
+for(const publicMode of [false,true])test(`reported polish touch overlay scrollbars keep the full mobile width ${publicMode?"public":"owner"}`,async({},info)=>{
+  const browser=await chromium.launch({ignoreDefaultArgs:["--hide-scrollbars"]});
+  try {
+    const page=await browser.newPage({baseURL:process.env.SCOUTNEWS_E2E_BASE_URL,viewport:{width:390,height:844},
+      isMobile:true,hasTouch:true,reducedMotion:"reduce",serviceWorkers:"block"});
+    await page.route(/\/(?:api|beta\/api)\//,route=>route.abort("blockedbyclient"));
+    const state=await stub(page,publicMode);
+    await page.goto("/");
+    await expect(page.locator(publicMode?".ns-reader-story":".ns-edition-list article[data-event-id]")).toHaveCount(12);
+    expect(await page.evaluate(()=>document.documentElement.getBoundingClientRect().width)).toBe(390);
+    const locks=await checkShellScrollLocks(page,publicMode,async name=>{await page.screenshot({path:info.outputPath(`touch-${name}.png`)});});
+    await info.attach("touch-scroll-lock-geometry",{body:JSON.stringify(locks),contentType:"application/json"});
+    expect(state.unexpectedWrites).toEqual([]);
+  } finally {await browser.close();}
+});
+
+for(const width of [2175,1024,390])test(`reported polish sidebar tools use one navigation language ${width}`,async({page},info)=>{
+  await stub(page);
+  await page.setViewportSize({width,height:width===390?844:1476});
+  await page.emulateMedia({reducedMotion:"reduce"});
+  await page.goto("/shares");
+  await expect(page).toHaveURL(/\/share$/);
+  await expect(page.getByRole("heading",{name:"今日分享",exact:true})).toBeVisible();
+  const compact=width<=768;
+  if(compact)await page.getByRole("button",{name:"打开导航",exact:true}).click();
+  else await expect(page.getByRole("button",{name:"打开导航",exact:true})).toBeHidden();
+  const sidebar=page.locator(compact?".ns-reader-mobile-nav":".ns-reader-sidebar");
+  const tools=sidebar.getByRole("navigation",{name:"工具",exact:true});
+  await expect(tools.getByRole("link")).toHaveCount(4);
+  const rows=sidebar.locator(".ns-reader-navigation .ns-reader-nav-item");
+  const geometry=await rows.evaluateAll(elements=>elements.map(element=>{
+    const box=element.getBoundingClientRect(),icon=element.querySelector(".ns-reader-nav-icon")!.getBoundingClientRect();
+    return {height:box.height,iconSize:icon.width,inset:icon.x-box.x,center:Math.abs(icon.y+icon.height/2-box.y-box.height/2)};
+  }));
+  expect(geometry).toHaveLength(9);
+  for(const row of geometry) {
+    expect(row.height).toBeGreaterThanOrEqual(compact?44:40);
+    expect(row.iconSize).toBeCloseTo(geometry[0].iconSize,0);
+    expect(row.center).toBeLessThanOrEqual(1);
+    expect(row.inset).toBeCloseTo(geometry[0].inset,0);
+  }
+  await info.attach("sidebar-tool-geometry",{body:JSON.stringify(geometry),contentType:"application/json"});
+  await expect(tools.getByRole("link",{name:"今日分享",exact:true})).toHaveClass(/is-active/);
+  await expect(tools.getByRole("link",{name:"今日分享",exact:true})).toHaveAttribute("aria-current","page");
+  await expect(tools.getByRole("link",{name:"来源采集",exact:true})).toHaveAttribute("href","/sources");
+  await expect(tools.getByRole("link",{name:"设置",exact:true})).toHaveAttribute("href","/settings");
+  await page.screenshot({path:info.outputPath("sidebar-tools.png")});
+  if(compact) {
+    await tools.getByRole("link",{name:"今日分享",exact:true}).focus();
+    await page.keyboard.press("Escape");
+    await expect(sidebar).toBeHidden();
+    await expect(page.getByRole("button",{name:"打开导航",exact:true})).toBeFocused();
+  }
+  await page.goto("/share/navigation-fixture");
+  await expect(page).toHaveURL(/\/share$/);
+  if(compact)await page.getByRole("button",{name:"打开导航",exact:true}).click();
+  await expect(tools.getByRole("link",{name:"今日分享",exact:true})).toHaveAttribute("aria-current","page");
+  await tools.getByRole("link",{name:"兴趣权重",exact:true}).click();
+  await expect(page).toHaveURL(/\/topics$/);
+  if(compact)await page.getByRole("button",{name:"打开导航",exact:true}).click();
+  await expect(tools.getByRole("link",{name:"兴趣权重",exact:true})).toHaveAttribute("aria-current","page");
+});
+for(const width of [2175,1024,390])test(`reported polish interest add row stays aligned through validation ${width}`,async({page},info)=>{
+  await stub(page);
+  const saved:Topic[][]=[];
+  const existing:Topic[]=[
+    {id:"agents",label:"Agent",group:"长期兴趣",context:"long_term",enabled:true,weight:80},
+    {id:"work",label:"工作关注",group:"工作",context:"work",enabled:false,weight:20},
+    {id:"project",label:"项目跟进",group:"当前项目",context:"current_project",enabled:true,weight:70},
+  ];
+  let failSave=true;
+  await page.route("**/api/v1/me/interests",async route=>{
+    if(route.request().method()==="PUT") {
+      const data=route.request().postDataJSON() as {topics:Topic[]};
+      saved.push(data.topics);
+      if(failSave)return route.fulfill({status:503,json:{error:"受控测试：主题保存失败"}});
+      if(data.topics.some(topic=>!["long_term","work","current_project"].includes(topic.context)))return route.fulfill({status:400,json:{error:"无效的关注场景"}});
+      return route.fulfill({json:{items:data.topics}});
+    }
+    return route.fulfill({json:{items:existing}});
+  });
+  await page.setViewportSize({width,height:width===390?844:1476});
+  await page.goto("/topics");
+  const input=page.getByRole("textbox",{name:"新主题名称",exact:true});
+  const add=page.getByRole("button",{name:"添加主题",exact:true});
+  const aligned=async(stage:string)=>{
+    const field=(await input.boundingBox())!,button=(await add.boundingBox())!;
+    await info.attach(`topic-input-${stage}-geometry`,{body:JSON.stringify({field,button}),contentType:"application/json"});
+    if(width<=768) {
+      expect(button.y).toBeGreaterThanOrEqual(field.y+field.height);
+      expect(button.height).toBeGreaterThanOrEqual(44);
+      expect(field.height).toBeGreaterThanOrEqual(44);
+    } else {
+      expect(button.y).toBeCloseTo(field.y,0);
+      expect(button.height).toBeCloseTo(field.height,0);
+      expect(button.height).toBeGreaterThanOrEqual(38);
+    }
+  };
+  await expect(input).toBeVisible();
+  await aligned("normal");
+  await page.screenshot({path:info.outputPath("topic-input-normal.png")});
+  await add.click();
+  await expect(page.getByText("请输入主题名称。",{exact:true})).toBeVisible();
+  await aligned("empty");
+  await expect(input).toHaveAttribute("aria-invalid","true");
+  expect(await input.evaluate(element=>(element.getAttribute("aria-describedby")??"").split(" ").map(id=>document.getElementById(id)?.textContent).join(" "))).toContain("请输入主题名称。");
+  await page.screenshot({path:info.outputPath("topic-input-error.png")});
+  await input.fill("Agent");
+  await add.click();
+  await expect(page.getByText("该主题已经存在。",{exact:true})).toBeVisible();
+  await aligned("duplicate");
+  await page.screenshot({path:info.outputPath("topic-input-duplicate.png")});
+  await input.fill("UI 对齐测试");
+  await input.press("Enter");
+  await expect(page.getByText("UI 对齐测试",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"保存权重",exact:true}).click();
+  await expect(page.getByRole("alert")).toContainText("兴趣保存失败");
+  expect(saved[0].at(-1)?.context).toBe("long_term");
+  expect(saved[0].slice(0,existing.length)).toEqual(existing);
+  await expect(page.getByText("UI 对齐测试",{exact:true})).toBeVisible();
+  await aligned("save-error");
+  await page.screenshot({path:info.outputPath("topic-save-error.png")});
+  failSave=false;
+  await page.getByRole("alert").getByRole("button",{name:/重试/}).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("权重已保存",{exact:false})).toBeVisible();
+  expect(saved).toHaveLength(2);
+  expect(saved[1]).toEqual(saved[0]);
+  await aligned("saved");
+  await page.screenshot({path:info.outputPath("topic-saved.png")});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

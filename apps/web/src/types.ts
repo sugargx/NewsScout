@@ -11,7 +11,6 @@ export interface ReadingContext {
 }
 export interface Evidence { id: string; sourceName: string; sourceTier: string; title: string; url: string; isOfficial: boolean; publishedAt: string | null; originalPublishedAt?: string | null; publicationPrecision?: "day" | "time" | null; collectedAt?: string | null; excerpt: string; readingContext?:ReadingContext|null; technicalBasis?:string|null; aggregation?: {name:string;url:string;originalSource:string;expired?:boolean} }
 export interface SummaryPresentation { points:string[];materialLimit:string|null;limitations:string[] }
-export interface ShareSelection {eventId:string;contentVersion:number;summarizedAt:string|null}
 export interface Score { sourceQuality: number; corroboration: number; freshness: number; relevance: number; novelty: number; engagement: number; editorialBoost: number; total: number; explanation: string }
 export type SummaryStatus = "pending" | "running" | "completed" | "failed";
 export interface Recommendation { score: number; freshness: number; affinity: number; noveltyPenalty: number; facets: string[]; sourceConfirmed: boolean; explanation: string; materialPenalty?:number }
@@ -53,10 +52,16 @@ export interface ProcessingJob { eventId: string; title: string; status: Summary
 export interface Processing { settings: ProcessingSettings; counts: { pending: number; running: number; failed: number; completed: number }; usage: { used: number; limit: number; resetsAt: string | null }; blockedReason: "disabled" | "demo" | "isolated" | "account" | "model" | "quota" | null; feedCount: number; aiCount: number; jobs: ProcessingJob[] }
 export interface Provider { provider: string; connected: boolean; eligible: boolean; model: string | null; message: string; models: string[]; verifiedAt: string | null; authMode: "local" | "oauth" | null; accountLogin: string | null; preferredModel: string; oauthConfigured: boolean }
 export interface Runtime { mode: "demo" | "postgres"; timeZone: "Asia/Shanghai"; version: string }
+export interface ReaderSession {
+  user: { id: string; displayName: string };
+  capabilities: { manageReadingSettings: boolean };
+  csrfToken: string;
+  telemetryConsent: boolean;
+}
 export type NotInterestedReason = "topic"|"source"|"old"|"low_value";
 export interface Editorial {policyVersion:string;contentKind:"news"|"release"|"research"|"analysis"|"tutorial"|"discussion"|"question"|"promotion"|"metadata";valueScore:number;reason:string;briefEligible:boolean}
 export interface BriefSection {key:string;kind:"essential"|"catch_up"|"more"|"topic";title:string;description:string;eventIds:string[]}
-export interface Brief { localDate: string; generatedAt: string; estimatedMinutes: number; items: Event[]; sections?:BriefSection[]; isSnapshot: boolean; windowStart: string; windowEnd: string; primaryWindowStart?: string; selectionNote?: string; eligibility?: { windowCandidates: number; awaitingSummary: number; awaitingSourceConfirmation: number } }
+export interface Brief { localDate: string; generatedAt: string; estimatedMinutes: number; items: Event[]; sections?:BriefSection[]; isSnapshot: boolean; windowStart: string; windowEnd: string; primaryWindowStart?: string; selectionNote?: string; nextRefreshAt?: string | null; refreshPending?: boolean; eligibility?: { windowCandidates: number; awaitingSummary: number; awaitingSourceConfirmation: number } }
 export interface ReaderSettings { mode: "daily" | "interval"; hour: number; includeObserving: boolean; briefLimit: number }
 export interface ReaderStatus { settings: ReaderSettings; timeZone: "Asia/Shanghai"; nextCollectionAt: string | null; lastCollectionAt: string | null; latestPublishedAt: string | null; morningRun: { localDate: string; status: "collecting" | "summarizing" | "ready" | "partial" | "failed"; scheduledAt: string; startedAt: string; finishedAt: string | null; sourceSucceeded: number; sourceFailed: number; message: string | null } | null }
 export interface BriefHistory { localDate: string; generatedAt: string; itemCount: number }
@@ -72,8 +77,6 @@ export interface SourceWatch {
 export interface ShareSource { name:string; url:string; tier:string }
 export interface ShareItem { title:string; summary:string; publishedAt:string|null; sources:ShareSource[]; summaryKind:string }
 export interface ShareDocument { title:string; kind:"event"|"brief"|"week"; date:string; createdAt:string; items:ShareItem[]; note:string }
-export interface ShareEditor { title:string;subtitle:string;caption:string;cta:string;format:"portrait"|"square";theme:"light"|"dark";items:{index:number;title:string;summary:string;selected:boolean}[] }
-export interface SharedEdition { id:string; document:ShareDocument; editor:ShareEditor|null;published:boolean; revoked:boolean; publicUrl:string|null }
-export interface ShareSettings { publicBaseUrl:string|null }
+export interface ShareLink { id:string; title:string; date:string; kind:string; createdAt:string; edited:boolean; published:boolean; revoked:boolean }
 export interface IngestionResult { attempted: number; succeeded: number; failed: number; ingested: number; updated: number; errors?: unknown[] }
 export interface Exploration { sampleSize: number; limit: number; nodes: {id: string; count: number}[]; edges: {source: string; target: string; count: number}[]; meaning: string }

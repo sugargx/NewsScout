@@ -1,0 +1,87 @@
+:root { scrollbar-gutter: stable; }
+.ns-reader-shell { min-height: 100dvh; background: var(--cp-bg); color: var(--cp-text); font-size: 14px; }
+.ns-reader-shell *, .ns-reader-shell *::before, .ns-reader-shell *::after { box-sizing: border-box; }
+.ns-reader-shell :is(button, input, select, textarea):focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+
+/* Sidebar — CoDesign `.sidebar` (176px, #e9ede7, right border). */
+.ns-reader-sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: var(--cp-nav-width);
+  background: var(--cp-sidebar);
+  border-right: 1px solid var(--cp-border);
+  overflow-y: auto;
+}
+.ns-reader-brand { display: flex; align-items: center; gap: 9px; height: 76px; flex: 0 0 76px; padding: 0 18px; font: 600 17px/1 var(--cp-font-display); color: var(--cp-text); }
+.ns-reader-brand-mark {
+  display: grid; place-items: center; flex: 0 0 27px; width: 27px; height: 27px;
+  border: 1px solid var(--cp-text); border-radius: 50%; font-style: normal; line-height: 1;
+}
+.ns-reader-brand-name { white-space: nowrap; }
+.ns-reader-badge { padding: 2px 6px; border: 1px solid var(--cp-border); border-radius: 999px; background: var(--cp-surface); color: var(--cp-accent); font: 700 10px/1.4 var(--cp-font-body); white-space: nowrap; }
+.ns-reader-destinations { min-width: 0; }
+.ns-reader-tools { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--cp-border); }
+.ns-reader-tools-label { display: block; padding: 0 22px 8px; color: var(--cp-muted-label); font-size: 10px; font-weight: 800; letter-spacing: .14em; }
+.ns-reader-sidebar-foot { display: grid; gap: 9px; margin-top: 14px; padding: 16px 12px; border-top: 1px solid var(--cp-border); }
+.ns-reader-destinations+.ns-reader-sidebar-foot { margin-top: auto; }
+.ns-sidebar-quick {
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px; min-height: 34px; padding: 7px 11px;
+  border: 1px solid var(--cp-border); border-radius: var(--cp-radius-control); background: var(--cp-raised); color: var(--cp-text);
+  font-weight: 650; text-align: left; cursor: pointer;
+}
+.ns-sidebar-quick svg { flex: 0 0 15px; width: 15px; height: 15px; }
+.ns-sidebar-quick:hover { border-color: var(--cp-border-strong); background: var(--cp-surface); }
+.ns-reader-local-note { margin: 0; padding-left: 4px; color: var(--cp-text-muted); font-size: 11px; line-height: 1.6; }
+.ns-reader-sidebar-foot .ns-account-controls { display: grid; gap: 2px; }
+.ns-reader-sidebar-foot .ns-account-name { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 4px 4px; color: var(--cp-text-muted); font-size: 11px; }
+.ns-reader-sidebar-foot .ns-account-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-reader-sidebar-foot .ns-account-name svg { flex: 0 0 14px; width: 14px; height: 14px; }
+.ns-reader-sidebar-foot .ns-account-controls .ns-reader-nav-item { height: 32px; min-height: 32px; padding: 0 4px; color: var(--cp-text-muted); font-size: 12px; }
+.ns-reader-sidebar-foot .ns-account-controls .ns-reader-nav-item:hover { color: var(--cp-accent); background: none; }
+.ns-reader-sidebar-foot .ns-account-controls .ns-reader-nav-icon, .ns-reader-sidebar-foot .ns-account-controls .ns-reader-nav-icon svg { flex-basis: 14px; width: 14px; height: 14px; font-size: 14px; }
+.ns-reader-sidebar-foot .ns-reader-button { justify-content: flex-start; }
+
+/* Main column — CoDesign `main` + `.content`. */
+.ns-reader-main { min-width: 0; min-height: 100dvh; margin-left: var(--cp-nav-width); overflow-wrap: anywhere; }
+.ns-reader-main:focus { outline: none; }
+.ns-reader-content { width: min(100%, var(--cp-content-width)); margin: 0 auto; padding: 40px clamp(24px, 4vw, 56px); }
+.ns-runtime-status { margin-bottom: 12px; color: var(--cp-text-muted); font-size: 12px; }
+
+.ns-reader-mobile-header { display: none; }
+.ns-reader-skip { position: fixed; top: -80px; left: 12px; z-index: 100; padding: 12px; border-radius: 8px; background: var(--cp-text); color: var(--cp-surface); }
+.ns-reader-skip:focus { top: 12px; }
+
+/* Drawer (≤768px) — CoDesign `.sidebar.open` (250px, sidebar tone) + scrim. Two classes outrank Fluent's surface size and colour. */
+.ns-reader-shell.ns-reader-mobile-nav { --fui-Drawer--size: 250px; width: 250px; max-width: 85vw; background: var(--cp-sidebar); color: var(--cp-text); }
+.ns-reader-mobile-nav .fui-DrawerHeader { padding: 0; gap: 0; }
+.ns-reader-mobile-nav .fui-DrawerHeaderTitle { padding-right: 10px; }
+.ns-reader-mobile-nav .fui-DrawerHeaderTitle__heading { margin: 0; font: inherit; }
+.ns-reader-drawer-body.fui-DrawerBody { display: flex; flex-direction: column; padding: 0 0 12px; }
+/* Touch drawer keeps 44px targets (CoDesign rows are 42px). */
+.ns-reader-mobile-nav .ns-reader-navigation .ns-reader-nav-item { height: 44px; }
+.ns-reader-shell.ns-reader-mobile-nav .ns-reader-button { min-height: 34px; }
+.fui-DialogSurface__backdrop, .fui-DrawerOverlay__backdrop { background: var(--cp-overlay); }
+
+@media (max-width: 768px) {
+  .ns-reader-sidebar { display: none; }
+  .ns-reader-mobile-header {
+    position: sticky; top: 0; z-index: 16; display: flex; align-items: center; justify-content: space-between;
+    height: 56px; padding: 0 18px; border-bottom: 1px solid var(--cp-border); background: var(--cp-surface);
+  }
+  .ns-reader-mobile-header .ns-reader-brand { height: auto; flex: 0 1 auto; gap: 4px; padding: 0; font: 700 14px/1 var(--cp-font-body); }
+  .ns-reader-mobile-header .ns-reader-brand-mark { flex: none; width: auto; height: auto; border: 0; }
+  /* CoDesign `.mobile-bar .icon-button`: a bordered square; 40px keeps a comfortable touch target. */
+  .ns-reader-mobile-header .ns-icon-button { --ns-control-height: 40px; }
+  .ns-reader-main { margin-left: 0; min-height: calc(100dvh - 56px); }
+  .ns-reader-content { padding: 24px 20px 60px; }
+  .ns-reader-shell .ns-feedback-undo { bottom: calc(16px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 420px) {
+  .ns-reader-content { padding-inline: 16px; }
+}
+@media (forced-colors: active) {
+  .ns-reader-shell :focus-visible { outline: 3px solid Highlight; }
+}

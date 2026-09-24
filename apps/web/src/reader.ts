@@ -1,10 +1,17 @@
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "./api";
-import type { Brief, Event, Processing, Provider, SummaryStatus } from "./types";
+import type { Brief, Event, EventState, Processing, Provider, SummaryStatus } from "./types";
 import type { InfiniteData } from "@tanstack/react-query";
 
 export const DEFAULT_SUMMARY_MODEL = "gpt-5.6-terra";
+
+export type FeedbackState = Pick<EventState, "saved" | "notInterested" | "notInterestedReason">;
+export type FeedbackMutationVariables = FeedbackState | { state: FeedbackState };
+
+export function projectedFeedbackState(variables: FeedbackMutationVariables | undefined): FeedbackState | undefined {
+  return variables && "state" in variables ? variables.state : variables;
+}
 
 export function summaryModel(provider: (Pick<Provider, "model" | "models"> & Partial<Pick<Provider, "preferredModel">>) | undefined, selected: string): string {
   const requested = selected || provider?.model || provider?.preferredModel;

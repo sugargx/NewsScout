@@ -1,73 +1,43 @@
-.ns-reader-story {
-  position: relative;
-  container-type: inline-size;
-  container-name: reader-story;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-width: 0;
-  padding: 16px 20px;
-  border: 1px solid var(--cp-border);
-  border-radius: 16px;
-  background: var(--cp-surface);
-  color: var(--cp-text);
-}
-.ns-reader-story-title,.ns-reader-story-meta,.ns-reader-story-body,.ns-reader-story-actions { grid-column: 1 / -1; }
-.ns-reader-story:hover { border-color: var(--cp-border-strong); }
-.ns-reader-story[data-selected=true] { border-color: var(--cp-accent); }
-.ns-reader-story[data-selected=true]::before {
-  position: absolute;
-  inset: 20px auto 20px 0;
-  width: 3px;
-  border-radius: 0 4px 4px 0;
-  background: var(--cp-accent);
-  content: "";
-}
-.ns-reader-story-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  color: var(--cp-text-muted);
-  font-size: 12px;
-  line-height: 1.6;
-  margin-bottom: 8px;
-}
-.ns-reader-story-meta .fui-Badge { padding: 0; min-width: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; }
-.ns-reader-story .ns-reader-story-title { margin: 0 0 8px; font-size: 20px; line-height: 1.4; letter-spacing: -.02em; overflow-wrap: anywhere; }
-.ns-reader-story .ns-reader-story-title>button {
-  display: inline;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.ns-reader-story .ns-reader-story-title>button:hover { color: var(--cp-accent); text-decoration: underline; text-underline-offset: 3px; }
-.ns-reader-story .ns-reader-story-title>button:focus-visible { outline: 3px solid var(--cp-accent); outline-offset: 4px; }
-.ns-reader-story-body { min-width: 0; color: var(--cp-text-muted); font-size: 14px; line-height: 1.65; }
-.ns-reader-story-body .ns-summary-content { margin: 4px 0 0; }
-.ns-reader-story-body .ns-summary-points { margin: 0; padding-left: 18px; }
-.ns-reader-story-body .ns-summary-compact { font-size: 14px; line-height: 1.65; }
-.ns-reader-story-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+/* Article rows · CoDesign .article-row */
+.ns-reader-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; min-width: 0; padding: var(--cp-row-padding) 0; border-bottom: 1px solid var(--cp-border); color: var(--cp-text); }
+.ns-reader-row[data-selected=true] { margin-inline: -14px; padding-inline: 14px; background: var(--cp-accent-soft); box-shadow: inset 3px 0 var(--cp-accent); }
+.ns-reader-row-content { min-width: 0; }
+.ns-reader-row-openable { cursor: pointer; }
+.ns-reader-row-title, .ns-reader-story-title { margin: 0 0 6px; color: var(--cp-text); font: 600 18px/1.45 var(--cp-font-display); overflow-wrap: anywhere; }
+.ns-reader-row-title>button, .ns-reader-story-title>button { padding: 0; border: 0; border-radius: 2px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ns-reader-row-openable:hover .ns-reader-row-title>button, .ns-reader-row-title>button:hover, .ns-reader-story-title>button:hover { color: var(--cp-accent); }
+.ns-reader-shell .ns-reader-row-title>button:focus-visible, .ns-reader-shell .ns-reader-story-title>button:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-reader-row-preview { display: -webkit-box; margin: 0 0 9px; overflow: hidden; color: var(--cp-text-muted); line-height: 1.65; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ns-reader-story-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--cp-text-muted); font-size: 11px; }
+.ns-reader-story-meta>span:first-child, .ns-reader-story-topic { color: var(--cp-accent); font-weight: 700; }
+.ns-reader-story-meta .fui-Badge { min-width: 0; padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; }
+.ns-reader-story-meta .ns-article-source { min-width: 0; overflow-wrap: anywhere; }
+.ns-reader-story-meta time { white-space: nowrap; }
+.ns-reader-row .ns-reader-story-meta .ns-article-source+time::before { content: "· "; }
+.ns-opened-mark { color: var(--cp-muted-label); }
+.ns-reader-row-value { display: -webkit-box; margin-top: 8px; overflow: hidden; color: var(--cp-accent); font-size: 11px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ns-reader-row-actions { display: flex; align-items: flex-start; gap: 6px; }
+.ns-reader-row:not(:has(>.ns-reader-row-actions)) { grid-template-columns: minmax(0, 1fr); }
+.ns-reader-row .cp-coverage { margin-top: 10px; }
+
+/* Legacy stacked story (public reader) */
+.ns-reader-story { position: relative; min-width: 0; padding: var(--cp-row-padding) 0; border-bottom: 1px solid var(--cp-border); background: none; color: var(--cp-text); }
+.ns-reader-story[data-selected=true] { padding-inline: 14px; background: var(--cp-accent-soft); box-shadow: inset 3px 0 var(--cp-accent); }
+.ns-reader-story-body, .ns-reader-story-preview { min-width: 0; }
+.ns-reader-story-preview { margin: 0; color: var(--cp-text-muted); line-height: 1.65; }
+.ns-reader-story-preview .ns-summary-content { margin: 0; }
+.ns-reader-story-preview .ns-summary-points { margin: 0; padding-left: 18px; }
+.ns-reader-story-preview .ns-summary-compact { max-width: none; font-size: 14px; line-height: 1.65; }
+.ns-reader-story-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
 .ns-reader-story-actions>.ns-reading-value { margin: 0 auto 0 0; }
 .ns-reader-story-actions>.ns-reading-value[open] { order: 2; flex-basis: 100%; }
 .ns-reader-story .cp-coverage { margin-top: 8px; }
-.ns-reader-story-meta .ns-article-source { min-width: 0; max-width: none; overflow-wrap: anywhere; white-space: normal; }
-.ns-reader-story-meta time { white-space: nowrap; color: var(--cp-text-soft); }
-.ns-reader-story-topic { color: var(--cp-accent); font-weight: 600; }
-@container reader-story (min-width: 1000px) {
-  .ns-reader-story-meta,.ns-reader-story-body { grid-column: 1; }
-  .ns-reader-story-actions:not(:has(.ns-reading-value[open],[aria-busy=true],[role=alert])) {
-    grid-column: 2; grid-row: 2 / span 2; align-self: start;
-    width: 160px; margin: 0 0 0 24px; justify-content: flex-end; row-gap: 8px;
-  }
+.ns-reader-card-grid .ns-reader-story, [data-view=cards] .ns-reader-story { padding: 18px 20px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-surface); background: var(--cp-surface); }
+
+@media (max-width: 768px) {
+  .ns-reader-row { grid-template-columns: minmax(0, 1fr); }
+  .ns-reader-row-actions { justify-content: flex-end; }
 }
-@media (max-width: 560px) {
-  .ns-reader-story { padding: 16px; }
-  .ns-reader-story .ns-reader-story-title { font-size: 18px; }
-  .ns-reader-story-actions { gap: 4px 8px; margin-top: 8px; }
+@media (max-width: 420px) {
+  .ns-reader-row-title, .ns-reader-story-title { font-size: 17px; }
 }

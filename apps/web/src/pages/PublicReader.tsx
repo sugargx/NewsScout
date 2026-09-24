@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Checkbox, Field, Select } from "@fluentui/react-components";
+import { Checkbox } from "@fluentui/react-components";
 import { ArrowClockwiseRegular, BookOpenRegular, BookmarkFilled, BookmarkRegular, CalendarRegular, HomeRegular, OptionsRegular, RadarRegular, StarRegular, WeatherMoonRegular, WeatherSunnyRegular } from "@fluentui/react-icons";
-import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, startTransition, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { SummaryContent } from "../components/SummaryContent";
 import { TopicWorkspace, type TopicDataSource, type TopicReadingContext } from "../components/TopicExplorer";
@@ -25,22 +25,22 @@ import { ReaderStory } from "../components/ReaderStory";
 import { ReaderRow } from "../components/ReaderRow";
 import { PublicArticlePane } from "../components/PublicArticlePane";
 import { RadarControls, RadarFilterChips, radarView, type RadarView, type RadarFilterState } from "../components/RadarControls";
-import { useStyles } from "../styles";
+import { ReadingInvitation, SelectionOverview, WeeklyTopics } from "../components/ReaderOverview";
 
 const publicLinks=[
-  {key:"brief",label:"晨间简报",shortLabel:"精选",icon:HomeRegular},
+  {key:"brief",label:"今日精选",shortLabel:"精选",icon:HomeRegular},
   {key:"radar",label:"新闻雷达",shortLabel:"雷达",icon:RadarRegular},
   {key:"reading",label:"深度阅读",shortLabel:"深读",icon:BookOpenRegular},
   {key:"weekly",label:"每周回顾",shortLabel:"回顾",icon:CalendarRegular},
-  {key:"saved",label:"我的收藏",shortLabel:"收藏",icon:StarRegular},
+  {key:"saved",label:"收藏",shortLabel:"收藏",icon:StarRegular},
 ] satisfies {key:PublicView;label:string;shortLabel:string;icon:typeof HomeRegular}[];
 
 export function PublicReader() {
-  const styles=useStyles();
   const [params,setParams]=useSearchParams(),location=useLocation(),navigate=useNavigate();
   const radarTabsId=useId();
   const tab=publicView(location.pathname,params.get("tab"));
   const eventId=params.get("article")??location.pathname.match(/^\/events\/([0-9a-f-]+)$/i)?.[1]??"";
+  const weeklyTopic=params.get("weekTopic")??(tab==="weekly"&&eventId?"all":"");
   const edition=params.get("edition")??"latest",archived=tab==="brief"&&edition!=="latest";
   const readingSource=params.get("readingSource")??"",readingScope=params.get("readingScope")??"technical",readingHours=params.get("readingHours")??"720";
   const [remaining,setRemaining]=useState(false),[readingRevision,setReadingRevision]=useState(0),[nextPending,setNextPending]=useState(false);
@@ -61,6 +61,7 @@ export function PublicReader() {
   const [pendingInterests,setPendingInterests]=useState<PublicInterestRecord|null>(null);
   const [interestOpen,setInterestOpen]=useState(false);
   const interestTrigger=useRef<HTMLButtonElement>(null);
+  const interestOpener=useRef<HTMLElement|null>(null);
   const interests=interestSignature(interestRecord.value);
   const [briefAsOf,setBriefAsOf]=useState(()=>new Date().toISOString());
   const pendingBriefRefresh=useRef<{previous:PublicArticle[];asOf:string;interests:string}|null>(null);
@@ -72,7 +73,7 @@ export function PublicReader() {
   const [undo,setUndo]=useState("");
   const [theme,setTheme]=useState(document.documentElement.dataset.theme??"light");
   const radarScope=JSON.stringify([queryText,topic,tier,hours,sort,includeEngineering,interests]);
-  const workspaceScope=JSON.stringify(tab==="brief"?[tab,edition,...(archived?[]:[interests,briefAsOf])]:tab==="reading"?[tab,readingAsOf]:tab==="radar"?[tab,radarScope,view,radarAsOf]:[tab]);
+  const workspaceScope=JSON.stringify(tab==="brief"?[tab,edition,...(archived?[]:[interests,briefAsOf])]:tab==="reading"?[tab,readingAsOf]:tab==="radar"?[tab,radarScope,view,radarAsOf]:tab==="weekly"?[tab,weeklyTopic]:[tab]);
   const scroll=useRef(0),previousId=useRef(eventId),previousTab=useRef(tab),detail=useRef<HTMLElement>(null);
   const previousScope=useRef(workspaceScope);
   const listButtons=useRef(new Map<string,HTMLElement>());
@@ -95,7 +96,7 @@ export function PublicReader() {
     if(eventId&&eventId!==previousId.current) {
       detail.current?.focus({preventScroll:true});
       if(detail.current)detail.current.scrollTop=0;
-      if(window.innerWidth<=(tab==="reading"?1279:980))window.scrollTo({top:0});
+      if(window.innerWidth<=1024)window.scrollTo({top:0});
     } else if(!eventId&&previousId.current&&previousScope.current===workspaceScope) {
       window.scrollTo({top:scroll.current});
       if(!topicScope) {
@@ -155,12 +156,15 @@ export function PublicReader() {
       update(recordPublicOpen(feedback,selected));
   },[selected?.id,selected?.contentVersion,eventId,feedback]);
   const queueVisible=items.filter(item=>!remaining||!hasPublicOpened(feedback,item)||item.id===eventId);
+  const queued=eventId?queueVisible:queueVisible.slice(1);
   const queueLimited=queue.data?.pages.at(-1)?.paginationLimited===true;
-  const readingIds=[...new Set(tab==="saved"?Object.keys(feedback.saved).reverse():tab==="reading"?queueVisible.map(item=>item.id):items.flatMap(item=>
+  const groups=editionGroups(items,tab==="brief"?brief.data?.sections:tab==="weekly"?weekly.data?.sections:[]);
+  const visibleGroups=tab!=="weekly"||weeklyTopic==="all"?groups:groups.filter(group=>group.key===weeklyTopic);
+  const displayedItems=tab==="weekly"?visibleGroups.flatMap(group=>group.items):items;
+  const readingIds=[...new Set(tab==="saved"?Object.keys(feedback.saved).reverse():tab==="reading"?queueVisible.map(item=>item.id):displayedItems.flatMap(item=>
     item.coverage?.members.filter(member=>!feedback.dismissed.includes(member.eventId)).map(member=>member.eventId)??[item.id]))];
   const readingIndex=readingIds.indexOf(eventId);
-  const groups=editionGroups(items,tab==="brief"?brief.data?.sections:tab==="weekly"?weekly.data?.sections:[]);
-  const sectionStarts=new Map(groups.filter(group=>group.section).map(group=>[group.items[0].id,group]));
+  const sectionStarts=new Map(visibleGroups.filter(group=>group.section).map(group=>[group.items[0].id,group]));
   const groupAnchor=(key:string)=>`public-week-${key}`;
   useEffect(()=>{
     const pending=pendingBriefRefresh.current;if(!pending)return;
@@ -196,9 +200,15 @@ export function PublicReader() {
     try {savePublicFeedback(next);setFeedback(next);setStorageError(null);return true;}
     catch {setStorageError("浏览器未能保存操作，可能是存储权限或空间不足。此次操作尚未生效。");return false;}
   }
+  function openInterestDialog(opener:HTMLElement) {
+    interestOpener.current=opener;setInterestOpen(true);
+  }
   function closeInterestDialog() {
     setInterestOpen(false);
-    requestAnimationFrame(()=>interestTrigger.current?.focus({preventScroll:true}));
+    if(interestOpen)requestAnimationFrame(()=>{
+      const opener=interestOpener.current;
+      (opener?.isConnected&&opener.getClientRects().length?opener:interestTrigger.current)?.focus({preventScroll:true});
+    });
   }
   function applyInterests(next:PublicInterestRecord) {
     if(next.error){setPendingInterests(next);return;}
@@ -332,54 +342,59 @@ export function PublicReader() {
     if(tab==="saved")return <p>本浏览器独享 · 不跨设备同步</p>;
     return <p>{feed.data?`已加载 ${items.length} 组 / 单篇${feed.hasNextPage?"，还有更多":""} · ${interests&&sort==="recommended"?"按你的兴趣推荐":"本次顺序固定"}`:"新闻列表尚未载入"}</p>;
   }
-  const title=tab==="brief"?"晨间简报":tab==="weekly"?"每周回顾":tab==="reading"?"深度阅读":tab==="saved"?"我的收藏":"新闻雷达";
+  const title=tab==="brief"?archived?"历史晨报":"今日精选":tab==="weekly"?"每周回顾":tab==="reading"?"深度阅读":tab==="saved"?"收藏":"新闻雷达";
   return <ReaderShell badge="公开试读" navigation={
     <ReaderNavigation label="公开阅读视图" activeKey={tab} onSelect={changeTab}
       items={publicLinks.map(({key,label,shortLabel,icon:Icon})=>({key,label,shortLabel,icon:<Icon/>,...(key==="saved"?{count:Object.keys(feedback.saved).length}:{})}))}/>
-  } utility={<ReaderButton size="small" variant="ghost" aria-label="切换明暗主题" icon={theme==="dark"?<WeatherSunnyRegular/>:<WeatherMoonRegular/>}
-    onClick={()=>{const next=theme==="dark"?"light":"dark";document.documentElement.dataset.theme=next;setTheme(next);}}><span className="ns-theme-label">{theme==="dark"?"浅色模式":"深色模式"}</span></ReaderButton>}>
+  } footer={<><ReaderButton size="small" variant="ghost" icon={<OptionsRegular/>} onClick={event=>openInterestDialog(event.currentTarget)}>兴趣设置</ReaderButton>
+    <ReaderButton size="small" variant="ghost" aria-label="切换明暗主题" icon={theme==="dark"?<WeatherSunnyRegular/>:<WeatherMoonRegular/>}
+    onClick={()=>{const next=theme==="dark"?"light":"dark";document.documentElement.dataset.theme=next;setTheme(next);}}><span className="ns-theme-label">{theme==="dark"?"浅色模式":"深色模式"}</span></ReaderButton>
+    <p className="ns-reader-local-note">偏好只保存在此浏览器</p></>}>
     <div className={`ns-beta ns-editorial-page${tab==="radar"?" ns-radar-page":""}${tab==="weekly"?" ns-weekly-page":""}${tab==="reading"?" ns-reading-page":""}${eventId?" is-reading":""}`}>
-    <PageHeader compact eyebrow={tab==="brief"?"Morning Brief":tab==="reading"?"The Reading Room":tab==="weekly"?"Weekly Review":tab==="saved"?"Reading Library":"Reader Desk"} title={title}
+    <PageHeader compact eyebrow={tab==="brief"?"值得读什么":tab==="reading"?"连续阅读队列":tab==="weekly"?"给重要变化一点上下文":tab==="saved"?"留给下次阅读":"浏览已收录内容"} title={title}
       action={<ReaderButton ref={interestTrigger} className="ns-interest-trigger" icon={<OptionsRegular/>}
-        aria-label={interestRecord.value.length?`兴趣主题（已选 ${interestRecord.value.length} 项）`:"兴趣主题"} onClick={()=>setInterestOpen(true)}>兴趣主题
+        aria-label={interestRecord.value.length?`兴趣主题（已选 ${interestRecord.value.length} 项）`:"兴趣主题"} onClick={event=>openInterestDialog(event.currentTarget)}>兴趣主题
         {!!interestRecord.value.length&&<span className="ns-interest-count" aria-hidden="true">{interestRecord.value.length}</span>}</ReaderButton>}/>
     {interestOpen&&<PublicInterestDialog onClose={closeInterestDialog} onApply={applyInterests}/>}
     {(interestRecord.error||pendingInterests)&&<aside className="ns-interest-notice" aria-label="兴趣设置提示">
       <p role={pendingInterests?.error||interestRecord.error?"alert":"status"}>{pendingInterests?.error??interestRecord.error??"另一页面更新了兴趣；本页仍保留当前阅读顺序。"}</p>
       {pendingInterests&&!pendingInterests.error?<ReaderButton size="small" onClick={()=>applyInterests(loadPublicInterests())}>应用其他页面的设置</ReaderButton>:
-        <ReaderButton size="small" onClick={()=>setInterestOpen(true)}>查看兴趣设置</ReaderButton>}
+        <ReaderButton size="small" onClick={event=>openInterestDialog(event.currentTarget)}>查看兴趣设置</ReaderButton>}
     </aside>}
     {storageError&&<div className="ns-beta-error" role="alert">{storageError}</div>}
     {undo&&<aside className="ns-feedback-undo" aria-label="本浏览器反馈"><p role="status">已在本浏览器隐藏这条内容。</p><div className="ns-feedback-buttons"><ReaderButton size="small" onClick={()=>{const reasons={...feedback.reasons};delete reasons[undo];if(update({...feedback,reasons,dismissed:feedback.dismissed.filter(id=>id!==undo)}))setUndo("");}}>撤销不感兴趣</ReaderButton>
       <details><summary>补充理由（可选）</summary><div>{disinterestReasons.map(reason=><ReaderButton key={reason.value} size="small" aria-pressed={feedback.reasons?.[undo]===reason.value} onClick={()=>update({...feedback,reasons:{...feedback.reasons,[undo]:reason.value}})}>{reason.label}</ReaderButton>)}</div></details><ReaderButton size="small" variant="ghost" aria-label="关闭反馈提示" onClick={()=>setUndo("")}>关闭</ReaderButton></div></aside>}
     {tab==="brief"&&<>
+      {!archived&&brief.data&&<SelectionOverview date={brief.data.localDate} count={items.length} minutes={brief.data.estimatedMinutes} windowEnd={brief.data.windowEnd} updateLabel="更新内容"
+        onLatest={()=>startTransition(()=>{setHours("24");setSort("newest");changeTab("radar");})}/>}
       <div className="ns-beta-edition-controls">
-        <Field label="晨报版本"><Select value={edition} onChange={(_,data)=>changeEdition(data.value)}>
+        <div className="ns-field"><label className="ns-field-label" htmlFor="ns-public-edition">晨报版本</label><select id="ns-public-edition" className="ns-select" value={edition} onChange={event=>changeEdition(event.currentTarget.value)}>
           <option value="latest">当前精选</option>
           {archived&&!history.data?.items.some(item=>item.localDate===edition)&&<option value={edition}>{edition} · 历史版</option>}
           {history.data?.items.map(item=><option key={item.localDate} value={item.localDate}>{item.localDate} · {item.itemCount} 条</option>)}
-        </Select></Field>
+        </select></div>
         <p data-archived={archived}>{archived?"已保存的历史版，保留当时的标题、摘要和顺序。":interests?"按你的兴趣选文；保存新兴趣或点击更新时才重新排序。":"本次精选保持不变；点击更新后再读取。"}
+          {archived&&brief.data?.windowEnd&&<span> <time dateTime={brief.data.windowEnd} aria-label="本版选文截止">截至 {publicDate(brief.data.windowEnd,"time")}（北京时间）</time></span>}
           {history.isLoading?" 正在读取历史版本…":history.data&&!history.data.items.length?" 还没有已保存的历史版。":""}</p>
       </div>
       {history.error&&<div role="alert" className="ns-beta-error">历史版本列表未载入：{history.error.message}<ReaderButton size="small" onClick={()=>void history.refetch()}>重试历史列表</ReaderButton></div>}
     </>}
     {tab==="reading"&&<>
-      <div className="ns-library-toolbar ns-reading-controls">
-        <Field label="T1 博客来源"><Select value={readingSource} onChange={(_,data)=>changeReadingFilter("readingSource",data.value)}>
+      <div className="ns-filters ns-reading-controls">
+        <select aria-label="T1 博客来源" value={readingSource} onChange={event=>changeReadingFilter("readingSource",event.currentTarget.value)}>
           <option value="">全部 T1 博客</option>
           {readingSource&&!readingSources.data?.items.some(source=>source.id===readingSource)&&<option value={readingSource}>所选来源</option>}
           {readingSources.data?.items.map(source=><option key={source.id} value={source.id}>{source.name}</option>)}
-        </Select></Field>
-        <Field label="阅读内容"><Select value={readingScope} onChange={(_,data)=>changeReadingFilter("readingScope",data.value)}><option value="technical">技术与研究</option><option value="all">全部博客 · 包含公司动态</option></Select></Field>
-        <Field label="阅读时间范围"><Select value={readingHours} onChange={(_,data)=>changeReadingFilter("readingHours",data.value)}><option value="720">过去30天</option><option value="0">全部已收录 · 不限日期</option></Select></Field>
+        </select>
+        <select aria-label="阅读内容" value={readingScope} onChange={event=>changeReadingFilter("readingScope",event.currentTarget.value)}><option value="technical">技术与研究</option><option value="all">全部博客 · 包含公司动态</option></select>
+        <select aria-label="阅读时间范围" value={readingHours} onChange={event=>changeReadingFilter("readingHours",event.currentTarget.value)}><option value="720">过去 30 天</option><option value="0">全部已收录 · 不限日期</option></select>
       </div>
       {readingSources.error&&!queue.error&&<ReaderProblem title="来源目录暂时不可用" error={readingSources.error} retry={()=>void readingSources.refetch()} busy={readingSources.isFetching}/>}
     </>}
     {tab==="radar"&&<>
       <RadarControls id={radarTabsId} filters={{search,topic,tier,sort,hours,includeEngineering}} topics={[...new Set([...knownTopics,...(topic?[topic]:[])])]}
-        onChange={changeFilter} view={view} onViewChange={value=>{close();setView(value);setOutcome("");}} refresh={()=>void refresh()} busy={feed.isFetching} shared personalized={!!interests}/>
-      <RadarFilterChips filters={{search:queryText,topic,tier,sort,hours,includeEngineering}} onChange={changeFilter} reset={resetFilters}/>
+        onChange={changeFilter} view={view} onViewChange={value=>{close();setView(value);setOutcome("");}} refresh={()=>void refresh()} reset={resetFilters} busy={feed.isFetching} shared personalized={!!interests}/>
+      <RadarFilterChips filters={{search:queryText,topic,tier,sort,hours,includeEngineering}} onChange={changeFilter}/>
     </>}
     {!topicScope&&<div className="ns-beta-section-title"><div>
       {tab==="reading"&&<Checkbox checked={remaining} label="只看尚未打开的文章" onChange={(_,data)=>setRemaining(data.checked===true)}/>}
@@ -389,29 +404,32 @@ export function PublicReader() {
     {outcome&&<p className="ns-refresh-outcome" role="status">{outcome}</p>}
     {error&&!topicScope&&<ReaderProblem title={tab==="reading"?"阅读队列暂时不可用":tab==="weekly"?"本周回顾暂时不可用":tab==="brief"?"简报暂时不可用":"新闻暂时不可用"} error={error}
       details={tab==="reading"&&readingSources.error?<p>来源目录也暂时不可用：{readingSources.error.message}。重试会一并重新读取。</p>:undefined} retry={()=>void refresh()} busy={busy}/>}
-    {tab==="weekly"&&weekly.data&&<div className="ns-weekly-intro">
-      <p>回顾过去一周值得持续关注的变化，按主题阅读，不是晨报的简单拼接。{weekly.data.estimatedMinutes?` 预计阅读 ${weekly.data.estimatedMinutes} 分钟。`:""}</p>
-      {groups.length>1&&<nav className="ns-weekly-outline" aria-label="本周主题导航">{groups.filter(group=>group.section).map(group=><a key={group.key} href={`#${groupAnchor(group.key)}`}><strong>{group.section!.title}</strong><span>{group.items.length} 篇</span></a>)}</nav>}
-    </div>}
-    <EditionHeading section={groups[0]?.section} id={tab==="weekly"&&groups[0]?groupAnchor(groups[0].key):undefined} workspace/>
-    {tab==="reading"&&!eventId&&!loading&&!error&&!!queueVisible.length&&<ReaderStart disabled={false} onStart={()=>{if(queueVisible[0])open(queueVisible[0].id);}}/>}
-    <div className={topicScope?"ns-beta-topic-panel":`ns-beta-workspace${eventId?" has-reading":""}${tab==="reading"?` ns-library${!loading&&!eventId&&!queueVisible.length?" is-empty":""}`:""}`}
+    {tab==="weekly"&&weekly.data&&!!items.length&&<WeeklyTopics
+      topics={groups.map(group=>({key:group.key,title:group.section?.title??"本周材料",count:group.items.length}))} selected={weeklyTopic}
+      onSelect={key=>setParams(previous=>{const next=new URLSearchParams(previous);next.set("weekTopic",key);next.delete("article");return next;})}/>}
+    {tab==="weekly"&&!!items.length&&!visibleGroups.length&&<div className="ns-beta-empty"><h2>选择一个主题开始回顾</h2><p>先看关心的领域，也可以选择“全部主题”顺序浏览。</p></div>}
+    <EditionHeading section={visibleGroups[0]?.section} id={tab==="weekly"&&visibleGroups[0]?groupAnchor(visibleGroups[0].key):undefined} workspace/>
+    {tab==="reading"&&!loading&&!!queueVisible.length&&<ReaderStart disabled={false} hidden={!!eventId}
+      title={readingTitle(queueVisible[0])} meta={<>{contentLabel(queueVisible[0])} · {queueVisible[0].evidence[0]?.sourceName} · {publicDate(queueVisible[0].publishedAt,queueVisible[0].publicationPrecision)} · {hasPublicOpened(feedback,queueVisible[0])?"已打开":"尚未打开"}</>}
+      preview={<SummaryContent event={queueVisible[0]} compact/>} onStart={event=>open(queueVisible[0].id,queueVisible[0].id,event.currentTarget)}/>}
+    {tab==="reading"&&!eventId&&queued.length>0&&<h2 className="ns-queue-next-title">接下来</h2>}
+    <div className={topicScope?"ns-beta-topic-panel":`ns-beta-workspace ns-reader-workspace${eventId?" has-reading ns-reader-open":""}${tab==="reading"?` ns-library${!loading&&!eventId&&!queueVisible.length?" is-empty":""}`:""}`}
       id={tab==="radar"?`${radarTabsId}-panel`:undefined} role={tab==="radar"?"tabpanel":undefined} aria-labelledby={tab==="radar"?`${radarTabsId}-${view}`:undefined}>
       {topicScope?<TopicWorkspace hours={hours} search={queryText} tier={tier} topic={topic} asOf={radarAsOf} sort={sort} includeEngineering={includeEngineering}
         dataSource={publicTopics} dismissed={feedback.dismissed} reader={{selectedId:eventId,open:(id,opener)=>open(id,id,opener??undefined),close,select:id=>open(id)}} renderArticle={renderArticle}/>:<>
-      <section className={`ns-beta-feed${tab==="reading"?" ns-library-list":""}${tab==="radar"&&view==="compact"&&!loading&&items.length?` ${styles.listSurface}`:""}`} data-view={tab==="radar"?view:undefined} aria-busy={loading} aria-label={tab==="saved"?"本浏览器收藏":tab==="reading"?"T1 顺序阅读队列":"公开新闻列表"}>
+      <section className={`ns-beta-feed${tab==="reading"?" ns-library-list":""}${tab==="radar"&&view==="compact"&&!loading&&items.length?" ns-reader-list":""}`} data-view={tab==="radar"?view:undefined} aria-busy={loading} aria-label={tab==="saved"?"本浏览器收藏":tab==="reading"?"T1 顺序阅读队列":"公开新闻列表"}>
         {tab==="saved"?Object.entries(feedback.saved).reverse().map(([id,saved])=><ReaderStory className="ns-beta-card" key={id} headingLevel="h3"
           title={saved.title} meta={<>{saved.publisher} · 收藏于 {publicDate(saved.savedAt)}</>} onOpen={()=>open(id)}
           titleRef={element=>{if(element)listButtons.current.set(id,element);else listButtons.current.delete(id);}}
           actions={<ReaderButton variant="ghost" size="small" onClick={()=>{const saved={...feedback.saved};delete saved[id];update({...feedback,saved});}}>取消收藏</ReaderButton>}/>
-        ):loading?<ReaderSkeleton variant={tab==="reading"?"queue":tab==="radar"&&view==="compact"?"rows":"cards"} count={tab==="reading"?5:4}/>:tab==="reading"?queueVisible.map((item,index)=><button key={item.id} type="button" className="ns-library-item" data-public-event={item.id} aria-pressed={eventId===item.id}
+        ):loading?<ReaderSkeleton variant={tab==="reading"?"queue":tab==="radar"&&view==="compact"?"rows":"cards"} count={tab==="reading"?5:4}/>:tab==="reading"?queued.map((item,index)=><button key={item.id} type="button" className="ns-library-item" data-public-event={item.id} aria-pressed={eventId===item.id}
           ref={element=>{if(element)listButtons.current.set(item.id,element);else listButtons.current.delete(item.id);}} onClick={event=>open(item.id,item.id,event.currentTarget)}>
-          <strong>{String(index+1).padStart(2,"0")} · {readingTitle(item)}</strong>
+          <strong>{String(index+(eventId?1:2)).padStart(2,"0")} · {readingTitle(item)}</strong>
           <span>{contentLabel(item)} · {item.primaryTopic} · {item.evidence.find(source=>source.sourceTier==="T1")?.sourceName} · {hasPublicOpened(feedback,item)?"已打开":"尚未打开"}</span>
           <span>{publicDate(item.publishedAt,item.publicationPrecision)}</span>
-        </button>):items.map((item,index)=>{const material=item,target=item.id,grouped=!!item.coverage&&item.coverage.relation!=="same_named_topic";
+        </button>):displayedItems.map((item,index)=>{const material=item,target=item.id,grouped=!!item.coverage&&item.coverage.relation!=="same_named_topic";
           const title=grouped?item.coverage!.topic:readingTitle(material);
-          const meta=<><span className="ns-reader-story-topic">{item.primaryTopic}</span><span>{contentLabel(material)}</span><span className="ns-article-source" title={material.evidence[0]?.sourceName}>{material.evidence[0]?.sourceName}</span><time dateTime={material.publishedAt??undefined} title={publicDate(material.publishedAt,material.publicationPrecision)}>{publicDate(material.publishedAt,"day")}</time>{hasPublicOpened(feedback,material)&&!grouped&&<span className="ns-beta-opened">已打开</span>}</>;
+          const meta=<><span className="ns-reader-story-topic">{item.primaryTopic}</span><span>{contentLabel(material)}</span><span className="ns-article-source" title={material.evidence[0]?.sourceName}>{material.evidence[0]?.sourceName}</span><time dateTime={material.publishedAt??undefined} title={publicDate(material.publishedAt,material.publicationPrecision)}>{publicDate(material.publishedAt,material.publicationPrecision)}</time>{hasPublicOpened(feedback,material)&&!grouped&&<span className="ns-beta-opened">已打开</span>}</>;
           const bundlePreview=grouped?item.coverage!.members.filter(member=>!feedback.dismissed.includes(member.eventId)).map(member=>item.coverage!.relation==="release_family"?`${member.releaseTarget} ${member.releaseVersion}`:member.title).join(" · "):material.summary;
           if(tab==="radar"&&view==="compact")return <ReaderRow key={item.id} title={title} meta={meta} preview={bundlePreview}
             selected={eventId===item.id} data-public-event={item.id} headingLevel="h3" onOpen={grouped?undefined:click=>open(target,item.id,click.currentTarget)}
@@ -426,10 +444,10 @@ export function PublicReader() {
           meta={<><span className="ns-beta-number">{String(index+1).padStart(2,"0")}</span>{meta}</>}
           actions={!grouped&&<>
             {target===item.id&&<ReadingValue event={item}/>} {target===item.id&&actions(item)}
-          </>}>
-          {grouped
+          </>}
+          preview={grouped
             ?<p className="ns-beta-preview">{bundlePreview}</p>
-            :<div className="ns-beta-preview"><SummaryContent event={material} compact/></div>}
+            :<div className="ns-beta-preview"><SummaryContent event={material} compact/></div>}>
           {coverage(item)}
         </ReaderStory></Fragment>;})}
         {tab==="saved"&&!Object.keys(feedback.saved).length&&<div className="ns-beta-empty"><h3>先收藏一篇值得再读的文章。</h3><p>它会留在当前浏览器，不需要登录，也不会与其他读者混在一起。</p><ReaderButton variant="primary" onClick={()=>changeTab("brief")}>浏览晨间精选</ReaderButton></div>}
@@ -440,9 +458,10 @@ export function PublicReader() {
         {tab==="radar"&&(feed.data?.pages.at(-1)?.nextOffset??0)>1000&&<p className="ns-beta-notice" role="note">已达到本次公开浏览上限。可按主题、关键词或时间缩小范围。</p>}
         {tab==="reading"&&queue.hasNextPage&&<ReaderButton className="ns-beta-more" disabled={queue.isFetchingNextPage||nextPending} onClick={()=>void queue.fetchNextPage()}>{queue.isFetchingNextPage?"正在读取…":"加载更多文章"}</ReaderButton>}
       </section>
-      {eventId&&renderArticle()}
+      {eventId&&<div className="ns-preview-slot">{renderArticle()}</div>}
       </>}
     </div>
+    {tab==="brief"&&!archived&&<ReadingInvitation onStart={()=>changeTab("reading")}/>}
     <footer className="ns-beta-footer">公开试读 · 收藏和不感兴趣只保存在本浏览器，不影响站主或其他读者。已打开不代表读完。<br/>不开放采集、模型账户与管理接口。文章版权归原发布者，摘要不替代原文。</footer>
     </div>
   </ReaderShell>;

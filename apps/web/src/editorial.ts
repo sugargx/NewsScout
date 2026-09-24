@@ -1,7 +1,35 @@
-import type { BriefSection, Editorial, Event, NotInterestedReason } from "./types";
+import type { Brief, BriefSection, Editorial, Event, NotInterestedReason } from "./types";
 
 export function readingTitle(item:{title:string;displayTitle?:string|null}) {
   return item.displayTitle?.trim() || item.title;
+}
+
+// Saved editions change once a day; poll only while the next edition is being prepared or is due.
+export function editionRefetchInterval(brief:Pick<Brief,"refreshPending"|"nextRefreshAt">|undefined):number|false {
+  if(!brief)return false;
+  if(brief.refreshPending)return 60_000;
+  const due=brief.nextRefreshAt?Date.parse(brief.nextRefreshAt):Number.NaN;
+  if(Number.isNaN(due))return false;
+  return Math.max(60_000,Math.min(due+120_000-Date.now(),6*3600_000));
+}
+
+const editionParts=new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Shanghai",month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+export function editionTime(value:string) {
+  const date=new Date(value);
+  if(Number.isNaN(date.getTime()))return "时间未知";
+  const part=(type:Intl.DateTimeFormatPartTypes)=>editionParts.formatToParts(date).find(item=>item.type===type)?.value??"";
+  return `${part("month")}月${part("day")}日 ${part("hour")}:${part("minute")}`;
+}
+
+// "2026-09-21" → "9月21日" (edition dates are already Beijing calendar dates).
+export function editionDateLabel(localDate:string) {
+  const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate);
+  return match?`${Number(match[2])}月${Number(match[3])}日`:localDate;
+}
+
+// Beijing has no daylight saving, so a fixed +8 h offset gives its calendar date.
+export function beijingDate(at:number=Date.now()) {
+  return new Date(at+8*3_600_000).toISOString().slice(0,10);
 }
 
 const labels:Record<Editorial["contentKind"],string>={

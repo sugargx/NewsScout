@@ -22,13 +22,13 @@ test("real official feeds become persisted events and are readable in the UI", a
   const event = payload.items.find(item => item.evidence.some(evidence => /openai\.com|deepmind\.google|github\.com|rust-lang\.org/.test(evidence.url)));
   expect(event, "at least one event must come from a live official feed").toBeTruthy();
 
-  await page.goto("/radar?view=cards");
+  await page.goto("/radar");
   await expect(page.getByRole("heading", { name: event!.title })).toBeVisible();
   const card = page.getByRole("article").filter({ has: page.getByRole("heading", { name: event!.title }) });
-  await card.getByRole("button", { name: "打开阅读" }).click();
+  await card.getByRole("button", { name: /^阅读：/ }).click();
   const reader=page.getByRole("article",{name:"文章就地阅读",exact:true});
   await expect(reader).toContainText(event!.evidence[0].sourceName);
-  const original = reader.getByRole("link", { name: /打开原始出处/ }).first();
+  const original = reader.getByRole("link", { name: /查看原始来源/ }).first();
   await expect(original).toHaveAttribute("href", /^https:/);
 });
 

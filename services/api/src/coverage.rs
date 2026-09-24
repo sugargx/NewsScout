@@ -198,15 +198,29 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
     }
     // Fix release cohorts before ranking picks a lead; a bridge release must not
     // move between batches merely because a reader changes sort or interests.
-    let active_families: BTreeSet<_> = leaders.iter()
-        .filter_map(|id| by_id.get(id)?.release.as_ref().map(|release| release.key.as_str()))
+    let active_families: BTreeSet<_> = leaders
+        .iter()
+        .filter_map(|id| {
+            by_id
+                .get(id)?
+                .release
+                .as_ref()
+                .map(|release| release.key.as_str())
+        })
         .collect();
-    let release_cohorts: Vec<_> = active_families.into_iter()
+    let release_cohorts: Vec<_> = active_families
+        .into_iter()
         .filter_map(|family| by_family.get(family))
         .flat_map(|candidates| release_family::cohorts(candidates, cutoff))
         .collect();
-    let release_membership: HashMap<_, _> = release_cohorts.iter().enumerate()
-        .flat_map(|(index, members)| members.iter().map(move |record| (record.member.event_id, index)))
+    let release_membership: HashMap<_, _> = release_cohorts
+        .iter()
+        .enumerate()
+        .flat_map(|(index, members)| {
+            members
+                .iter()
+                .map(move |record| (record.member.event_id, index))
+        })
         .collect();
     let leader_set: HashSet<_> = leaders.iter().copied().collect();
     let mut assigned = HashSet::new();
@@ -237,7 +251,8 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
         };
         let mut choices: Vec<(String, String, Vec<&Record>, String, String)> =
             if let Some(release) = &lead.release {
-                let members = release_membership.get(id)
+                let members = release_membership
+                    .get(id)
                     .map(|index| release_cohorts[*index].clone())
                     .unwrap_or_default();
                 if members.len() > 1 {
@@ -521,7 +536,10 @@ mod tests {
     fn unloaded_non_groupable_materials_keep_all_singleton_positions() {
         let ids = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
         let result = groups(&[], &ids, Utc::now());
-        assert_eq!(result.iter().map(|group| group.lead).collect::<Vec<_>>(), ids);
+        assert_eq!(
+            result.iter().map(|group| group.lead).collect::<Vec<_>>(),
+            ids
+        );
         assert!(result.iter().all(|group| group.bundle.is_none()));
     }
 
@@ -860,48 +878,72 @@ mod tests {
             ("Mem0 Python SDK (v2.1.0)", "v2.1.0"),
             ("Vercel AI SDK Provider (v3.0.3)", "vercel-ai-v3.0.3"),
         ];
-        let events = releases.into_iter().enumerate().map(|(index, (title, tag))| {
-            let mut event = base[0].clone();
-            event.id = Uuid::new_v4();
-            event.title = title.into();
-            event.freshness_at = Some(now - Duration::minutes(index as i64));
-            event.published_at = event.freshness_at;
-            let evidence = &mut event.evidence[0];
-            evidence.id = Uuid::new_v4();
-            evidence.title = title.into();
-            evidence.url = format!("https://github.com/mem0ai/mem0/releases/tag/{tag}");
-            evidence.original_published_at = event.freshness_at;
-            evidence.excerpt = "Client: Forward surface-identity headers. #7326".into();
-            event
-        }).collect();
+        let events = releases
+            .into_iter()
+            .enumerate()
+            .map(|(index, (title, tag))| {
+                let mut event = base[0].clone();
+                event.id = Uuid::new_v4();
+                event.title = title.into();
+                event.freshness_at = Some(now - Duration::minutes(index as i64));
+                event.published_at = event.freshness_at;
+                let evidence = &mut event.evidence[0];
+                evidence.id = Uuid::new_v4();
+                evidence.title = title.into();
+                evidence.url = format!("https://github.com/mem0ai/mem0/releases/tag/{tag}");
+                evidence.original_published_at = event.freshness_at;
+                evidence.excerpt = "Client: Forward surface-identity headers. #7326".into();
+                event
+            })
+            .collect();
         (events, now)
     }
 
     #[tokio::test]
     async fn release_family_clients_share_a_change_without_losing_component_identity() {
         let (events, now) = client_fixtures().await;
-        let originals: HashMap<_, _> = events.iter().map(|event| (event.id, event.clone())).collect();
+        let originals: HashMap<_, _> = events
+            .iter()
+            .map(|event| (event.id, event.clone()))
+            .collect();
         let grouped = rollup_events(events, now);
         assert_eq!(grouped.len(), 1);
         let bundle = grouped[0].coverage.as_ref().unwrap();
         assert_eq!(bundle.topic, "Mem0 客户端更新：调用来源标识");
         assert_eq!(bundle.method, "release-family-v2");
         assert_eq!(bundle.members.len(), 5);
-        let targets: BTreeSet<_> = bundle.members.iter()
-            .map(|member| member.release_target.as_deref().unwrap()).collect();
-        assert_eq!(targets, BTreeSet::from([
-            "Node CLI", "Python CLI", "Node SDK", "Python SDK", "Vercel AI SDK Provider",
-        ]));
+        let targets: BTreeSet<_> = bundle
+            .members
+            .iter()
+            .map(|member| member.release_target.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            targets,
+            BTreeSet::from([
+                "Node CLI",
+                "Python CLI",
+                "Node SDK",
+                "Python SDK",
+                "Vercel AI SDK Provider",
+            ])
+        );
         assert_eq!(bundle.popularity_boost, 0.0);
         for member in &bundle.members {
             assert_eq!(member.summary, originals[&member.event_id].summary);
             assert_eq!(member.title, originals[&member.event_id].title);
-            assert_eq!(member.published_at, originals[&member.event_id].published_at);
+            assert_eq!(
+                member.published_at,
+                originals[&member.event_id].published_at
+            );
         }
         let mut provider_first: Vec<_> = originals.into_values().collect();
         provider_first.sort_by_key(|event| !event.title.starts_with("Vercel"));
         assert_eq!(
-            rollup_events(provider_first, now)[0].coverage.as_ref().unwrap().topic,
+            rollup_events(provider_first, now)[0]
+                .coverage
+                .as_ref()
+                .unwrap()
+                .topic,
             bundle.topic
         );
     }
@@ -938,7 +980,9 @@ mod tests {
         for event in &mut events {
             event.title = event.title.replace("Mem0", "Acme Memory");
             event.evidence[0].title = event.title.clone();
-            event.evidence[0].url = event.evidence[0].url.replace("mem0ai/mem0", "acme/acme-memory");
+            event.evidence[0].url = event.evidence[0]
+                .url
+                .replace("mem0ai/mem0", "acme/acme-memory");
             event.evidence[0].excerpt = "Shared request update #1200".into();
         }
         let grouped = rollup_events(events, now);
@@ -949,10 +993,453 @@ mod tests {
         );
     }
 
+    async fn package_fixtures() -> (Vec<Event>, DateTime<Utc>) {
+        let (mut events, _) = plugin_fixtures().await;
+        events.truncate(2);
+        for (index, (event, (title, tag, published, excerpt))) in events
+            .iter_mut()
+            .zip([
+                (
+                    "langgraph==1.2.12",
+                    "1.2.12",
+                    "2026-09-21T14:43:40Z",
+                    "feat(langgraph): add response_schema to interrupt() #8886 \
+                     release(langgraph) #8987 dependency batch #8779 \
+                     #8569 #8596 #8782 #8783 #8792 #8804 #8958",
+                ),
+                (
+                    "langgraph-sdk==0.4.5",
+                    "sdk%3D%3D0.4.5",
+                    "2026-09-21T14:43:09Z",
+                    "feat(langgraph): add response_schema to interrupt() #8886 \
+                     release(langgraph) #8987 dependency batch #8779 \
+                     #8781 #8988 #8994 #8997 #8998",
+                ),
+            ])
+            .enumerate()
+        {
+            event.id = Uuid::from_u128(100 + index as u128);
+            event.title = title.into();
+            event.published_at = Some(published.parse().unwrap());
+            event.freshness_at = event.published_at;
+            let evidence = &mut event.evidence[0];
+            evidence.id = Uuid::from_u128(200 + index as u128);
+            evidence.title = title.into();
+            evidence.url = format!("https://github.com/langchain-ai/langgraph/releases/tag/{tag}");
+            evidence.original_published_at = event.published_at;
+            evidence.excerpt = excerpt.into();
+        }
+        let cutoff = events[0].published_at.unwrap() + Duration::hours(1);
+        (events, cutoff)
+    }
+
+    #[tokio::test]
+    async fn release_family_packages_preserve_langgraph_core_and_sdk_materials() {
+        let (events, cutoff) = package_fixtures().await;
+        let originals = events.clone();
+        let grouped = rollup_events(events, cutoff);
+        assert_eq!(grouped.len(), 1);
+        let bundle = grouped[0].coverage.as_ref().unwrap();
+        assert_eq!(
+            bundle.topic,
+            "langgraph 同批更新：核心包 1.2.12 / SDK 0.4.5"
+        );
+        assert_eq!(bundle.relation, "release_family");
+        assert_eq!(bundle.method, "release-family-v2");
+        assert!(
+            bundle
+                .key
+                .contains("github.com/langchain-ai/langgraph:package:")
+        );
+        assert_eq!(bundle.window_hours, 24);
+        assert_eq!(bundle.material_count, 2);
+        assert_eq!(bundle.official_source_count, 1);
+        assert_eq!(bundle.editorial_source_count, 0);
+        assert_eq!(bundle.popularity_boost, 0.0);
+        assert_eq!(bundle.members.len(), 2);
+        for ((member, original), (target, version)) in bundle
+            .members
+            .iter()
+            .zip(&originals)
+            .zip([("核心包", "1.2.12"), ("SDK", "0.4.5")])
+        {
+            assert_eq!(member.release_target.as_deref(), Some(target));
+            assert_eq!(member.release_version.as_deref(), Some(version));
+            assert_eq!(member.title, original.title);
+            assert_eq!(member.summary, original.summary);
+            assert_eq!(member.content_version, original.content_version);
+            assert_eq!(member.published_at, original.published_at);
+            assert_eq!(member.publication_precision, original.publication_precision);
+            assert_eq!(
+                serde_json::to_value(&member.evidence).unwrap(),
+                serde_json::to_value(&original.evidence).unwrap()
+            );
+        }
+        assert_eq!(bundle.members[1].relationship, "release_family");
+        assert_eq!(grouped[0].freshness_at, originals[0].freshness_at);
+        let mut reversed = originals;
+        reversed.reverse();
+        assert_eq!(
+            rollup_events(reversed, cutoff)[0]
+                .coverage
+                .as_ref()
+                .unwrap()
+                .topic,
+            bundle.topic
+        );
+    }
+
+    #[tokio::test]
+    async fn release_family_packages_require_shared_changes_in_the_same_repository() {
+        let (events, cutoff) = package_fixtures().await;
+        for case in 0..8 {
+            let mut pair = events.clone();
+            let other = &mut pair[1].evidence[0];
+            match case {
+                0 => other.excerpt.clear(),
+                1 => other.excerpt = "Separate SDK change #8998".into(),
+                2 => other.excerpt = "LangGraph SDK response_schema release telemetry".into(),
+                3 => other.url = other.url.replace("langchain-ai", "another-owner"),
+                4 => {
+                    other.title = "another-sdk==0.4.5".into();
+                    other.url = other.url.replace("/langgraph/", "/another/");
+                }
+                5 => other.excerpt = "https://github.com/another-owner/langgraph/pull/8886".into(),
+                6 => other.excerpt = "https://github.com/langchain-ai/another/pull/8886".into(),
+                _ => {
+                    other.excerpt =
+                        "https://untrusted@github.com/langchain-ai/langgraph/pull/8886".into()
+                }
+            }
+            assert_eq!(rollup_events(pair, cutoff).len(), 2, "case {case}");
+        }
+        let mut pair = events;
+        pair[1].evidence[0].excerpt = "https://github.com/langchain-ai/langgraph/pull/8886".into();
+        assert_eq!(rollup_events(pair, cutoff).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn release_family_packages_verify_package_component_and_version_identity() {
+        let (events, _) = package_fixtures().await;
+        for (title, tag) in [
+            ("langgraph-sdk==0.4.5", "cli==0.4.5"),
+            ("langgraph-cli==0.4.5", "sdk==0.4.5"),
+            ("other-sdk==0.4.5", "sdk==0.4.5"),
+            ("langgraph_sdk==0.4.5", "sdk==0.4.5"),
+            ("lang-graph-sdk==0.4.5", "sdk==0.4.5"),
+            ("langgraph-sdk==0.4.6", "sdk==0.4.5"),
+            ("langgraph-sdk==0.4.5", "langgraph-sdk==0.4.5"),
+            ("langgraph-sdk==0.4.5", "0.4.5"),
+            ("langgraph==0.4.5", "sdk==0.4.5"),
+            ("langgraph==1.2.12", "v1.2.12"),
+            ("langgraph==1.2.12", "1.2.13"),
+            ("langgraph-sdk ==0.4.5", "sdk==0.4.5"),
+            ("langgraph-sdk==0.4.5 release", "sdk==0.4.5"),
+            ("langgraph-sdk==v0.4.5", "sdk==v0.4.5"),
+            ("langgraph-sdk==0.4", "sdk==0.4"),
+            ("langgraph-sdk==00.4.5", "sdk==00.4.5"),
+            ("langgraph-sdk==0.4.5-01", "sdk==0.4.5-01"),
+            ("langgraph-sdk==0.4.5-a..b", "sdk==0.4.5-a..b"),
+            ("langgraph-sdk==0.4.5+a+b", "sdk==0.4.5+a+b"),
+        ] {
+            let mut event = events[1].clone();
+            event.evidence[0].title = title.into();
+            event.evidence[0].url =
+                format!("https://github.com/langchain-ai/langgraph/releases/tag/{tag}");
+            assert!(
+                Record::from_event(&event).release.is_none(),
+                "{title} / {tag}"
+            );
+        }
+        let mut prerelease = events[1].clone();
+        prerelease.evidence[0].title = "langgraph-sdk==0.5.0-rc.1+build.02".into();
+        prerelease.evidence[0].url =
+            "https://github.com/langchain-ai/langgraph/releases/tag/sdk%3D%3D0.5.0-rc.1+build.02"
+                .into();
+        assert_eq!(
+            Record::from_event(&prerelease)
+                .member
+                .release_version
+                .as_deref(),
+            Some("0.5.0-rc.1+build.02")
+        );
+    }
+
+    #[tokio::test]
+    async fn release_family_packages_decode_only_safe_equals_delimiters_once() {
+        let (events, cutoff) = package_fixtures().await;
+        for tag in [
+            "sdk==0.4.5",
+            "sdk%3D%3D0.4.5",
+            "sdk%3d%3d0.4.5",
+            "sdk=%3D0.4.5",
+        ] {
+            let mut pair = events.clone();
+            pair[1].evidence[0].url =
+                format!("https://github.com/langchain-ai/langgraph/releases/tag/{tag}");
+            assert_eq!(rollup_events(pair, cutoff).len(), 1, "{tag}");
+        }
+        for url in [
+            "https://github.com/langchain-ai/langgraph/releases/tag/sdk%253D%253D0.4.5",
+            "https://github.com/langchain-ai/langgraph/releases/tag/sdk%3D%3D0.4.5%2Fextra",
+            "https://github.com/langchain-ai/langgraph/releases/tag/sdk%3D%3D0.4.5%00",
+            "https://github.com/langchain-ai/langgraph/releases/tag/sdk%3D%3D0.4.5%",
+            "https://github.com/langchain-ai/langgraph/releases/tag/sdk%3G%3D0.4.5",
+            "https://github.com/langchain-ai/langgraph/releases/tag/%73dk%3D%3D0.4.5",
+            "https://github.com/langchain-ai/langgraph/releases/tag/sdk%3D%3D0.4.5/extra",
+            "https://github.com/langchain-ai/langgraph/releases/tag/../tag/sdk==0.4.5",
+            "https://github.com/langchain-ai/langgraph/releases/tag/%2e%2e/tag/sdk==0.4.5",
+            "https://github.com/langchain-ai/langgraph/releases/tag/sdk==0.4.\n5",
+            "https://github.com.evil.test/langchain-ai/langgraph/releases/tag/sdk==0.4.5",
+            "https://evil.test@github.com/langchain-ai/langgraph/releases/tag/sdk==0.4.5",
+            "https://github.com:8443/langchain-ai/langgraph/releases/tag/sdk==0.4.5",
+            "http://github.com/langchain-ai/langgraph/releases/tag/sdk==0.4.5",
+        ] {
+            let mut event = events[1].clone();
+            event.evidence[0].url = url.into();
+            assert!(Record::from_event(&event).release.is_none(), "{url}");
+        }
+    }
+
+    #[tokio::test]
+    async fn release_family_packages_reject_day_unofficial_and_mixed_evidence() {
+        let (events, cutoff) = package_fixtures().await;
+        for case in 0..11 {
+            let mut pair = events.clone();
+            let other = &mut pair[1];
+            match case {
+                0 => other.publication_precision = Some("day".into()),
+                1 => other.publication_precision = None,
+                2 => other.event_type = "blog".into(),
+                3 => other.evidence[0].is_official = false,
+                4 => other.evidence[0].source_tier = "T2".into(),
+                5 => other.evidence[0].original_published_at = None,
+                6 => other.evidence.clear(),
+                _ => {
+                    let mut mixed = other.evidence[0].clone();
+                    mixed.id = Uuid::from_u128(999);
+                    match case {
+                        7 => mixed.is_official = false,
+                        8 => mixed.url = mixed.url.replace("langchain-ai", "another-owner"),
+                        9 => {
+                            mixed.title = "langgraph-sdk==0.4.6".into();
+                            mixed.url = mixed.url.replace("0.4.5", "0.4.6");
+                        }
+                        _ => mixed.excerpt = "Unrelated SDK change #9999".into(),
+                    }
+                    other.evidence.push(mixed);
+                }
+            }
+            assert!(Record::from_event(other).release.is_none(), "case {case}");
+            assert_eq!(rollup_events(pair, cutoff).len(), 2, "case {case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn release_family_packages_are_generic_but_separate_from_legacy_families() {
+        let (mut events, cutoff) = package_fixtures().await;
+        for (event, version) in events.iter_mut().zip(["2.0.0", "0.9.1"]) {
+            let evidence = &mut event.evidence[0];
+            let old_version = evidence.title.split_once("==").unwrap().1.to_owned();
+            evidence.title = evidence
+                .title
+                .replace("langgraph", "acme-memory")
+                .replace(&old_version, version);
+            event.title = evidence.title.clone();
+            evidence.url = evidence
+                .url
+                .replace("langchain-ai/langgraph", "acme/acme-memory")
+                .replace(&old_version, version);
+        }
+        let package_events = events.clone();
+        let (plugins, _) = plugin_fixtures().await;
+        let (clients, _) = client_fixtures().await;
+        for mut event in plugins
+            .into_iter()
+            .take(2)
+            .chain(clients.into_iter().take(2))
+        {
+            event.title = event.title.replace("Mem0", "Acme Memory");
+            event.published_at = events[0].published_at;
+            event.freshness_at = event.published_at;
+            let evidence = &mut event.evidence[0];
+            evidence.title = event.title.clone();
+            evidence.url = evidence.url.replace("mem0ai/mem0", "acme/acme-memory");
+            evidence.original_published_at = event.published_at;
+            evidence.excerpt = "Shared change #8886".into();
+            events.push(event);
+        }
+        let grouped = rollup_events(events, cutoff);
+        assert_eq!(grouped.len(), 3);
+        let package = grouped
+            .iter()
+            .filter_map(|event| event.coverage.as_ref())
+            .find(|bundle| bundle.key.contains(":package:"))
+            .unwrap();
+        assert_eq!(
+            package.topic,
+            "acme-memory 同批更新：核心包 2.0.0 / SDK 0.9.1"
+        );
+        assert_eq!(package.members.len(), package_events.len());
+        assert!(package.members.iter().all(|member| {
+            package_events
+                .iter()
+                .any(|event| event.id == member.event_id)
+        }));
+        assert!(
+            grouped
+                .iter()
+                .all(|event| event.coverage.as_ref().unwrap().members.len() == 2)
+        );
+    }
+
+    #[tokio::test]
+    async fn release_family_package_cohorts_keep_consecutive_versions_and_ties_stable() {
+        let (events, cutoff) = package_fixtures().await;
+        let mut next_version = events[1].clone();
+        next_version.id = Uuid::from_u128(102);
+        next_version.evidence[0].id = Uuid::from_u128(202);
+        next_version.evidence[0].title = "langgraph-sdk==0.4.6".into();
+        next_version.title = next_version.evidence[0].title.clone();
+        next_version.evidence[0].url = next_version.evidence[0].url.replace("0.4.5", "0.4.6");
+        assert_eq!(
+            rollup_events(vec![next_version.clone(), events[1].clone()], cutoff).len(),
+            2
+        );
+        // Equal publication times resolve by ID, not input order or requested detail seed.
+        let mut records = vec![Record::from_event(&next_version)];
+        records.extend(events.iter().map(Record::from_event));
+        let expected = BTreeSet::from([events[0].id, events[1].id]);
+        for _ in 0..records.len() {
+            records.rotate_left(1);
+            for record in &records {
+                let grouped = groups(&records, &[record.member.event_id], cutoff);
+                let bundle = &grouped[0].bundle;
+                if record.member.event_id == next_version.id {
+                    assert!(bundle.is_none());
+                } else {
+                    assert_eq!(
+                        bundle
+                            .as_ref()
+                            .unwrap()
+                            .members
+                            .iter()
+                            .map(|member| member.event_id)
+                            .collect::<BTreeSet<_>>(),
+                        expected
+                    );
+                }
+            }
+        }
+        next_version.published_at = Some(events[1].published_at.unwrap() + Duration::seconds(1));
+        next_version.freshness_at = next_version.published_at;
+        next_version.evidence[0].original_published_at = next_version.published_at;
+        let grouped = rollup_events(
+            vec![events[0].clone(), events[1].clone(), next_version.clone()],
+            cutoff,
+        );
+        assert_eq!(grouped.len(), 2);
+        assert!(
+            grouped[0]
+                .coverage
+                .as_ref()
+                .unwrap()
+                .members
+                .iter()
+                .any(|member| member.event_id == next_version.id)
+        );
+    }
+
+    #[tokio::test]
+    async fn release_family_package_cohorts_bound_span_and_never_chain_changes() {
+        let (events, cutoff) = package_fixtures().await;
+        for shared_changes in [true, false] {
+            let mut candidates = events.clone();
+            let mut cli = events[1].clone();
+            cli.id = Uuid::from_u128(102);
+            cli.evidence[0].id = Uuid::from_u128(202);
+            cli.title = "langgraph-cli==0.4.5".into();
+            cli.evidence[0].title = cli.title.clone();
+            cli.evidence[0].url = cli.evidence[0].url.replace("sdk", "cli");
+            candidates.push(cli);
+            let newest = events[0].published_at.unwrap();
+            for (index, event) in candidates.iter_mut().enumerate() {
+                event.published_at = Some(
+                    newest - Duration::hours(index as i64 * if shared_changes { 20 } else { 1 }),
+                );
+                event.freshness_at = event.published_at;
+                event.evidence[0].original_published_at = event.published_at;
+                event.evidence[0].excerpt = if shared_changes || index == 0 {
+                    "Shared change #8886"
+                } else if index == 1 {
+                    "Bridge entry #8886 #8779"
+                } else {
+                    "Other batch #8779"
+                }
+                .into();
+            }
+            let expected = BTreeSet::from([candidates[0].id, candidates[1].id]);
+            let mut records: Vec<_> = candidates.iter().map(Record::from_event).collect();
+            for _ in 0..records.len() {
+                records.rotate_left(1);
+                let leaders: Vec<_> = records
+                    .iter()
+                    .map(|record| record.member.event_id)
+                    .collect();
+                let listed = groups(&records, &leaders, cutoff);
+                assert_eq!(listed.len(), 2);
+                for record in &records {
+                    let detail = groups(&records, &[record.member.event_id], cutoff);
+                    if expected.contains(&record.member.event_id) {
+                        let bundle = detail[0].bundle.as_ref().unwrap();
+                        assert_eq!(
+                            bundle
+                                .members
+                                .iter()
+                                .map(|member| member.event_id)
+                                .collect::<BTreeSet<_>>(),
+                            expected
+                        );
+                        let dates: Vec<_> = bundle
+                            .members
+                            .iter()
+                            .filter_map(|member| member.published_at)
+                            .collect();
+                        assert!(
+                            *dates.iter().max().unwrap() - *dates.iter().min().unwrap()
+                                <= Duration::hours(24)
+                        );
+                    } else {
+                        assert!(detail[0].bundle.is_none());
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn release_family_package_snapshots_preserve_captured_content_and_bundles() {
+        let (events, cutoff) = package_fixtures().await;
+        let original = serde_json::to_value(&events).unwrap();
+        let mut projected = rollup_release_snapshots(events.clone(), cutoff);
+        assert_eq!(projected.len(), 1);
+        let bundle = projected[0].coverage.take().unwrap();
+        assert_eq!(serde_json::to_value(&projected[0]).unwrap(), original[0]);
+        assert_eq!(serde_json::to_value(&events).unwrap(), original);
+        projected[0].coverage = Some(bundle);
+        projected[0].coverage.as_mut().unwrap().topic = "Captured package batch label".into();
+        let captured = serde_json::to_value(&projected).unwrap();
+        assert_eq!(
+            serde_json::to_value(rollup_release_snapshots(projected, cutoff)).unwrap(),
+            captured
+        );
+    }
+
     #[tokio::test]
     async fn release_family_plugin_titles_distinguish_common_changes_without_bridging() {
         let (mut events, now) = plugin_fixtures().await;
-        events[0].evidence[0].excerpt = "Telemetry: Correct event delivery. (#7323, #7324, #7358)".into();
+        events[0].evidence[0].excerpt =
+            "Telemetry: Correct event delivery. (#7323, #7324, #7358)".into();
         events[1].evidence[0].excerpt =
             "Telemetry: Change source tag. #7322 Config: Use keyFingerprint for install counting. #7325".into();
         events[2].evidence[0].excerpt = events[0].evidence[0].excerpt.clone();
@@ -967,13 +1454,32 @@ mod tests {
         }
         let grouped = rollup_events(events.clone(), now);
         assert_eq!(grouped.len(), 2);
-        let titles: BTreeSet<_> = grouped.iter()
-            .map(|event| event.coverage.as_ref().unwrap().topic.as_str()).collect();
-        assert_eq!(titles, BTreeSet::from(["Mem0 插件更新：安装统计", "Mem0 插件更新：遥测"]));
-        assert!(grouped.iter().all(|event| event.coverage.as_ref().unwrap().members.len() == 2));
+        let titles: BTreeSet<_> = grouped
+            .iter()
+            .map(|event| event.coverage.as_ref().unwrap().topic.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            BTreeSet::from(["Mem0 插件更新：安装统计", "Mem0 插件更新：遥测"])
+        );
+        assert!(
+            grouped
+                .iter()
+                .all(|event| event.coverage.as_ref().unwrap().members.len() == 2)
+        );
         let memberships = |events: Vec<Event>| -> BTreeSet<BTreeSet<Uuid>> {
-            events.into_iter().map(|event| event.coverage.unwrap().members.into_iter()
-                .map(|member| member.event_id).collect()).collect()
+            events
+                .into_iter()
+                .map(|event| {
+                    event
+                        .coverage
+                        .unwrap()
+                        .members
+                        .into_iter()
+                        .map(|member| member.event_id)
+                        .collect()
+                })
+                .collect()
         };
         let expected = memberships(grouped);
         for _ in 0..4 {

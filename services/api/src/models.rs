@@ -252,6 +252,12 @@ pub struct DailyBrief {
     pub selection_note: Option<String>,
     #[serde(default)]
     pub eligibility: Option<BriefEligibility>,
+    /// When the saved edition is next replaced (the next daily slot).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_refresh_at: Option<DateTime<Utc>>,
+    /// Today's edition is still being prepared; this is the previous edition.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub refresh_pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,6 +268,12 @@ pub struct Editorial {
     pub value_score: f32,
     pub reason: String,
     pub brief_eligible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub significance: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub significance_basis: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

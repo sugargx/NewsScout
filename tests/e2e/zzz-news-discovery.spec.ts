@@ -1,10 +1,9 @@
 import {expect,test} from "@playwright/test";
 import {readFileSync} from "node:fs";
-import {unzipSync,strFromU8} from "fflate";
 import {databaseQuery} from "./db";
 
 const api=process.env.SCOUTNEWS_E2E_API_URL ?? "http://127.0.0.1:8080";
-test("direct reader and social studio use real publishers and export a persistent local POC",async({request,page},info)=>{
+test("direct reader and daily share use real publishers and export a local share image",async({request,page},info)=>{
   test.setTimeout(300_000);
   if(process.env.SCOUTNEWS_DISABLE_COPILOT_RESTORE!=="true")throw new Error("Use isolated E2E.");
   const {items:sources}=await (await request.get(`${api}/api/v1/sources`)).json();
@@ -74,79 +73,82 @@ test("direct reader and social studio use real publishers and export a persisten
     END $$; ROLLBACK;`);
 
   await page.goto("/reading");
+  await page.getByLabel("阅读内容",{exact:true}).selectOption("all");
+  await page.getByRole("complementary",{name:"选择文章开始深读"}).getByRole("button",{name:"从第 1 篇开始",exact:true}).click();
   await expect(page.getByRole("article",{name:"文章就地阅读"})).toBeVisible();
   await expect.poll(async()=>databaseQuery(`SELECT (opened_at IS NOT NULL)::int FROM user_event_states WHERE user_id='local' AND event_id='${event.id}'`)).toBe("1");
   const opened=await (await request.get(`${api}/api/v1/events?tier=T1&opened=true&limit=100`)).json();
   expect(opened.items.some((item:{id:string})=>item.id===event.id)).toBe(true);
   if(t1.items.length>1) {
     await page.getByRole("button",{name:"下一篇",exact:true}).click();
-    await expect(page.getByRole("article",{name:"文章就地阅读"}).getByRole("heading",{name:t1.items[1].title,exact:true})).toBeVisible();
-    await expect(page).toHaveURL(/\/reading$/);
+    await expect(page.getByRole("article",{name:"文章就地阅读"}).getByRole("heading",{name:t1.items[1].displayTitle?.trim()||t1.items[1].title,exact:true})).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/reading\\?reader=${t1.items[1].id}$`));
   }
   await page.goto("/shares");
-  await expect(page.getByRole("heading",{name:"第一份分享，从一篇好文章开始。",exact:true})).toBeVisible();
-  await page.goto(`/events/${event.id}`);
-  await page.getByRole("button",{name:"制作分享卡片",exact:true}).click();
-  await expect(page).toHaveURL(/\/share\/[a-f0-9-]+$/);
-  const shareId=page.url().split("/").at(-1)!;
-  await expect(page.locator(".ns-card-canvas canvas")).toBeVisible();
-  await page.getByLabel("封面标题",{exact:true}).fill("从原始来源，读懂今天的 AI");
-  await page.getByRole("button",{name:"保存草稿",exact:true}).click();
-  await expect(page.getByRole("status").filter({hasText:"草稿已保存到本地阅读库"})).toBeVisible();
-  await page.reload();
-  await expect(page.getByLabel("封面标题",{exact:true})).toHaveValue("从原始来源，读懂今天的 AI");
-  for(const theme of ["light","dark"]) {
-    await page.goto(`/share/${shareId}?clawpilotTheme=${theme}`);
-    await expect(page.locator("html")).toHaveAttribute("data-theme",theme);
-    await page.getByLabel("卡片主题",{exact:true}).selectOption(theme);
-    for(const width of [1440,390]) {
-      await page.setViewportSize({width,height:1100});
-      await expect(page.locator(".ns-card-canvas")).toHaveAttribute("aria-busy","false");
-      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-      await page.screenshot({path:info.outputPath(`social-studio-${theme}-${width}.png`),fullPage:true});
-    }
-  }
-  await page.setViewportSize({width:1440,height:1100});
-  await page.getByLabel("画面比例",{exact:true}).selectOption("square");
-  await expect(page.locator(".ns-card-canvas canvas")).toHaveAttribute("height","1080");
-  await page.getByLabel("画面比例",{exact:true}).selectOption("portrait");
-  await expect(page.locator(".ns-card-canvas canvas")).toHaveAttribute("height","1440");
-  const [download]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"导出整套素材",exact:true}).click()]);
-  const downloadPath=await download.path();expect(downloadPath).toBeTruthy();
-  const entries=unzipSync(readFileSync(downloadPath!));
-  const pngs=Object.entries(entries).filter(([name])=>name.endsWith(".png"));
-  expect(pngs.length).toBeGreaterThanOrEqual(3);
-  for(const [,bytes] of pngs) {
-    const image=Buffer.from(bytes);expect(image.subarray(1,4).toString()).toBe("PNG");
-    expect(image.readUInt32BE(16)).toBe(1080);expect(image.readUInt32BE(20)).toBe(1440);
-  }
-  expect(strFromU8(entries["post.txt"])).toContain("NewsScout");
-  expect(strFromU8(entries["post.txt"])).toContain("从原始来源，读懂今天的 AI");
-  await page.getByRole("tab",{name:"02 选文",exact:true}).click();
-  await page.getByLabel("第 1 篇卡片正文",{exact:true}).fill("这段编辑草稿用于检查长文自动续页，正文不应被悄悄截断。".repeat(45));
-  await expect.poll(()=>page.getByRole("button",{name:/^预览第/}).count()).toBeGreaterThan(3);
-  await page.getByRole("tab",{name:"03 文案",exact:true}).click();
-  await page.getByLabel("小红书发帖文案",{exact:true}).fill("我的 NewsScout 阅读笔记\n#AI资讯 #NewsScout");
+  await expect(page).toHaveURL(/\/share$/);
+  await expect(page.getByRole("heading",{name:"今日分享",level:1})).toBeVisible();
+  // A single story copies as plain text; sharing no longer creates server-side drafts.
+  const drafts=databaseQuery("SELECT count(*) FROM reader_shares");
   await page.context().grantPermissions(["clipboard-read","clipboard-write"]);
-  await page.getByRole("button",{name:"复制发帖文案",exact:true}).click();
-  expect(await page.evaluate(()=>navigator.clipboard.readText())).toContain("我的 NewsScout 阅读笔记");
-  const share=await (await request.get(`${api}/api/v1/shares/${shareId}`)).json();
-  expect(share.published).toBe(false);expect(share.publicUrl).toBeNull();
-  expect(Object.keys(share.document.items[0]).sort()).toEqual(["publishedAt","sources","summary","summaryKind","title"]);
-  expect((await request.post(`${api}/api/v1/shares/${shareId}/publish`)).status()).toBe(412);
-  await page.goto("/shares");
-  await expect(page.getByRole("link",{name:"从原始来源，读懂今天的 AI",exact:true})).toBeVisible();
+  await page.goto(`/events/${event.id}`);
+  await page.getByRole("button",{name:"复制分享文字",exact:true}).click();
+  await expect(page.getByRole("button",{name:"已复制分享文字",exact:true})).toBeVisible();
+  const copied=(await page.evaluate(()=>navigator.clipboard.readText())).replace(/\r\n/g,"\n");
+  expect(copied.split("\n")[0]).toBe(event.displayTitle?.trim()||event.title);
+  expect(copied).toMatch(/\n原文：https?:\/\/\S+$/);
+  expect(databaseQuery("SELECT count(*) FROM reader_shares")).toBe(drafts);
 
   // Only completion provenance is synthetic; all titles and text remain real fetched publisher material.
+  // Mistral publishes irregularly, so the fresher real Chinese publishers keep the 7-day window non-empty.
   databaseQuery(`UPDATE events SET summary_kind='copilot',summary_format_version=2 WHERE id IN(
     SELECT ee.event_id FROM event_evidence ee JOIN content_items ci ON ci.id=ee.content_item_id
-    WHERE ci.source_id='20000000-0000-0000-0000-000000000301' AND ci.published_at>=now()-interval '7 days' AND ci.published_at<=now())`);
+    WHERE ci.source_id IN('20000000-0000-0000-0000-000000000201','20000000-0000-0000-0000-000000000301','20000000-0000-0000-0000-000000000304')
+      AND ci.published_at>=now()-interval '7 days' AND ci.published_at<=now())`);
   const week=await (await request.get(`${api}/api/v1/weekly`)).json();expect(week.items.length).toBeGreaterThan(0);
+  // The legacy share API keeps creating private drafts for existing integrations.
   for(const kind of ["week","brief"]) {
     const response=await request.post(`${api}/api/v1/shares`,{data:{kind,date:"latest"}});
     expect(response.ok(),await response.text()).toBe(true);
     expect((await response.json()).document.kind).toBe(kind);
   }
+  const brief=await (await request.get(`${api}/api/v1/briefs/latest`)).json();
+  const visible=brief.items.filter((item:{notInterested?:boolean})=>!item.notInterested);
+  expect(visible.length).toBeGreaterThan(0);
+  // 补读 (catch-up) items are offered separately and never picked by default.
+  const earlier=new Set((brief.sections??[]).filter((section:{kind:string})=>section.kind==="catch_up").flatMap((section:{eventIds:string[]})=>section.eventIds));
+  const count=Math.min(10,visible.filter((item:{id:string})=>!earlier.has(item.id)).length);
+  expect(count).toBeGreaterThan(0);
+  // Only today's current edition is called "今日"; an earlier or still-held one is named by its date.
+  const [,month,dayOfMonth]=String(brief.localDate).split("-").map(Number);
+  const day=!brief.refreshPending&&brief.localDate===new Date(Date.now()+8*3_600_000).toISOString().slice(0,10)?"今日":`${month}月${dayOfMonth}日`;
+  await page.goto("/share");
+  await expect(page.getByText(`已选 ${count} / 最多 15 条`,{exact:true})).toBeVisible();
+  const preview=page.getByRole("img",{name:`分享图预览：${day}值得分享的 ${count} 条新闻`,exact:true});
+  await expect(preview).toBeVisible();
+  expect(await preview.evaluate((image:HTMLImageElement)=>image.naturalWidth)).toBe(1080);
+  const [download]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"下载分享图",exact:true}).click()]);
+  expect(download.suggestedFilename()).toBe(`NewsScout-今日分享-${brief.localDate}.png`);
+  const image=readFileSync((await download.path())!);
+  expect(image.subarray(1,4).toString()).toBe("PNG");
+  expect(image.readUInt32BE(16)).toBe(1080);
+  expect(image.readUInt32BE(20)).toBeGreaterThan(1000);
+  await page.getByRole("button",{name:"复制文字版",exact:true}).click();
+  await expect(page.getByRole("status").filter({hasText:"文字版已复制"})).toBeVisible();
+  const text=(await page.evaluate(()=>navigator.clipboard.readText())).replace(/\r\n/g,"\n");
+  expect(text).toContain(`${day}值得分享的 ${count} 条新闻`);
+  expect(text.match(/^原文：https?:\/\/\S+$/gm)?.length).toBe(count);
+  expect(databaseQuery("SELECT count(*) FROM reader_shares")).toBe(String(Number(drafts)+2));
+  for(const theme of ["light","dark"]) for(const width of [1440,390]) {
+    await page.setViewportSize({width,height:1100});
+    await page.goto(`/share?clawpilotTheme=${theme}`);
+    await expect(page.locator("html")).toHaveAttribute("data-theme",theme);
+    await expect(page.getByRole("img",{name:/^分享图预览：/})).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    await page.screenshot({path:info.outputPath(`daily-share-${theme}-${width}.png`),fullPage:true});
+  }
+  await page.setViewportSize({width:1440,height:1100});
   await page.goto("/weekly");
-  await expect(page.getByRole("button",{name:"制作分享卡片",exact:true})).toBeVisible();
+  await page.getByRole("navigation",{name:"本周主题导航",exact:true}).getByRole("button",{name:"全部主题",exact:true}).click();
+  await expect(page.getByRole("article").first()).toBeVisible();
+  await expect(page.getByRole("button",{name:/分享卡片/})).toHaveCount(0);
 });

@@ -46,10 +46,15 @@ impl TryFrom<String> for VisitorInterests {
         let mut topics = Vec::new();
         for item in value.split(',') {
             let (id, raw_weight) = item.split_once(':').ok_or_else(invalid)?;
-            let option = catalog().iter().find(|option| option.id == id).ok_or_else(invalid)?;
+            let option = catalog()
+                .iter()
+                .find(|option| option.id == id)
+                .ok_or_else(invalid)?;
             let weight = raw_weight.parse::<i32>().map_err(|_| invalid())?;
-            if !(0..=100).contains(&weight) || raw_weight != weight.to_string()
-                || !ids.insert(id.to_owned()) || topics.len() >= catalog().len()
+            if !(0..=100).contains(&weight)
+                || raw_weight != weight.to_string()
+                || !ids.insert(id.to_owned())
+                || topics.len() >= catalog().len()
             {
                 return Err(invalid());
             }
@@ -77,11 +82,23 @@ mod tests {
         assert_eq!(profile.topics()[0].label, "Agent 与工具");
         assert_eq!(profile.topics()[1].label, "心理与认知");
         assert!(profile.topics().iter().all(|topic| topic.enabled));
-        for input in ["", "local:100", "agents:101", "agents:-1", "agents:1.5",
-            "agents:050", "agents:50,agents:100", "agents:50,", "agents:50:1",
-            "psychology%3A100", "agents:50&saved=true"]
-        {
-            assert!(VisitorInterests::try_from(input.to_owned()).is_err(), "{input}");
+        for input in [
+            "",
+            "local:100",
+            "agents:101",
+            "agents:-1",
+            "agents:1.5",
+            "agents:050",
+            "agents:50,agents:100",
+            "agents:50,",
+            "agents:50:1",
+            "psychology%3A100",
+            "agents:50&saved=true",
+        ] {
+            assert!(
+                VisitorInterests::try_from(input.to_owned()).is_err(),
+                "{input}"
+            );
         }
         assert!(VisitorInterests::try_from("x".repeat(513)).is_err());
     }

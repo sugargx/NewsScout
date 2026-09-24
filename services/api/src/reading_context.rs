@@ -222,9 +222,13 @@ impl ReadingContext {
     pub fn respect_publisher_access(mut self) -> Self {
         let stratechery = Url::parse(&self.source_url).ok().is_some_and(|url| {
             url.scheme() == "https"
-                && matches!(url.host_str(), Some("stratechery.com" | "www.stratechery.com"))
+                && matches!(
+                    url.host_str(),
+                    Some("stratechery.com" | "www.stratechery.com")
+                )
                 && url.port_or_known_default() == Some(443)
-                && url.username().is_empty() && url.password().is_none()
+                && url.username().is_empty()
+                && url.password().is_none()
         });
         if stratechery {
             if let Some(boundary) = self.body.find(STRATECHERY_PAYWALL_MARKER) {
@@ -797,7 +801,9 @@ mod tests {
             serde_json::from_value::<ReadingContext>(serialized).unwrap(),
             second
         );
-        second.comments[0].body.push_str(" with a material correction");
+        second.comments[0]
+            .body
+            .push_str(" with a material correction");
         assert_ne!(first.material_fingerprint(), second.material_fingerprint());
     }
 
@@ -834,13 +840,22 @@ mod tests {
     #[test]
     fn exact_stratechery_paywall_boundary_preserves_intro_and_marks_partial() {
         let intro = "Pacing the Frontier, AI's Digital Limits, AI Commissars\nSeptember 15, 2026\nListen to Podcast\nDario Amodei discusses pacing AI and political control.";
-        let body = format!("{intro}\n\n{STRATECHERY_PAYWALL_MARKER}\n{}", "Login Pricing Subscribe Advertising Podcast catalogue. ".repeat(100));
+        let body = format!(
+            "{intro}\n\n{STRATECHERY_PAYWALL_MARKER}\n{}",
+            "Login Pricing Subscribe Advertising Podcast catalogue. ".repeat(100)
+        );
         let url = "https://stratechery.com/2026/pacing-the-frontier/".to_owned();
         let contexts = [
             ReadingContext::publisher_page(url.clone(), body.clone(), false, Utc::now()),
-            ReadingContext::from_feed(ReadingContextKind::Article, url.clone(), FeedContext {
-                body: body.clone(), ..Default::default()
-            }, Utc::now()),
+            ReadingContext::from_feed(
+                ReadingContextKind::Article,
+                url.clone(),
+                FeedContext {
+                    body: body.clone(),
+                    ..Default::default()
+                },
+                Utc::now(),
+            ),
             ReadingContext::retained_excerpt_article(url, body, false, Utc::now()),
         ];
         for context in contexts {
@@ -854,14 +869,24 @@ mod tests {
 
     #[test]
     fn paywall_detection_is_publisher_specific_and_does_not_veto_subscribe_mentions() {
-        let body = format!("A substantive analysis of why readers subscribe.\n{}", "Original platform strategy argument and evidence. ".repeat(40));
+        let body = format!(
+            "A substantive analysis of why readers subscribe.\n{}",
+            "Original platform strategy argument and evidence. ".repeat(40)
+        );
         let context = ReadingContext::publisher_page(
-            "https://www.stratechery.com/2026/free-analysis/".into(), body.clone(), false, Utc::now());
+            "https://www.stratechery.com/2026/free-analysis/".into(),
+            body.clone(),
+            false,
+            Utc::now(),
+        );
         assert_eq!(context.body, body);
         assert_eq!(context.status, ReadingContextStatus::Available);
         assert!(context.access_limit.is_none());
-        for url in ["https://other.example/article", "https://stratechery.com.other.example/article",
-            "https://stratechery.com@other.example/article"] {
+        for url in [
+            "https://other.example/article",
+            "https://stratechery.com.other.example/article",
+            "https://stratechery.com@other.example/article",
+        ] {
             let text = format!("An article quoting {STRATECHERY_PAYWALL_MARKER} and its meaning.");
             let other = ReadingContext::publisher_page(url.into(), text.clone(), false, Utc::now());
             assert_eq!(other.body, text);
@@ -869,7 +894,12 @@ mod tests {
         }
         let mut legacy = serde_json::to_value(&context).unwrap();
         legacy.as_object_mut().unwrap().remove("accessLimit");
-        assert!(serde_json::from_value::<ReadingContext>(legacy).unwrap().access_limit.is_none());
+        assert!(
+            serde_json::from_value::<ReadingContext>(legacy)
+                .unwrap()
+                .access_limit
+                .is_none()
+        );
     }
 
     #[test]

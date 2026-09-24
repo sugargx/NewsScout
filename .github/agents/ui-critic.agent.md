@@ -30,7 +30,7 @@ When owner and public experiences are affected, require an explicit capability c
 - Keep original titles, source attribution, meaningful dates, honest summary boundaries and saved-edition membership.
 - Do not change ranking, acquisition, model configuration, source decisions or historical snapshots as a visual fix.
 - Public feedback remains browser-local. Public readers must not call owner APIs or start server writes.
-- Use the existing Clawpilot colors, Segoe UI typography, subtle surfaces and rose accent. Do not substitute a new palette, generic gradients or decorative dashboards.
+- Use the user-approved CoDesign baseline and capability mapping in `docs/design/CODESIGN-MAPPING.md`: quiet sage surfaces, deep green accent, editorial headings, a 176px desktop rail, a focused reader at 1024px and below, and the navigation drawer only at 768px and below. Compare against the frozen reference, not the older rose-accent screenshots. The existing dark palette is a compatibility state pending supplemental design, not an approved CoDesign dark treatment. Do not invent missing management layouts or treat demo data and memory-only preferences as product behavior.
 - A shared component system should serve both owner and public readers. Adding shadcn/ui or another library is not, by itself, evidence of a better design.
 
 ## Review dimensions

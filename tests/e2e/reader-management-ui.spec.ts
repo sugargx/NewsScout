@@ -70,11 +70,10 @@ test("reader chrome keeps controls aligned and waits for an explicit T1 selectio
   expect(await toolbar.locator("input, select").evaluateAll((fields,bounds)=>fields.every(field=>{
     const r=field.getBoundingClientRect();return r.left>=bounds.x&&r.right<=bounds.x+bounds.width+1;
   }),box)).toBe(true);
-  await page.getByText("更多筛选 · 来源等级 / T1 / 排序",{exact:true}).click();
-  await page.getByLabel("来源等级",{exact:true}).selectOption("T1");
+  await page.getByLabel("来源筛选",{exact:true}).selectOption("T1");
   await expect(page.getByLabel("当前筛选")).toContainText("T1");
   await page.getByRole("button",{name:"清除筛选",exact:true}).click();
-  await expect(page.getByLabel("来源等级",{exact:true})).toHaveValue("");
+  await expect(page.getByLabel("来源筛选",{exact:true})).toHaveValue("");
 
   await page.goto("/reading");
   await expect(page.getByRole("complementary",{name:"选择文章开始深读",exact:true})).toBeVisible();
@@ -86,11 +85,20 @@ test("reader chrome keeps controls aligned and waits for an explicit T1 selectio
   await page.goto("/weekly");
   const weeklyToolbar=page.locator(".ns-weekly-toolbar");
   expect(await weeklyToolbar.evaluate(element=>getComputedStyle(element).alignItems)).toBe("center");
+  await expect(page.getByRole("heading",{name:"选择一个主题开始回顾",exact:true})).toBeVisible();
+  await page.getByRole("navigation",{name:"本周主题导航",exact:true}).getByRole("button",{name:"全部主题",exact:true}).click();
   await page.getByRole("heading",{name:event.title,exact:true}).getByRole("button").click();
-  const actionButtons=page.getByRole("article",{name:"文章就地阅读",exact:true}).locator(".ns-preview-actions button");
-  await expect(actionButtons).toHaveCount(3);
-  const positions=await actionButtons.evaluateAll(buttons=>buttons.map(button=>Math.round(button.getBoundingClientRect().top)));
-  expect(new Set(positions).size).toBe(1);
+  const reader=page.getByRole("article",{name:"文章就地阅读",exact:true});
+  await expect(reader.getByRole("button",{name:/^收藏：/})).toBeVisible();
+  await expect(reader.getByRole("button",{name:/^不感兴趣：/})).toBeVisible();
+  const centers=(items:(HTMLElement|SVGElement)[])=>items.map(item=>{const r=item.getBoundingClientRect();return Math.round(r.top+r.height/2);});
+  const toolCenters=await reader.locator(".ns-preview-tools button").evaluateAll(centers);
+  expect(toolCenters.length).toBeGreaterThanOrEqual(3);
+  expect(Math.max(...toolCenters)-Math.min(...toolCenters)).toBeLessThanOrEqual(1);
+  const footer=reader.locator(".ns-preview-actions").locator("a, button");
+  await expect(footer).toHaveCount(2);
+  const footerCenters=await footer.evaluateAll(centers);
+  expect(Math.max(...footerCenters)-Math.min(...footerCenters)).toBeLessThanOrEqual(1);
 });
 
 test("source management presents finite X registration and hides directory provenance",async({page})=>{
@@ -112,12 +120,12 @@ test("source management presents finite X registration and hides directory prove
   expect(savedXPostUrls).toHaveLength(1);
   await expect(source.getByText("不会自动发现主页新帖或完整时间线。",{exact:false})).toBeVisible();
 
-  await page.getByRole("tab",{name:"关注名单",exact:true}).click();
+  await page.getByRole("tab",{name:/^关注名单/}).click();
   await expect(page.getByText("X · 原帖预览 · 登记链接测试",{exact:true})).toBeVisible();
   await expect(page.getByText("清单出处",{exact:true})).toHaveCount(0);
   await expect(page.getByRole("link",{name:"公开主页 / 入口 ↗",exact:true})).toBeVisible();
 
-  await page.getByRole("tab",{name:"覆盖与管理",exact:true}).click();
+  await page.getByRole("button",{name:"新增来源",exact:true}).click();
   await page.getByLabel("采集适配器",{exact:true}).selectOption("x_public_preview");
   await expect(page.getByRole("textbox",{name:"X 主页（仅作身份识别）",exact:true})).toBeVisible();
   await expect(page.getByRole("textbox",{name:"X 原帖预览（登记链接）",exact:true})).toBeVisible();

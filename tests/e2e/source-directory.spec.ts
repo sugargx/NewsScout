@@ -84,7 +84,7 @@ test("source directory watch filters use real collection health and persist inde
   await expect.poll(ids).toEqual(["x-karpathy"]);
   await page.getByRole("tab",{name:/^已接入来源/}).click();
   await expect(page.getByLabel("来源等级",{exact:true})).toHaveValue("T1");
-  await page.getByRole("tab",{name:"关注名单",exact:true}).click();
+  await page.getByRole("tab",{name:/^关注名单/}).click();
   await expect.poll(ids).toEqual(["x-karpathy"]);
   await page.getByRole("button",{name:"清除关注筛选",exact:true}).click();
   await page.getByLabel("关注接入状态",{exact:true}).selectOption("registered");

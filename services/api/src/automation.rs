@@ -1,7 +1,8 @@
+use crate::scoped_db::ScopedDb;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use std::{env, time::Duration};
 use uuid::Uuid;
 
@@ -14,6 +15,9 @@ pub struct ProcessingSettings {
     pub model: String,
     pub daily_limit: i64,
 }
+
+pub const CLOUD_MODEL: &str = "gpt-5.6-terra";
+pub const CLOUD_REASONING_EFFORT: &str = "low";
 
 impl Default for ProcessingSettings {
     fn default() -> Self {
@@ -83,18 +87,19 @@ pub struct ProcessingStatus {
 
 #[derive(Clone)]
 pub struct AutomationStore {
-    pool: PgPool,
+    pool: ScopedDb,
 }
 
 pub struct ClaimedJob {
     event_id: Uuid,
     lease_id: Uuid,
     attempts: i32,
+    owner: Option<String>,
 }
 
 impl AutomationStore {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: impl Into<ScopedDb>) -> Self {
+        Self { pool: pool.into() }
     }
 
     pub async fn settings(&self) -> Result<ProcessingSettings> {
@@ -167,12 +172,14 @@ impl AutomationStore {
              )
              UPDATE summary_jobs j SET status='running',attempts=j.attempts+1,model=$1,
                lease_id=$2,lease_until=now()+interval '5 minutes',next_attempt_at=NULL,updated_at=now()
-             FROM candidate c WHERE j.event_id=c.event_id RETURNING j.event_id,j.attempts")
+             FROM candidate c WHERE j.event_id=c.event_id RETURNING j.event_id,j.attempts,
+               (SELECT owner_user_id FROM events WHERE id=j.event_id) AS owner_user_id")
             .bind(model).bind(lease).bind(crate::summary::FORMAT_VERSION).fetch_optional(&self.pool).await?;
         row.map(|row| {
             Ok(ClaimedJob {
                 event_id: row.try_get("event_id")?,
                 attempts: row.try_get("attempts")?,
+                owner: row.try_get("owner_user_id")?,
                 lease_id: lease,
             })
         })
@@ -304,7 +311,8 @@ async fn blocked_reason(
         isolation_enabled(),
         settings,
         provider.eligible,
-        provider.models.contains(&settings.model),
+        provider.models.contains(&settings.model)
+            && (!state.auth.cloud() || settings.model == CLOUD_MODEL),
         used,
     )
     .map(str::to_owned)
@@ -346,8 +354,27 @@ async fn tick(state: &AppState) -> Result<()> {
     let Some(job) = store.claim(&settings.model).await? else {
         return Ok(());
     };
-    if let Err(error) =
-        app::generate_event_summary(state, job.event_id, &settings.model, true).await
+    let reader = if state.auth.cloud() {
+        job.owner
+            .as_deref()
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .map(|id| {
+                state.for_reader(crate::auth::Identity {
+                    id,
+                    display_name: String::new(),
+                    telemetry_consent: false,
+                })
+            })
+    } else {
+        None
+    };
+    if let Err(error) = app::generate_event_summary(
+        reader.as_ref().unwrap_or(state),
+        job.event_id,
+        &settings.model,
+        true,
+    )
+    .await
     {
         let deferred = matches!(
             error,
@@ -355,6 +382,7 @@ async fn tick(state: &AppState) -> Result<()> {
         );
         let permanent = matches!(error, ApiError::BadRequest(_) | ApiError::NotFound);
         let message = match &error {
+            ApiError::Forbidden => "Operation not permitted".into(),
             ApiError::BadRequest(value)
             | ApiError::Conflict(value)
             | ApiError::RateLimited(value)
@@ -362,8 +390,8 @@ async fn tick(state: &AppState) -> Result<()> {
             | ApiError::Upstream(value)
             | ApiError::Unauthorized(value) => value.clone(),
             ApiError::NotFound => "事件不存在".into(),
-            ApiError::Internal(cause) => {
-                tracing::error!(?cause,event_id=%job.event_id,"automatic summary failed");
+            ApiError::Internal(_) => {
+                tracing::error!(event_id=%job.event_id,"automatic summary failed");
                 "摘要处理内部错误，请查看服务日志".into()
             }
         };
@@ -378,8 +406,8 @@ pub fn spawn(state: AppState) {
         timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             timer.tick().await;
-            if let Err(error) = tick(&state).await {
-                tracing::error!(?error, "automatic summary queue tick failed");
+            if let Err(_error) = tick(&state).await {
+                tracing::error!("automatic summary queue tick failed");
             }
         }
     });

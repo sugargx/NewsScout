@@ -99,31 +99,31 @@ test("feedback reader uses source age for freshness and ranks before pagination"
 test("feedback reader defaults to dense recommendations and offers truthful topic relationships",async({page,request})=>{
   await page.goto("/radar");
   await page.getByRole("article").first().waitFor();
-  await expect(page.getByRole("tab",{name:"紧凑列表",exact:true})).toHaveAttribute("aria-selected","true");
+  await expect(page.getByRole("tab",{name:"列表",exact:true})).toHaveAttribute("aria-selected","true");
   await expect(page.getByLabel("排序",{exact:true})).toHaveValue("recommended");
   expect(await page.getByRole("button",{name:/标为已读|稍后读|移出稍后读/}).count()).toBe(0);
   const first=await page.getByRole("article").first().boundingBox();
   expect(first!.height).toBeLessThan(210);
-  await page.getByRole("tab",{name:"主题关联",exact:true}).click();
+  await page.getByRole("tab",{name:"主题地图",exact:true}).click();
   await page.getByRole("group",{name:"关键词主题共现图",exact:true}).waitFor();
   const exploration=await (await request.get(`${api}/api/v1/explore?hours=168`)).json();
   expect(exploration.sampleSize).toBeLessThanOrEqual(100);
   expect(exploration.meaning).toContain("不表示因果");
   expect(exploration.nodes.length).toBeGreaterThan(0);
   await page.getByRole("group",{name:"关键词主题共现图",exact:true}).getByRole("button",{name:/查看匹配文章/}).first().click();
-  await expect(page.getByRole("tab",{name:"主题关联",exact:true})).toHaveAttribute("aria-selected","true");
+  await expect(page.getByRole("tab",{name:"主题地图",exact:true})).toHaveAttribute("aria-selected","true");
   await expect(page.getByRole("group",{name:"关键词主题共现图",exact:true})).toBeVisible();
   await expect(page.getByRole("article",{name:"文章就地阅读"})).toHaveCount(0);
   await page.getByRole("group",{name:"关联文章",exact:true}).getByRole("button").first().click();
   await expect(page.getByRole("article",{name:"文章就地阅读"})).toBeVisible();
   await expect(page).toHaveURL(/\/radar\?view=topics/);
   await expect(page.getByRole("group",{name:"关键词主题共现图",exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"关闭阅读面板",exact:true}).click();
+  await page.getByRole("button",{name:"返回主题结果",exact:true}).click();
   await expect(page.getByRole("article",{name:"文章就地阅读"})).toHaveCount(0);
   const refresh=page.waitForResponse(response=>response.url().includes("/api/v1/explore?"));
   await page.getByRole("button",{name:"应用更新",exact:true}).click();
   expect((await refresh).ok()).toBe(true);
-  await page.getByRole("tab",{name:"摘要卡片",exact:true}).click();
+  await page.getByRole("tab",{name:"列表",exact:true}).click();
   await expect(page.getByRole("article").first()).toBeVisible();
   await expect(page.locator("#main-content")).not.toContainText(/为什么入选|确定性规则|article-value-v1|基础值=/);
   await page.setViewportSize({width:390,height:900});
@@ -162,6 +162,12 @@ test("feedback reader live selection includes labeled observation sources withou
     expect(live.items.every((event:{editorial:{briefEligible:boolean}})=>event.editorial.briefEligible)).toBe(true);
     expect(live.items.some((event:{id:string;recommendation:{sourceConfirmed:boolean}})=>
       events.some(candidate=>candidate.id===event.id)&&!event.recommendation.sourceConfirmed)).toBe(true);
+    await request.put(`${api}/api/v1/reader-settings`,{data:{...settings,includeObserving:false}});
+    expect(databaseQuery("SELECT updated_at FROM app_settings WHERE key='reader_settings'")).toBe(scheduleStamp);
+    const confirmedOnly=await (await request.get(`${api}/api/v1/briefs/latest`)).json();
+    expect(confirmedOnly.isSnapshot).toBe(false);
+    expect(confirmedOnly.items.every((event:{recommendation:{sourceConfirmed:boolean}})=>event.recommendation.sourceConfirmed)).toBe(true);
+    await request.put(`${api}/api/v1/reader-settings`,{data:{...settings,includeObserving:true}});
     const archiveExists=Number(databaseQuery(`SELECT count(*) FROM daily_briefs WHERE local_date=${literal(date)}`))>0;
     const beforeArchive=archiveExists?await (await request.get(`${api}/api/v1/briefs/today`)).json():null;
     const saved=await (await request.post(`${api}/api/v1/briefs/today/generate`)).json();
@@ -169,9 +175,15 @@ test("feedback reader live selection includes labeled observation sources withou
     expect(saved.items.map((event:{id:string})=>event.id)).toEqual((beforeArchive??live).items.map((event:{id:string})=>event.id));
     if(beforeArchive)expect(saved.generatedAt).toBe(beforeArchive.generatedAt);
     await request.put(`${api}/api/v1/reader-settings`,{data:{...settings,includeObserving:false}});
-    expect(databaseQuery("SELECT updated_at FROM app_settings WHERE key='reader_settings'")).toBe(scheduleStamp);
-    const confirmedOnly=await (await request.get(`${api}/api/v1/briefs/latest`)).json();
-    expect(confirmedOnly.items.every((event:{recommendation:{sourceConfirmed:boolean}})=>event.recommendation.sourceConfirmed)).toBe(true);
+    const schedule=(await (await request.get(`${api}/api/v1/reader-status`)).json()).settings;
+    const slot=Date.parse(`${date}T${String(schedule.hour).padStart(2,"0")}:00:00+08:00`);
+    const latest=await (await request.get(`${api}/api/v1/briefs/latest`)).json();
+    // Once its morning slot has passed, a saved edition is served unchanged for 24 hours.
+    if(schedule.mode==="daily"&&Date.now()>=slot) {
+      expect(latest.isSnapshot).toBe(true);
+      expect(latest.items.map((event:{id:string})=>event.id)).toEqual(saved.items.map((event:{id:string})=>event.id));
+      expect(Date.parse(latest.nextRefreshAt)).toBe(slot+86_400_000);
+    } else expect(latest.isSnapshot).toBe(false);
     const archived=await (await request.get(`${api}/api/v1/briefs/today`)).json();
     expect(archived.items.map((event:{id:string})=>event.id)).toEqual(saved.items.map((event:{id:string})=>event.id));
     expect(archived.generatedAt).toBe(saved.generatedAt);

@@ -33,9 +33,10 @@ async function capture(page, name, width, theme, simulated = false) {
         background: style.backgroundColor, radius: style.borderRadius,
       };
     };
-    const navigation = document.querySelector('nav[aria-label="公开阅读视图"]');
+    const navigation = [...document.querySelectorAll('nav[aria-label="公开阅读视图"]')].find(visible);
+    const story = document.querySelector(".ns-reader-story");
     const interestDialog = document.querySelector(".ns-public-interest-dialog");
-    const titles = [...document.querySelectorAll(".ns-beta-feed > article > h3, .ns-beta-feed .ns-reader-row-title, .ns-beta-feed > button > strong, .ns-topic-article > strong")].filter(visible);
+    const titles = [...document.querySelectorAll(".ns-reader-start h2, .ns-beta-feed > article > h3, .ns-beta-feed .ns-reader-row-title, .ns-beta-feed > button > strong, .ns-topic-article > strong")].filter(visible);
     const contentBottom = navigation && getComputedStyle(navigation).position === "fixed" ? navigation.getBoundingClientRect().top : innerHeight;
     return {
       viewport: { width: innerWidth, height: innerHeight }, documentWidth: document.documentElement.scrollWidth,
@@ -52,8 +53,8 @@ async function capture(page, name, width, theme, simulated = false) {
         })),
       } : null,
       pageHeading: box(document.querySelector("#main-content h1")),
-      storyText: box(document.querySelector(".ns-reader-story-body")),
-      firstStory: box(document.querySelector(".ns-reader-story")),
+      storyText: box(story?.querySelector(".ns-reader-story-preview")??story?.querySelector(".ns-reader-story-body")),
+      firstStory: box(story),
       storyTitle: box(document.querySelector(".ns-reader-story-title")),
       storyActions: box(document.querySelector(".ns-reader-story-actions")),
       readingValue: box(document.querySelector(".ns-reading-value[open] p")),
@@ -93,7 +94,7 @@ async function capture(page, name, width, theme, simulated = false) {
 }
 
 async function openFirst(page, reading = false) {
-  const direct = page.locator(reading ? ".ns-library-list > button[data-public-event]" : ".ns-beta-feed > article[data-public-event] > h3 > button, .ns-beta-feed .ns-reader-row-title > button");
+  const direct = reading ? page.getByRole("button",{name:"从第 1 篇开始",exact:true}) : page.locator(".ns-beta-feed > article[data-public-event] > h3 > button, .ns-beta-feed .ns-reader-row-title > button");
   if (await direct.count()) await direct.first().click();
   else {
     const group = page.locator(".ns-beta-feed .cp-coverage").first();
@@ -144,7 +145,8 @@ async function captureRecovery(browser, theme) {
       await Promise.all(pending);
       await context.close();
     }
-    for(const state of ["loading","error","empty"]) {
+  }
+  for(const state of ["loading","error","empty"]) {
       const {context,page}=await reviewPage(browser,390,theme);
       const pending=[];
       let release;
@@ -161,7 +163,6 @@ async function captureRecovery(browser, theme) {
         else await expect(page.getByRole("heading",{name:"这个范围还没有主题",exact:true})).toBeVisible();
         await capture(page,`topics-${state}`,390,theme,true);
       } finally {release();await Promise.all(pending);await context.close();}
-    }
   }
 }
 
@@ -179,10 +180,9 @@ async function captureWidthFocus(browser) {
       await page.keyboard.press("Tab");await page.keyboard.press("Shift+Tab");
       await expect(edition).toBeFocused();
       await capture(page,"brief-select-keyboard",width,theme);
-      await page.goto(origin.origin+"/radar?view=cards");
-      await expect(page.locator(".ns-beta-feed .ns-reader-story").first()).toBeVisible({timeout:45_000});
-      await capture(page,"radar-card-width",width,theme);
-      await page.getByRole("tab",{name:"紧凑列表",exact:true}).click();
+      await page.goto(origin.origin+"/radar");
+      await expect(page.locator(".ns-beta-feed .ns-reader-row").first()).toBeVisible({timeout:45_000});
+      await capture(page,"radar-list-width",width,theme);
       const value=page.locator(".ns-reader-row .ns-reading-value").first();
       await expect(value).toBeVisible({timeout:45_000});
       await value.locator("summary").click();
@@ -234,7 +234,7 @@ async function captureInterests(browser) {
       report.interactions.push({width,theme,profile,status:response.status(),scope:"full-corpus recommended GET"});
       await capture(page,"interests-applied",width,theme);
       if(theme==="light"&&(width===1280||width===390)) {
-        await page.getByRole("tab",{name:"主题关联",exact:true}).click();
+        await page.getByRole("tab",{name:"主题地图",exact:true}).click();
         await expect(page.getByRole("group",{name:"关键词主题共现图",exact:true})).toBeVisible({timeout:45_000});
         await expect(page.locator(".ns-topic-article").first()).toBeAttached({timeout:45_000});
         await capture(page,"interests-topics",width,theme);
@@ -295,15 +295,28 @@ async function main() {
           await page.goto(origin.origin + path);
           await expect(page.locator("html")).toHaveAttribute("data-public-reader", "true");
           if (name === "saved") await expect(page.locator(".ns-beta-empty")).toBeVisible();
+          else if(name==="reading")await expect(page.locator(".ns-reader-start")).toBeVisible({timeout:45_000});
+          else if(name==="weekly") {
+            await expect(page.getByRole("heading",{name:"选择一个主题开始回顾",exact:true})).toBeVisible({timeout:45_000});
+            await capture(page,"weekly-topics",width,theme);
+            await page.getByRole("navigation",{name:"本周主题导航",exact:true}).getByRole("button").first().click();
+            await expect(page.locator(".ns-beta-feed [data-public-event]").first()).toBeVisible({timeout:45_000});
+          }
           else await expect(page.locator(".ns-beta-feed [data-public-event]").first()).toBeVisible({ timeout: 45_000 });
           await capture(page, name, width, theme);
+          if(name==="brief"&&width<=1024) {
+            await page.getByRole("button",{name:"打开导航",exact:true}).click();
+            const drawer=page.locator(".ns-reader-mobile-nav");
+            await expect(drawer.getByRole("navigation",{name:"公开阅读视图",exact:true}).getByRole("button")).toHaveCount(5);
+            await expect(drawer.getByRole("navigation",{name:"公开阅读视图",exact:true}).getByRole("button").first()).toBeInViewport({ratio:1});
+            await capture(page,"navigation",width,theme);
+            await page.keyboard.press("Escape");
+            await expect(drawer).toBeHidden();
+          }
           if(name==="radar") {
             const modes=page.getByRole("tablist",{name:"新闻排列方式",exact:true}).getByRole("tab");
-            await expect(modes).toHaveCount(3);
-            for(const [index,label] of ["紧凑列表","摘要卡片","主题关联"].entries())await expect(modes.nth(index)).toHaveAccessibleName(label);
-            await page.getByRole("tab",{name:"摘要卡片",exact:true}).click();
-            await expect(page.locator(".ns-beta-feed .ns-reader-story").first()).toBeVisible();
-            await capture(page,"radar-cards",width,theme);
+            await expect(modes).toHaveCount(2);
+            for(const [index,label] of ["列表","主题地图"].entries())await expect(modes.nth(index)).toHaveAccessibleName(label);
           }
           if (name === "brief" || name === "reading") {
             await openFirst(page, name === "reading");

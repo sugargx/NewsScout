@@ -1,0 +1,13 @@
+.ns-published-share { box-sizing: border-box; width: min(100%, 840px); margin-inline: auto; padding: 28px 28px 64px; color: var(--cp-text); line-height: 1.85; }
+.ns-published-share>header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--cp-border); }
+.ns-published-share>header>a { color: var(--cp-text); text-decoration: none; font: 700 22px/1.4 var(--cp-font-display); }
+.ns-published-share>header>span, .ns-published-intro>p, .ns-published-share>footer { color: var(--cp-text-muted); font-size: 13px; }
+.ns-published-intro { padding-block: 24px; }
+.ns-published-share h1 { font: 600 clamp(26px, 4vw, 36px)/1.45 var(--cp-font-display); overflow-wrap: anywhere; }
+.ns-published-share h2 { font: 600 23px/1.5 var(--cp-font-display); overflow-wrap: anywhere; }
+.ns-published-share>article { padding-block: 16px 28px; border-bottom: 1px solid var(--cp-border); }
+.ns-published-summary { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ns-published-sources { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; }
+.ns-published-share>footer { padding-top: 24px; }
+.ns-published-share a:focus-visible { outline: 3px solid var(--cp-focus); outline-offset: 3px; }
+@media(max-width: 640px) { .ns-published-share { padding: 20px 16px 48px; } }

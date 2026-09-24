@@ -3,21 +3,23 @@ use crate::{
     models::{DailyBrief, Event, EventQuery},
     reader,
 };
+use crate::{auth::ReaderState as State, scoped_db::ScopedDb};
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, Query},
     response::{Html, IntoResponse},
     routing::get,
 };
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Publishing {
-    pub pool: PgPool,
+    pub pool: ScopedDb,
+    pub public_origin: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -80,6 +82,11 @@ pub struct ShareEditor {
     pub items: Vec<EditedItem>,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishInput {
+    pub editor: Option<ShareEditor>,
+}
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ShareInput {
     pub kind: String,
@@ -107,6 +114,11 @@ fn database(state: &AppState) -> Result<&Publishing, ApiError> {
 }
 impl Publishing {
     pub async fn settings(&self) -> Result<ShareSettings> {
+        if let Some(origin) = &self.public_origin {
+            return Ok(ShareSettings {
+                public_base_url: Some(origin.clone()),
+            });
+        }
         let value: String =
             sqlx::query_scalar("SELECT value FROM app_settings WHERE key='share_settings'")
                 .fetch_one(&self.pool)
@@ -114,7 +126,7 @@ impl Publishing {
         Ok(serde_json::from_str(&value)?)
     }
     pub async fn read(&self, id: Uuid, public_only: bool) -> Result<Option<SharedEdition>> {
-        let row=sqlx::query("SELECT document,CASE WHEN $2 THEN NULL ELSE editor END AS editor,published,revoked_at FROM reader_shares
+        let row=sqlx::query("SELECT CASE WHEN $2 THEN published_document ELSE document END AS document,CASE WHEN $2 THEN NULL ELSE editor END AS editor,published,revoked_at FROM reader_shares
             WHERE id=$1 AND (NOT $2 OR published AND revoked_at IS NULL)")
             .bind(id).bind(public_only).fetch_optional(&self.pool).await?;
         let Some(row) = row else { return Ok(None) };
@@ -134,9 +146,16 @@ impl Publishing {
                 .transpose()?,
             published,
             revoked: revoked.is_some(),
-            public_url: base
-                .filter(|_| published && revoked.is_none())
-                .map(|base| format!("{base}/share/{id}")),
+            public_url: base.filter(|_| published && revoked.is_none()).map(|base| {
+                format!(
+                    "{base}/{}/{id}",
+                    if self.public_origin.is_some() {
+                        "p"
+                    } else {
+                        "share"
+                    }
+                )
+            }),
         }))
     }
 }
@@ -211,7 +230,8 @@ pub async fn weekly_document(
             })
     });
     reader::sort_candidates(&mut events, cutoff);
-    let mut brief = reader::select_weekly(crate::coverage::rollup_events(events, cutoff), cutoff, 20);
+    let mut brief =
+        reader::select_weekly(crate::coverage::rollup_events(events, cutoff), cutoff, 20);
     brief.local_date = date.to_string();
     brief.generated_at = now;
     Ok(brief)
@@ -251,7 +271,9 @@ pub async fn save_settings(
     Ok(Json(input))
 }
 fn display_heading(event: &Event) -> &str {
-    event.display_title.as_deref()
+    event
+        .display_title
+        .as_deref()
         .filter(|title| !title.trim().is_empty())
         .unwrap_or(&event.title)
 }
@@ -446,8 +468,9 @@ pub async fn read_share(
 }
 pub async fn drafts(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'title',COALESCE(editor->>'title',document->>'title'),
-        'date',document->>'date','kind',document->>'kind','createdAt',created_at,'edited',editor IS NOT NULL)
-        FROM reader_shares WHERE NOT published AND revoked_at IS NULL ORDER BY created_at DESC,id LIMIT 50")
+        'date',document->>'date','kind',document->>'kind','createdAt',created_at,'edited',editor IS NOT NULL,
+        'published',published,'revoked',revoked_at IS NOT NULL)
+        FROM reader_shares ORDER BY created_at DESC,id LIMIT 50")
         .fetch_all(&database(&state)?.pool).await.map_err(anyhow::Error::from)?;
     Ok(Json(serde_json::json!({"items":rows})))
 }
@@ -461,25 +484,7 @@ pub async fn save_editor(
     if share.revoked || share.published {
         return Err(ApiError::Conflict("仅能编辑未发布的本地草稿".into()));
     }
-    if input.title.trim().is_empty()
-        || input.title.chars().count() > 120
-        || input.subtitle.chars().count() > 120
-        || input.cta.chars().count() > 100
-        || input.caption.chars().count() > 12000
-        || !["portrait", "square"].contains(&input.format.as_str())
-        || !["light", "dark"].contains(&input.theme.as_str())
-        || input.items.len() != share.document.items.len()
-        || input.items.iter().enumerate().any(|(index, item)| {
-            item.index != index
-                || item.title.trim().is_empty()
-                || item.title.chars().count() > 200
-                || item.summary.chars().count() > 4000
-        })
-    {
-        return Err(ApiError::BadRequest(
-            "草稿格式或文字长度无效，请缩短过长文字后重试".into(),
-        ));
-    }
+    validate_editor(&input, &share.document)?;
     let changed = sqlx::query(
         "UPDATE reader_shares SET editor=$2 WHERE id=$1 AND NOT published AND revoked_at IS NULL",
     )
@@ -496,9 +501,33 @@ pub async fn save_editor(
     }
     Ok(Json(db.read(id, false).await?.ok_or(ApiError::NotFound)?))
 }
+
+fn validate_editor(input: &ShareEditor, document: &ShareDocument) -> Result<(), ApiError> {
+    if input.title.trim().is_empty()
+        || input.title.chars().count() > 120
+        || input.subtitle.chars().count() > 120
+        || input.cta.chars().count() > 100
+        || input.caption.chars().count() > 12000
+        || !["portrait", "square"].contains(&input.format.as_str())
+        || !["light", "dark"].contains(&input.theme.as_str())
+        || input.items.len() != document.items.len()
+        || input.items.iter().enumerate().any(|(index, item)| {
+            item.index != index
+                || item.title.trim().is_empty()
+                || item.title.chars().count() > 200
+                || item.summary.chars().count() > 4000
+        })
+    {
+        return Err(ApiError::BadRequest(
+            "草稿格式或文字长度无效，请缩短过长文字后重试".into(),
+        ));
+    }
+    Ok(())
+}
 pub async fn publish(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    input: Option<Json<PublishInput>>,
 ) -> Result<Json<SharedEdition>, ApiError> {
     let db = database(&state)?;
     if db.settings().await?.public_base_url.is_none() {
@@ -506,16 +535,68 @@ pub async fn publish(
             "尚未配置公网只读分享站点，不能发布链接或生成二维码".into(),
         ));
     }
-    let count =
-        sqlx::query("UPDATE reader_shares SET published=true WHERE id=$1 AND revoked_at IS NULL")
-            .bind(id)
-            .execute(&db.pool)
-            .await
-            .map_err(anyhow::Error::from)?
-            .rows_affected();
-    if count == 0 {
+    let mut tx = db.pool.begin().await.map_err(anyhow::Error::from)?;
+    let row = sqlx::query(
+        "SELECT document,editor,published,revoked_at FROM reader_shares WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(anyhow::Error::from)?
+    .ok_or(ApiError::NotFound)?;
+    if row
+        .try_get::<Option<DateTime<Utc>>, _>("revoked_at")
+        .map_err(anyhow::Error::from)?
+        .is_some()
+    {
         return Err(ApiError::NotFound);
     }
+    if row
+        .try_get::<bool, _>("published")
+        .map_err(anyhow::Error::from)?
+    {
+        return Err(ApiError::Conflict(
+            "此分享已发布，请重新读取；已发布快照不会被覆盖".into(),
+        ));
+    }
+    let document: ShareDocument =
+        serde_json::from_value(row.try_get("document").map_err(anyhow::Error::from)?)
+            .map_err(anyhow::Error::from)?;
+    let editor = match input.and_then(|Json(input)| input.editor) {
+        Some(editor) => Some(editor),
+        None if state.auth.cloud() => {
+            return Err(ApiError::BadRequest(
+                "发布需要提供 editor，明确本次选中的文章及编辑内容".into(),
+            ));
+        }
+        None => row
+            .try_get::<Option<serde_json::Value>, _>("editor")
+            .map_err(anyhow::Error::from)?
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(anyhow::Error::from)?,
+    };
+    let published_document = publication_document(document, editor.as_ref())?;
+    // The supplied editor, row lock, validation and snapshot belong to the same
+    // transaction. Another tab's draft save can neither change this selection
+    // nor overwrite it after publication.
+    sqlx::query(
+        "UPDATE reader_shares SET published=true,editor=$2,published_document=$3
+        WHERE id=$1 AND NOT published AND revoked_at IS NULL",
+    )
+    .bind(id)
+    .bind(
+        editor
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(anyhow::Error::from)?,
+    )
+    .bind(serde_json::to_value(published_document).map_err(anyhow::Error::from)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(anyhow::Error::from)?;
+    tx.commit().await.map_err(anyhow::Error::from)?;
     Ok(Json(db.read(id, false).await?.ok_or(ApiError::NotFound)?))
 }
 pub async fn revoke(
@@ -529,6 +610,55 @@ pub async fn revoke(
         .await
         .map_err(anyhow::Error::from)?;
     Ok(Json(db.read(id, false).await?.ok_or(ApiError::NotFound)?))
+}
+
+fn publication_document(
+    mut document: ShareDocument,
+    editor: Option<&ShareEditor>,
+) -> Result<ShareDocument, ApiError> {
+    if let Some(editor) = editor {
+        validate_editor(editor, &document)?;
+        document.title = editor.title.clone();
+        document.items = document
+            .items
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, mut item)| {
+                let edited = editor.items.get(index)?;
+                if !edited.selected {
+                    return None;
+                }
+                item.title = edited.title.clone();
+                item.summary = edited.summary.clone();
+                Some(item)
+            })
+            .collect();
+    }
+    if document.items.is_empty() {
+        return Err(ApiError::Conflict(
+            "Select at least one article before publishing".into(),
+        ));
+    }
+    Ok(document)
+}
+
+pub async fn cloud_public_share(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state.auth.pool.as_ref().ok_or(ApiError::NotFound)?;
+    // This is the only anonymous system-pool projection: no editor, actor,
+    // feedback, draft, or enumerable index. Revocation is checked on every read.
+    let document: serde_json::Value = sqlx::query_scalar(
+        "SELECT published_document FROM reader_shares
+         WHERE id=$1 AND published AND revoked_at IS NULL AND published_document IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(anyhow::Error::from)?
+    .ok_or(ApiError::NotFound)?;
+    Ok(([("cache-control", "no-store, private")], Json(document)))
 }
 
 fn escape(value: &str) -> String {
@@ -585,8 +715,9 @@ async fn public_page(
 }
 async fn public_index(State(db): State<Publishing>) -> Result<Html<String>, ApiError> {
     let rows = sqlx::query(
-        "SELECT id,document->>'title' AS title,document->>'date' AS date FROM reader_shares
-        WHERE published AND revoked_at IS NULL ORDER BY created_at DESC,id LIMIT 30",
+        "SELECT id,published_document->>'title' AS title,published_document->>'date' AS date FROM reader_shares
+        WHERE published AND revoked_at IS NULL AND published_document IS NOT NULL
+        ORDER BY created_at DESC,id LIMIT 30",
     )
     .fetch_all(&db.pool)
     .await
@@ -672,7 +803,10 @@ mod tests {
     #[tokio::test]
     async fn new_share_headings_prefer_reading_title_without_changing_originals_or_archives() {
         let mut event = crate::store::MemoryStore::demo()
-            .list_events(&Default::default()).await.unwrap().remove(0);
+            .list_events(&Default::default())
+            .await
+            .unwrap()
+            .remove(0);
         let original_title = event.title.clone();
         let original_evidence = serde_json::to_value(&event.evidence).unwrap();
         let original_id = event.id;
@@ -681,12 +815,23 @@ mod tests {
         let archive = serde_json::to_value(&legacy_item).unwrap();
         event.display_title = Some("Agent Framework 发布新的稳定版本".into());
         let current = public_item(event.clone()).unwrap();
-        assert_eq!(current.title, event.display_title.as_ref().unwrap().as_str());
+        assert_eq!(
+            current.title,
+            event.display_title.as_ref().unwrap().as_str()
+        );
         assert_eq!(display_heading(&event), current.title);
         assert_eq!(event.title, original_title);
         assert_eq!(event.id, original_id);
-        assert_eq!(serde_json::to_value(&event.evidence).unwrap(), original_evidence);
-        assert_eq!(serde_json::from_value::<ShareItem>(archive.clone()).unwrap().title, original_title);
+        assert_eq!(
+            serde_json::to_value(&event.evidence).unwrap(),
+            original_evidence
+        );
+        assert_eq!(
+            serde_json::from_value::<ShareItem>(archive.clone())
+                .unwrap()
+                .title,
+            original_title
+        );
         assert_eq!(serde_json::to_value(&legacy_item).unwrap(), archive);
         event.display_title = Some("  ".into());
         assert_eq!(display_heading(&event), original_title);
@@ -697,7 +842,10 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://unused@127.0.0.1/unused")
             .unwrap();
-        let router = public_router(Publishing { pool });
+        let router = public_router(Publishing {
+            pool: pool.into(),
+            public_origin: None,
+        });
         for path in [
             "/api/v1/model-providers",
             "/api/v1/shares",

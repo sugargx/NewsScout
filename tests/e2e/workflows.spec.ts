@@ -73,7 +73,7 @@ test("read later and read flags persist without clobbering saved state", async (
   await page.goto(`/events/${event.id}`);
   await expect(page.getByRole("heading", { level: 1, name: event.title, exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("link", { name: /打开原文/ }).first()).toHaveAttribute("href", /^https:/);
+  await expect(page.getByRole("link", { name: /查看原始来源/ }).first()).toHaveAttribute("href", /^https:/);
 });
 
 test("score pagination does not reuse stale snapshot totals", async ({ request }) => {
@@ -101,10 +101,12 @@ test("briefs do not publish unprocessed excerpts or freeze empty snapshots", asy
   expect(history.items).toEqual([]);
   expect(databaseQuery("SELECT count(*) FROM daily_briefs WHERE status='published'")).toBe("0");
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "晨间简报", level: 1 })).toBeVisible();
-  await page.getByLabel("简报日期",{exact:true}).selectOption("today");
-  await page.getByText("版本与分享",{exact:true}).click();
-  await expect(page.getByRole("button", { name: "保存今日简报", exact: true })).toBeDisabled();
+  await expect(page.getByRole("heading", { name: "今日精选", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天还没有达到标准的内容" })).toBeVisible();
+  // The daily edition is published by the morning run only; readers cannot freeze one manually.
+  await expect(page.getByLabel("精选日期", { exact: true }).locator("option")).toHaveText(["今日精选（最新）"]);
+  await expect(page.getByRole("button", { name: /保存|应用更新/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "生成今日分享图" })).toHaveCount(0);
 });
 
 test("sources can be registered and paused, duplicate and invalid input fail explicitly", async ({ request, page }) => {

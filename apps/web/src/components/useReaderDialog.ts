@@ -4,7 +4,9 @@ export function useReaderDialog(pane: RefObject<HTMLElement | null>) {
   useEffect(() => {
     const slot = pane.current?.closest<HTMLElement>(".ns-preview-slot,.ns-topic-detail");
     if (!slot?.closest(".ns-reader-workspace,.ns-topic-workspace")) return;
-    const media = window.matchMedia("(max-width: 980px)");
+    const media = window.matchMedia("(max-width: 1024px)");
+    // Between 769px and 1024px the reader covers only the content column, so the sidebar stays usable.
+    const sidebarVisible = window.matchMedia("(min-width: 769px)");
     let release: () => void = () => {};
     const update = () => {
       release(); release = () => {};
@@ -12,7 +14,7 @@ export function useReaderDialog(pane: RefObject<HTMLElement | null>) {
       const background: HTMLElement[] = [];
       for (let current: HTMLElement | null = slot; current?.parentElement && current !== document.body; current = current.parentElement) {
         for (const sibling of current.parentElement.children)
-          if (sibling instanceof HTMLElement && sibling !== current) background.push(sibling);
+          if (sibling instanceof HTMLElement && sibling !== current && !(sidebarVisible.matches && sibling.classList.contains("ns-reader-sidebar"))) background.push(sibling);
       }
       const previous = background.map(node => ({node, ariaHidden: node.getAttribute("aria-hidden"), inert: node.inert}));
       const overflow = document.body.style.overflow;
@@ -23,6 +25,7 @@ export function useReaderDialog(pane: RefObject<HTMLElement | null>) {
       document.body.style.overflow = "hidden";
       const trap = (event: KeyboardEvent) => {
         if (event.key !== "Tab" || event.defaultPrevented) return;
+        if (pane.current?.closest("[inert]")) return;
         const items = Array.from(pane.current?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])') ?? [])
           .filter(node => node.getClientRects().length > 0 && !node.closest("[inert]"));
         const first = items[0], last = items.at(-1);
@@ -42,7 +45,7 @@ export function useReaderDialog(pane: RefObject<HTMLElement | null>) {
         attributes.forEach(({name, value}) => {if (value === null) slot.removeAttribute(name); else slot.setAttribute(name, value);});
       };
     };
-    update(); media.addEventListener("change", update);
-    return () => {media.removeEventListener("change", update); release();};
+    update(); media.addEventListener("change", update); sidebarVisible.addEventListener("change", update);
+    return () => {media.removeEventListener("change", update); sidebarVisible.removeEventListener("change", update); release();};
   }, [pane]);
 }

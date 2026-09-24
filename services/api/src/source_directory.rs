@@ -212,7 +212,7 @@ async fn import_directory(pool: &PgPool) -> Result<()> {
         if let Some(source) = &entry.subscription {
             // One polling subscription per original endpoint. Preserve existing names, pauses, health and cursors.
             linked_source = sqlx::query_scalar::<_, Uuid>(
-                "SELECT id FROM sources WHERE endpoint=$1 ORDER BY (adapter_type=$2) DESC,created_at,id LIMIT 1")
+                "SELECT id FROM sources WHERE endpoint=$1 AND owner_user_id IS NULL ORDER BY (adapter_type=$2) DESC,created_at,id LIMIT 1")
                 .bind(&source.endpoint).bind(&source.adapter).fetch_optional(&mut *tx).await?;
             if linked_source.is_none() {
                 let mut publisher: Option<Uuid> = sqlx::query_scalar(

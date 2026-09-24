@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+ARG NODE_IMAGE=node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+ARG RUST_IMAGE=rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
+
+FROM ${NODE_IMAGE} AS node-dependencies
+WORKDIR /app
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential cmake python3 pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+COPY apps/web/package.json ./apps/web/
+COPY services/copilot-gateway/package.json ./services/copilot-gateway/
+COPY services/source-access/package.json ./services/source-access/
+COPY services/cloud-host/package.json ./services/cloud-host/
+RUN npm ci --include=dev --no-audit --no-fund
+
+FROM node-dependencies AS node-build
+COPY apps/web/ ./apps/web/
+COPY services/copilot-gateway/ ./services/copilot-gateway/
+COPY services/cloud-host/ ./services/cloud-host/
+COPY shared/ ./shared/
+RUN npm run build
+
+# This stage keeps package manifests and nested workspace production dependencies, but no TS sources.
+FROM node-dependencies AS production-dependencies
+RUN npm prune --omit=dev --no-audit --no-fund \
+    && ./node_modules/.bin/copilot --version
+
+FROM ${RUST_IMAGE} AS rust-build
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY services/api/ ./services/api/
+COPY shared/ ./shared/
+RUN cargo build --manifest-path services/api/Cargo.toml --release --locked --jobs 2 --bin scoutnews-api
+
+FROM ${NODE_IMAGE} AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    SCOUTNEWS_AUTH_MODE=azure \
+    PORT=3000
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 tini \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=production-dependencies /app/ ./
+COPY --from=node-build /app/apps/web/dist/ ./apps/web/dist/
+COPY --from=node-build /app/services/copilot-gateway/dist/ ./services/copilot-gateway/dist/
+COPY --from=node-build /app/services/cloud-host/dist/ ./services/cloud-host/dist/
+COPY services/source-access/browser-article.cjs ./services/source-access/browser-article.cjs
+COPY --from=rust-build /app/services/api/target/release/scoutnews-api ./bin/scoutnews-api
+RUN test -s apps/web/dist/index.html \
+    && test -s services/copilot-gateway/dist/index.js \
+    && test -s services/cloud-host/dist/server.js \
+    && test -x bin/scoutnews-api
+USER node
+EXPOSE 3000
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=8s --start-period=90s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:3000/health',{signal:AbortSignal.timeout(5000)}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
+CMD ["node", "/app/services/cloud-host/dist/server.js"]

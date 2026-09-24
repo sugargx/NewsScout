@@ -93,7 +93,7 @@ test("coverage bundles preserve real material identities and filter before stabl
       await page.screenshot({path:info.outputPath(`coverage-${width}.png`),fullPage:true});
     }
     const related=bundled.coverage!.members.find(member=>member.eventId!==bundled.id)!;
-    await disclosure.locator(`[data-coverage-member="${related.eventId}"]`).getByRole("button",{name:"打开阅读",exact:true}).click();
+    await disclosure.locator(`[data-coverage-member="${related.eventId}"]`).getByRole("button",{name:"查看详情",exact:true}).click();
     const preview=page.getByRole("article",{name:"文章就地阅读"});
     await expect(preview.getByRole("heading",{name:related.title,exact:true})).toBeVisible();
     await preview.getByRole("button",{name:`不感兴趣：${related.title}`,exact:true}).click();

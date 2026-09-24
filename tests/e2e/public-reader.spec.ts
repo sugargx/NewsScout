@@ -59,7 +59,7 @@ test("public reader boundary projects only public content and denies owner contr
   const brief=await(await request.get(`${base}/beta/api/brief`)).json();
   expect(brief.items.every((item:{contentVersion?:number})=>Number.isInteger(item.contentVersion))).toBe(true);
   for(const path of ["/api/v1/processing","/api/v1/model-providers","/api/v1/me/interests","/api/v1/shares",
-    "/api/v1/events?saved=true","/settings","/sources","/.env","/src/main.tsx","/@fs/D:/Code/ScoutNews/.env","/assets/missing.js.map"]) {
+    "/api/v1/events?saved=true","/settings","/sources","/share","/.env","/src/main.tsx","/@fs/D:/Code/ScoutNews/.env","/assets/missing.js.map"]) {
     expect((await request.get(base+path)).status(),path).toBe(404);
   }
   for(const path of ["/api/v1/processing/settings","/api/v1/events/exposures",`/beta/api/events/${event.id}/state`,
@@ -84,6 +84,7 @@ test("public reader beta offers genuine reading and browser-isolated feedback in
   await expect(page.getByRole("heading",{name:"新闻雷达",level:1,exact:true})).toBeVisible();
   const historicalResponse=page.waitForResponse(response=>new URL(response.url()).pathname==="/beta/api/events"
     &&new URL(response.url()).searchParams.get("hours")==="0");
+  await page.getByText("更多筛选 · 时间与排序",{exact:true}).click();
   await page.getByLabel("时间范围",{exact:true}).selectOption("0");
   const historyLoaded=await historicalResponse;
   expect(historyLoaded.ok(),await historyLoaded.text()).toBe(true);
@@ -95,7 +96,7 @@ test("public reader beta offers genuine reading and browser-isolated feedback in
   const title=await first.getByRole("heading").innerText();
   await first.getByRole("button",{name:/^收藏：/}).click();
   await expect(first.getByRole("button",{name:/^取消收藏：/})).toHaveAttribute("aria-pressed","true");
-  await page.getByRole("button",{name:/^我的收藏/}).click();
+  await page.getByRole("navigation",{name:"公开阅读视图",exact:true}).getByRole("button",{name:/^收藏/}).click();
   await page.reload();
   await expect(page.getByRole("region",{name:"本浏览器收藏",exact:true}).getByRole("heading",{name:title,exact:true})).toBeVisible();
   const other=await browser.newContext();
@@ -107,6 +108,8 @@ test("public reader beta offers genuine reading and browser-isolated feedback in
   await expect(page.getByRole("complementary",{name:"公开文章阅读区",exact:true}).getByRole("heading",{name:title,exact:true,level:2})).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem("newsscout-public-feedback-v1")??"{}").opened?.length??0)).toBe(1);
   for(const theme of ["light","dark"]) {
+    await page.setViewportSize({width:1440,height:1050});
+    await expect(page.getByRole("button",{name:"切换明暗主题",exact:true})).toBeVisible();
     if((await page.locator("html").getAttribute("data-theme"))!==theme)await page.getByRole("button",{name:"切换明暗主题",exact:true}).click();
     for(const width of [1440,390]) {
       await page.setViewportSize({width,height:1050});
@@ -116,9 +119,11 @@ test("public reader beta offers genuine reading and browser-isolated feedback in
   }
   await page.getByRole("button",{name:"返回列表",exact:false}).click();
   await expect(page.getByRole("region",{name:"本浏览器收藏",exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"新闻雷达",exact:true}).click();
+  await page.getByRole("button",{name:"打开导航",exact:true}).click();
+  await page.getByRole("navigation",{name:"公开阅读视图",exact:true}).getByRole("button",{name:"新闻雷达",exact:true}).click();
+  await page.getByText("更多筛选 · 时间与排序",{exact:true}).click();
   await page.getByLabel("时间范围",{exact:true}).selectOption("0");
-  await page.getByRole("tab",{name:"主题关联",exact:true}).click();
+  await page.getByRole("tab",{name:"主题地图",exact:true}).click();
   const graph=page.getByRole("group",{name:"关键词主题共现图",exact:true});
   await expect(graph).toBeVisible();
   const selected=page.waitForResponse(response=>new URL(response.url()).pathname==="/beta/api/events"&&!!new URL(response.url()).searchParams.get("facet"));

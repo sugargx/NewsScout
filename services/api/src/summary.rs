@@ -230,10 +230,14 @@ pub fn parse_output(content: &str, event: &Event) -> Result<GeneratedSummary> {
         serde_json::from_str(json).context("模型未返回合法的摘要 JSON")?;
     output.display_title = output.display_title.map(|title| title.trim().to_owned());
     if let Some(title) = &output.display_title {
-        ensure!((2..=120).contains(&title.chars().count())
-            && !title.chars().any(char::is_control)
-            && title.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
-            "阅读标题须为2–120字单行中文；无法忠实翻译时返回null");
+        ensure!(
+            (2..=120).contains(&title.chars().count())
+                && !title.chars().any(char::is_control)
+                && title
+                    .chars()
+                    .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+            "阅读标题须为2–120字单行中文；无法忠实翻译时返回null"
+        );
     }
     ensure!(
         (1..=12).contains(&output.points.len()),
@@ -412,37 +416,78 @@ mod tests {
 
     #[tokio::test]
     async fn optional_reading_title_is_bounded_and_legacy_outputs_still_parse() {
-        let event = MemoryStore::demo().list_events(&Default::default()).await.unwrap().remove(0);
+        let event = MemoryStore::demo()
+            .list_events(&Default::default())
+            .await
+            .unwrap()
+            .remove(0);
         let mut output = serde_json::json!({"points":["官方提供了版本变更的说明。"],
             "materialLimit":null,"limitations":[],"importance":"","evidenceIds":[event.evidence[0].id]});
-        assert!(parse_output(&output.to_string(), &event).unwrap().display_title.is_none());
+        assert!(
+            parse_output(&output.to_string(), &event)
+                .unwrap()
+                .display_title
+                .is_none()
+        );
         output["displayTitle"] = serde_json::json!("Agent Framework 发布新版本");
-        assert_eq!(parse_output(&output.to_string(), &event).unwrap().display_title.as_deref(),
-            Some("Agent Framework 发布新版本"));
-        for invalid in [String::new(), "中文\n换行".into(), "A fabricated English headline".into(), "中".repeat(121)] {
+        assert_eq!(
+            parse_output(&output.to_string(), &event)
+                .unwrap()
+                .display_title
+                .as_deref(),
+            Some("Agent Framework 发布新版本")
+        );
+        for invalid in [
+            String::new(),
+            "中文\n换行".into(),
+            "A fabricated English headline".into(),
+            "中".repeat(121),
+        ] {
             output["displayTitle"] = serde_json::json!(invalid);
             assert!(parse_output(&output.to_string(), &event).is_err());
         }
         output["displayTitle"] = serde_json::Value::Null;
-        assert!(parse_output(&output.to_string(), &event).unwrap().display_title.is_none());
+        assert!(
+            parse_output(&output.to_string(), &event)
+                .unwrap()
+                .display_title
+                .is_none()
+        );
         let prompt: serde_json::Value = serde_json::from_str(&prompt(&event).unwrap()).unwrap();
-        assert!(prompt["displayTitleContract"].as_str().unwrap().contains("不从摘录添加"));
+        assert!(
+            prompt["displayTitleContract"]
+                .as_str()
+                .unwrap()
+                .contains("不从摘录添加")
+        );
         assert_eq!(event.title, prompt["title"]);
     }
 
     #[tokio::test]
     async fn publisher_paywall_prompt_contains_only_retained_intro_and_access_limit() {
-        let mut event = MemoryStore::demo().list_events(&Default::default()).await.unwrap().remove(0);
+        let mut event = MemoryStore::demo()
+            .list_events(&Default::default())
+            .await
+            .unwrap()
+            .remove(0);
         event.evidence[0].reading_context = Some(ReadingContext::publisher_page(
             "https://stratechery.com/2026/analysis/".into(),
-            format!("Genuine introduction about political control of AI.\n{}\n{}", crate::reading_context::STRATECHERY_PAYWALL_MARKER,
-                "Pricing Login Subscription catalogue".repeat(100)),
-            false, chrono::Utc::now()));
+            format!(
+                "Genuine introduction about political control of AI.\n{}\n{}",
+                crate::reading_context::STRATECHERY_PAYWALL_MARKER,
+                "Pricing Login Subscription catalogue".repeat(100)
+            ),
+            false,
+            chrono::Utc::now(),
+        ));
         let prompt: serde_json::Value = serde_json::from_str(&prompt(&event).unwrap()).unwrap();
         let context = &prompt["evidence"][0]["readingContext"];
         assert_eq!(context["status"], "partial");
         assert_eq!(context["accessLimit"], "paywall");
-        assert_eq!(context["body"], "Genuine introduction about political control of AI.");
+        assert_eq!(
+            context["body"],
+            "Genuine introduction about political control of AI."
+        );
         assert!(!context["body"].as_str().unwrap().contains("Pricing"));
     }
 
@@ -572,7 +617,11 @@ mod tests {
         assert!(!source.structured.contains("已在节目说明中的章节"));
         assert!(source.structured.contains("独特章节细节"));
         assert!(source.structured.contains("comment-1（42票）"));
-        assert!(source.structured.contains("comment-2：未提供票数的实际评论"));
+        assert!(
+            source
+                .structured
+                .contains("comment-2：未提供票数的实际评论")
+        );
 
         let value: serde_json::Value = serde_json::from_str(&prompt(&event).unwrap()).unwrap();
         let material = value["evidence"][0]["readingContext"]["body"]

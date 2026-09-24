@@ -23,5 +23,7 @@ References/
 apps/*/coverage/
 services/*/coverage/
 tmp/
+# Local UI review evidence (screenshots, bundles, logs) stays on this machine.
+artifacts/
 test-results/
 playwright-report/

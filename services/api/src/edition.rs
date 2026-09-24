@@ -1,7 +1,8 @@
+use crate::scoped_db::ScopedDb;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use std::time::Duration as StdDuration;
 
 use crate::{app::AppState, models::DailyBrief, reader};
@@ -49,7 +50,7 @@ impl ReaderSettings {
 
 #[derive(Clone)]
 pub struct EditionStore {
-    pool: PgPool,
+    pool: ScopedDb,
 }
 
 #[derive(Serialize)]
@@ -76,12 +77,33 @@ pub struct ReaderStatus {
     pub morning_run: Option<MorningRun>,
 }
 
-fn slot(date: NaiveDate, hour: u32) -> DateTime<Utc> {
+pub(crate) fn slot(date: NaiveDate, hour: u32) -> DateTime<Utc> {
     date.and_hms_opt(hour, 0, 0)
         .expect("validated hour")
         .and_utc()
         - Duration::hours(8)
 }
+
+/// The daily edition current at `at`: today's once today's slot has passed,
+/// otherwise yesterday's. Each edition is served unchanged for 24 hours.
+pub(crate) fn edition_date(settings: &ReaderSettings, at: DateTime<Utc>) -> NaiveDate {
+    let today = reader::local_date(at);
+    if at >= slot(today, settings.hour) {
+        today
+    } else {
+        today.pred_opt().expect("valid current date")
+    }
+}
+
+pub(crate) fn edition_refresh_at(settings: &ReaderSettings, edition: NaiveDate) -> DateTime<Utc> {
+    slot(
+        edition.succ_opt().expect("valid edition date"),
+        settings.hour,
+    )
+}
+
+/// How long readers keep the previous edition while this morning's run finishes.
+pub(crate) const EDITION_GRACE_HOURS: i64 = 3;
 
 pub fn next_slot(
     settings: &ReaderSettings,
@@ -114,7 +136,12 @@ fn ready_for_snapshot(
     let current_ready = brief
         .items
         .iter()
-        .filter(|event| event.freshness_at.or(event.published_at).is_some_and(|date| date >= start))
+        .filter(|event| {
+            event
+                .freshness_at
+                .or(event.published_at)
+                .is_some_and(|date| date >= start)
+        })
         .count();
     let minimum = limit.min(12);
     brief.is_snapshot
@@ -124,8 +151,8 @@ fn ready_for_snapshot(
 }
 
 impl EditionStore {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: impl Into<ScopedDb>) -> Self {
+        Self { pool: pool.into() }
     }
 
     pub async fn settings(&self) -> Result<(ReaderSettings, DateTime<Utc>)> {
@@ -148,10 +175,12 @@ impl EditionStore {
     }
 
     async fn today(&self, date: NaiveDate) -> Result<Option<MorningRun>> {
-        let row = sqlx::query("SELECT * FROM morning_runs WHERE local_date=$1")
-            .bind(date)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT * FROM morning_runs WHERE local_date=$1 AND owner_user_id=scoutnews_actor()",
+        )
+        .bind(date)
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(|row| {
             Ok(MorningRun {
                 local_date: row.try_get("local_date")?,
@@ -198,7 +227,7 @@ impl EditionStore {
         Ok(sqlx::query_scalar(
             "INSERT INTO morning_runs(local_date,status,scheduled_at,lease_until,message)
             VALUES($1,'collecting',$2,now()+interval '30 minutes','正在采集每日来源')
-            ON CONFLICT(local_date) DO UPDATE SET lease_until=now()+interval '30 minutes',
+            ON CONFLICT(owner_user_id,local_date) DO UPDATE SET lease_until=now()+interval '30 minutes',
               message='正在恢复中断的每日采集'
             WHERE morning_runs.status='collecting' AND morning_runs.lease_until<now()
             RETURNING started_at",
@@ -218,7 +247,7 @@ impl EditionStore {
     ) -> Result<()> {
         sqlx::query(
             "UPDATE morning_runs SET status='summarizing',source_succeeded=$2,source_failed=$3,
-            lease_until=NULL,message=$4 WHERE local_date=$1",
+            lease_until=NULL,message=$4 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()",
         )
         .bind(date)
         .bind(succeeded)
@@ -260,7 +289,7 @@ impl EditionStore {
               AND (e.summary_kind<>'copilot' OR e.summary_format_version<2)
               AND EXISTS(SELECT 1 FROM event_evidence ee JOIN content_items ci ON ci.id=ee.content_item_id
                 WHERE ee.event_id=e.id AND ci.published_at >= $1 AND ci.published_at <= $2)
-              AND NOT EXISTS(SELECT 1 FROM user_event_states us WHERE us.event_id=e.id AND us.user_id='local' AND us.not_interested_at IS NOT NULL)
+              AND NOT EXISTS(SELECT 1 FROM user_event_states us WHERE us.event_id=e.id AND us.user_id=scoutnews_actor() AND us.not_interested_at IS NOT NULL)
               AND NOT EXISTS(SELECT 1 FROM event_evidence ae JOIN content_items ac ON ac.id=ae.content_item_id
                 JOIN sources ads ON ads.id=ac.source_id WHERE ae.event_id=e.id AND ads.adapter_type='aihot_public')
               AND EXISTS(SELECT 1 FROM event_evidence ee JOIN content_items ci ON ci.id=ee.content_item_id
@@ -282,12 +311,12 @@ impl EditionStore {
                 .await?
                 .context("eligible morning brief could not be saved")?;
             let partial = run.source_failed > 0 || failed > 0 || saved.items.len() < 5;
-            sqlx::query("UPDATE morning_runs SET status=$2,finished_at=now(),message=$3 WHERE local_date=$1")
+            sqlx::query("UPDATE morning_runs SET status=$2,finished_at=now(),message=$3 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()")
                 .bind(date).bind(if partial { "partial" } else { "ready" })
                 .bind(format!("晨报已保存：{} 条；{} 个来源失败或退避，{} 条摘要失败；快照不会被后续更新覆盖",saved.items.len(),run.source_failed,failed))
                 .execute(&self.pool).await?;
         } else if Utc::now() - run.started_at > Duration::minutes(60) {
-            sqlx::query("UPDATE morning_runs SET status='partial',message=$2 WHERE local_date=$1")
+            sqlx::query("UPDATE morning_runs SET status='partial',message=$2 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()")
                 .bind(date)
                 .bind(format!(
                     "已采集，等待合格摘要：当前 {} 条，不固化空报或用原文摘录凑数",
@@ -345,8 +374,8 @@ impl EditionStore {
                         .await?;
                     }
                     Err(error) => {
-                        sqlx::query("UPDATE morning_runs SET status='failed',lease_until=NULL,finished_at=now(),message=$2 WHERE local_date=$1")
-                            .bind(date).bind(format!("每日采集失败：{error:#}")).execute(&self.pool).await?;
+                        sqlx::query("UPDATE morning_runs SET status='failed',lease_until=NULL,finished_at=now(),message=$2 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()")
+                            .bind(date).bind("Daily collection failed").execute(&self.pool).await?;
                         return Err(error);
                     }
                 }
@@ -383,12 +412,93 @@ pub fn spawn(state: AppState) {
                 continue;
             }
             if let Some(store) = &state.edition {
-                if let Err(error) = store.tick(&state).await {
-                    tracing::error!(?error, "reader schedule failed");
+                let result = if state.auth.cloud() {
+                    cloud_tick(&state).await
+                } else {
+                    store.tick(&state).await
+                };
+                if result.is_err() {
+                    tracing::error!("reader schedule failed");
                 }
             }
         }
     });
+}
+
+async fn cloud_tick(state: &AppState) -> Result<()> {
+    state
+        .edition
+        .as_ref()
+        .context("global edition schedule required")?
+        .tick(state)
+        .await?;
+    let worker = state
+        .feed_worker
+        .as_ref()
+        .context("collection worker required")?;
+    worker.run_cloud_due().await?;
+    archive_cloud_readers(state, Utc::now()).await
+}
+
+pub(crate) async fn archive_cloud_readers(state: &AppState, now: DateTime<Utc>) -> Result<()> {
+    let pool = state
+        .auth
+        .pool
+        .as_ref()
+        .context("cloud database required")?;
+    let (settings, _) = state
+        .edition
+        .as_ref()
+        .context("edition store required")?
+        .settings()
+        .await?;
+    let date = reader::local_date(now);
+    if settings.mode != "daily" || now < slot(date, settings.hour) {
+        return Ok(());
+    }
+    let users = sqlx::query(
+        "SELECT id,display_name,telemetry_consent FROM app_users
+        WHERE last_seen_at>now()-interval '30 days' AND issuer<>'local' ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?;
+    for row in users {
+        let reader = state.for_reader(crate::auth::Identity {
+            id: row.try_get("id")?,
+            display_name: row.try_get("display_name")?,
+            telemetry_consent: row.try_get("telemetry_consent")?,
+        });
+        let edition = reader.edition.as_ref().context("reader edition required")?;
+        if edition
+            .claim(date, slot(date, settings.hour))
+            .await?
+            .is_some()
+        {
+            let sources = reader.store.sources().await?;
+            let active = sources
+                .iter()
+                .filter(|source| matches!(source.lifecycle_status.as_str(), "stable" | "observing"))
+                .collect::<Vec<_>>();
+            let succeeded = active
+                .iter()
+                .filter(|source| {
+                    source.last_success_at.is_some() && source.consecutive_failures == 0
+                })
+                .count() as i32;
+            edition
+                .finish_collecting(
+                    date,
+                    succeeded,
+                    active.len() as i32 - succeeded,
+                    "Reader-specific collection complete; awaiting qualified summaries".into(),
+                )
+                .await?;
+        }
+        // Reuse the existing readiness gate and immutable snapshot contract,
+        // but with this reader's recommendations, feedback and visible jobs.
+        edition.finalize(&reader, date).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -420,6 +530,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn editions_turn_over_at_the_shanghai_slot_and_last_24_hours() {
+        let settings = ReaderSettings::default();
+        let before: DateTime<Utc> = "2026-09-23T21:59:59Z".parse().unwrap();
+        let at: DateTime<Utc> = "2026-09-23T22:00:00Z".parse().unwrap();
+        assert_eq!(edition_date(&settings, before).to_string(), "2026-09-23");
+        assert_eq!(edition_date(&settings, at).to_string(), "2026-09-24");
+        assert_eq!(
+            edition_refresh_at(&settings, edition_date(&settings, before)),
+            at
+        );
+        assert_eq!(
+            edition_refresh_at(&settings, edition_date(&settings, at)) - at,
+            Duration::hours(24)
+        );
+    }
+
     #[tokio::test]
     async fn processed_supplements_wait_for_current_news_before_auto_publishing() {
         use crate::store::{MemoryStore, Store};
@@ -435,10 +562,10 @@ mod tests {
             }
         }
         let brief = reader::select_brief(events, now);
-        assert_eq!(brief.items.len(), 4);
+        assert_eq!(brief.items.len(), 3);
         assert!(!ready_for_snapshot(&brief, 10, 2, 20));
         assert!(!ready_for_snapshot(&brief, 10, 0, 20));
-        assert!(ready_for_snapshot(&brief, 10, 0, 4));
+        assert!(ready_for_snapshot(&brief, 10, 0, 3));
         assert!(ready_for_snapshot(&brief, 0, 0, 20));
         let mut empty = brief.clone();
         empty.items.clear();
@@ -495,6 +622,8 @@ mod tests {
         .execute(&pool)
         .await?;
         let state = AppState {
+            auth: std::sync::Arc::new(crate::auth::Auth::default()),
+            identity: None,
             store: std::sync::Arc::new(crate::postgres_store::PostgresStore::new(pool.clone())),
             http: reqwest::Client::new(),
             oauth_states: Default::default(),

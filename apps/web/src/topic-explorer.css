@@ -42,7 +42,7 @@
 .ns-topic-empty p, .ns-topic-batch-note { margin: 0; color: var(--cp-text-muted); font-size: 12px; line-height: 1.8; }
 .ns-topic-batch-note { padding: 10px 0 0; }
 .ns-empty.ns-topic-empty { padding: 70px 20px; }
-.ns-topic-workspace :is(button, a, summary, [role=button]):focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-topic-workspace :is(button, a, summary, [role=button]):focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-topic-mobile-nav { display: none; }
 
 /* Reading from the map uses the same right-hand reading pane as the list view. */

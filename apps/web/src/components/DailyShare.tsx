@@ -30,12 +30,18 @@ function orderNote(order: ShareOrder, total: number, ai: number) {
   return order === "ai" ? `${ai} 条 AI 相关新闻排在前面，其余保持精选顺序。` : "与今日精选页面的排列顺序一致。";
 }
 
+// The image already exists when sharing starts, so only the share sheet failed; browsers describe that in English.
+function shareFailure(error: unknown) {
+  const refused = error instanceof DOMException && error.name === "NotAllowedError";
+  return new Error(`${refused ? "系统没有允许这次分享。" : "系统分享暂时不可用。"}可以改用“下载分享图”，保存后再发送。`);
+}
+
 export function DailyShare({ date, day = "今日", items, sections = [], onAction, focusOnMount = false }: { date: string; day?: string; items: ShareCandidate[]; sections?: BriefSection[]; onAction?: (outcome: "success" | "failure", durationMs: number) => void; focusOnMount?: boolean }) {
   const baseId = useId(), headingId = `${baseId}-heading`, limitId = `${baseId}-limit`;
   const [order, setOrder] = useState<ShareOrder>(storedOrder);
   const [picked, setPicked] = useState<ReadonlySet<string> | null>(null);
   const [rendered, setRendered] = useState<Rendered | null>(null), [rendering, setRendering] = useState(true);
-  const [renderError, setRenderError] = useState<unknown>(null), [actionError, setActionError] = useState<unknown>(null);
+  const [renderError, setRenderError] = useState<unknown>(null), [actionError, setActionError] = useState<{ title: string; error: unknown } | null>(null);
   const [status, setStatus] = useState(""), [busy, setBusy] = useState(false), [manualText, setManualText] = useState(0);
   const [moreBelow, setMoreBelow] = useState(false), [shareFiles] = useState(canShareFiles);
   const frame = useRef<HTMLDivElement>(null), latest = useRef<Rendered | null>(null);
@@ -90,11 +96,11 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
     const timer = setTimeout(() => void (async () => {
       try {
         await document.fonts.ready;
-        const canvas = renderShareImage({ date, weekday, entries, day });
+        const canvas = renderShareImage({ date, weekday, entries, day }), height = canvas.height;
         const blob = await canvasPng(canvas);
         if (cancelled) return;
         if (latest.current) URL.revokeObjectURL(latest.current.url);
-        latest.current = { key: renderKey, blob, url: URL.createObjectURL(blob), count: entries.length, height: canvas.height };
+        latest.current = { key: renderKey, blob, url: URL.createObjectURL(blob), count: entries.length, height };
         setRendered(latest.current); setRenderError(null);
       } catch (error) {
         if (cancelled) return;
@@ -130,7 +136,7 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
       setStatus(`已下载分享图：${entries.length} 条新闻，每条附原文链接。`);
       onAction?.("success", performance.now() - started);
     } catch (error) {
-      setActionError(error); onAction?.("failure", performance.now() - started);
+      setActionError({ title: "分享图未生成", error }); onAction?.("failure", performance.now() - started);
     } finally {
       setBusy(false);
     }
@@ -146,7 +152,7 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
       onAction?.("success", performance.now() - started);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setActionError(error); onAction?.("failure", performance.now() - started);
+      setActionError({ title: "没有打开系统分享", error: shareFailure(error) }); onAction?.("failure", performance.now() - started);
     }
   }
   async function copy() {
@@ -189,12 +195,12 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
       </div>
       <div className="ns-share-actions">
         <ReaderButton icon={<CopyRegular />} disabled={!entries.length} onClick={() => void copy()}>复制文字版</ReaderButton>
-        <ReaderButton variant={shareFiles ? "secondary" : "primary"} icon={<ArrowDownloadRegular />} disabled={busy || !entries.length} onClick={() => void download()}>{busy ? "正在生成…" : "下载分享图"}</ReaderButton>
+        <ReaderButton variant={shareFiles ? "secondary" : "primary"} icon={<ArrowDownloadRegular />} disabled={!entries.length} disabledFocusable={busy} aria-busy={busy} onClick={() => void download()}>{busy ? "正在生成…" : "下载分享图"}</ReaderButton>
         {shareFiles && <ReaderButton variant="primary" icon={<ShareRegular />} disabled={!ready} onClick={() => void share()}>分享图片</ReaderButton>}
       </div>
     </div>
     <p className="ns-share-status" role="status">{status}</p>
-    {actionError !== null && <ErrorNotice title="分享图未生成" error={actionError} />}
+    {actionError && <ErrorNotice title={actionError.title} error={actionError.error} />}
     {manualText > 0 && <textarea ref={manual} className="ns-share-manual" readOnly rows={8} aria-label="分享文字版" value={shareText(date, entries, day)} onFocus={event => event.currentTarget.select()} />}
     <div className="ns-share-layout">
       <section className="ns-share-picker" aria-labelledby={headingId}>

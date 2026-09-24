@@ -1,4 +1,4 @@
-import { chromium, expect, test, type Page } from "@playwright/test";
+import { chromium, expect, test, type Locator, type Page } from "@playwright/test";
 import type { Brief, CoverageMember, Event, EventState, Topic } from "../../apps/web/src/types";
 import { editionGroups, refreshOutcome } from "../../apps/web/src/editorial";
 import { QueryClient } from "@tanstack/react-query";
@@ -373,6 +373,17 @@ for(const publicMode of [false,true])for(const theme of ["light","dark"])for(con
     await page.goto("/");
     const edition=page.getByLabel(publicMode?"晨报版本":"精选日期",{exact:true});
     const ring=(locator=edition)=>locator.evaluate(element=>{const style=getComputedStyle(element);return {style:style.outlineStyle,width:style.outlineWidth,offset:style.outlineOffset,color:style.outlineColor};});
+    // WCAG 1.4.11: the ring must reach 3:1 against the colour showing through its offset gap.
+    const contrast=(locator:Locator)=>locator.evaluate(element=>{
+      const parse=(value:string)=>{const [r,g,b,a=1]=value.match(/[\d.]+/g)!.map(Number);return {r,g,b,a};};
+      const layers:{r:number;g:number;b:number;a:number}[]=[];
+      for(let node=element.parentElement;node;node=node.parentElement){const color=parse(getComputedStyle(node).backgroundColor);if(color.a>0)layers.push(color);if(color.a>=1)break;}
+      const base=layers.reverse().reduce((under,over)=>({r:over.r*over.a+under.r*(1-over.a),g:over.g*over.a+under.g*(1-over.a),b:over.b*over.a+under.b*(1-over.a),a:1}),{r:255,g:255,b:255,a:1});
+      const luminance=({r,g,b}:{r:number;g:number;b:number})=>{const [R,G,B]=[r,g,b].map(value=>{const c=value/255;return c<=.03928?c/12.92:((c+.055)/1.055)**2.4;});return .2126*R+.7152*G+.0722*B;};
+      const outline=parse(getComputedStyle(element).outlineColor);
+      const [ring,behind]=[luminance(outline),luminance(base)];
+      return {alpha:outline.a,ratio:(Math.max(ring,behind)+.05)/(Math.min(ring,behind)+.05)};
+    });
     await expect(edition).toBeVisible();
     expect(await edition.evaluate(element=>element.tagName==="SELECT"&&!element.closest(".fui-Select"))).toBe(true);
     await edition.focus();await page.keyboard.press("Tab");await page.keyboard.press("Shift+Tab");
@@ -381,6 +392,9 @@ for(const publicMode of [false,true])for(const theme of ["light","dark"])for(con
     const focus=await ring();
     expect(focus).toMatchObject({style:"solid",width:"3px",offset:"2px"});
     expect(focus.color).not.toBe("rgba(0, 0, 0, 0)");
+    const visibleAgainst=async(locator:Locator)=>{const edge=await contrast(locator);
+      expect(edge.alpha).toBe(1);expect(edge.ratio,`focus ring contrast ${edge.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);};
+    await visibleAgainst(edition);
     await page.keyboard.press("End");await page.keyboard.press("Enter");
     await expect(edition).toHaveValue("2026-09-01");
     await expect(page.locator(publicMode?"[data-public-event]":".ns-edition-list article[data-event-id]")).toHaveCount(2);
@@ -388,11 +402,13 @@ for(const publicMode of [false,true])for(const theme of ["light","dark"])for(con
     const title=page.locator(publicMode?".ns-reader-story-title>button":".ns-reader-row-title>button").first();
     await title.focus();
     expect(await ring(title)).toEqual(focus);
+    await visibleAgainst(title);
     await page.goto("/radar");
     const search=page.locator(".ns-filter-search input");
     await search.click();
     expect(await search.evaluate(element=>getComputedStyle(element).outlineStyle)).toBe("none");
     expect(await ring(page.locator(".ns-filter-search"))).toEqual(focus);
+    await visibleAgainst(page.locator(".ns-filter-search"));
     expect(state.stateWrites).toEqual([]);expect(state.unexpectedWrites).toEqual([]);
   });
 }

@@ -6,7 +6,35 @@
 
 本仓库公开，ACR登录服务器和应用地址只保存在私有记录 `tmp\azure-preview-20260920`（不入库），文中分别写作 `<ACR>` 和 `<应用FQDN>`。
 
-**最新发布（2026-09-24）：r11已部署，Ready revision为 `newsscout--0000008`。** ACR `ckc` 于14:17:30–14:26:25（+08）成功，唯一tag为 `preview-20260924-r11-476dc152`，镜像为 `<ACR>/newsscout@sha256:9b106c8585dbe5107be4fcfbe02d6eccc8e8b04fa2591e98c9909771ab947cb1`。14:31:48确认r10副本归零，14:32:50新revision Ready，14:33:44完成Single/min=max=1交接；其间约62秒无可用副本，没有并行两个Worker。16项环境变量名、7项secret、AuthConfig、唯一批准身份、0条IP规则、Terra/low/5000及资源规格保持。前后配置对比只有revision名称、revision FQDN、image、`SCOUTNEWS_RELEASE_ID` 与 `lastModifiedAt` 不同；资源tag与私有参数已同步为 `preview-20260924-r11`。
+**最新发布（2026-09-24）：r12已部署，Ready revision为 `newsscout--0000009`。** ACR `ckd` 于18:10:50–18:19:32（+08）成功，唯一tag为 `preview-20260924-r12-0295afd2`，镜像为 `<ACR>/newsscout@sha256:ef75f1ee489279da26fb630c9d3f8104c59350e9057fc91c279e82a82e014dad`。18:22:02确认r11副本归零，18:23:06新revision Ready，18:24:04完成Single/min=max=1交接；其间约64秒无可用副本，没有并行两个Worker。16项环境变量名、7项secret、唯一批准身份、0条IP规则及资源规格保持：环境变量只有 `SCOUTNEWS_RELEASE_ID` 不同，7项secret的Key Vault引用和身份不变，资源、扩缩和入口配置一致；滚动只更新镜像和发布ID，没有改AuthConfig。Terra/low/5000 保存在数据库设置中，本轮未改。资源tag与私有参数已同步为 `preview-20260924-r12`。
+
+本轮内容：补上r11留下的缺口。选文规则版本变化后，当天已保存的晨报按当前规则重选一次并写审计；晨报3小时准备宽限期跨过北京时间零点时仍按当期计算；迁移30修复0029丢掉的读者范围来源状态；事件重要性SQL和晨报流程新增数据库契约；焦点环改为不透明并不低于3:1；分享图降低高度上限以适应iOS画布，修正手机上的按钮布局、生成期间的键盘焦点和系统分享失败提示；登录页和隐私页不再提已移除的分享草稿，隐私页新增“每日分享图”一节。规则见 [架构说明](ARCHITECTURE.md)，测试见 [测试指南第16节](TESTING.md#16-r12-晨报按新规则重选焦点可见性与分享图设备验证2026-09-24)。
+
+本轮记录168项源码/上下文哈希，清单SHA-256以 `0295afd2` 开头：较r11新增1项、修改17项、无删除。web以外是 `services\api\src` 下的 `edition.rs`、`postgres_store.rs`、`store.rs` 和新增的 `0030_reader_source_status.sql`；Gateway和cloud-host未改。记录时复核168项输入与构建时一致。
+
+**迁移30**：只在 `reader_editorial_features` 里重新套用0025的读者范围来源状态表达式，不改表结构和数据。滚动前确认PITR可用（保留7天，最早恢复点为9月20日21:04 +08），滚动前的恢复点为18:20:51 +08。API在监听前执行内嵌迁移，失败就不会监听；18:22:43的启动日志显示已监听，据此推断云端已为30，没有现场读取 `_sqlx_migrations`。回退限制见第8节。
+
+**今天这一期按新规则重选**：9月24日6点的晨报由r10选出。r12启动后的第一次调度检查了两期当天已保存的晨报，都按 `editorial-significance-v1-ranked-v1` 重选：18:22:48全局晨报14条，18:22:52唯一受邀读者的晨报13条；日志中没有重选失败、调度失败或错误。原选文保存在 `admin_audits`（`edition_reselect`），往期晨报不变。r11记录中“新规则从9月25日6点那一期开始生效”的说法由此不再成立。重选结果以日志为准，没有登录查看页面，也没有现场读取审计行。
+
+**18:26前门与18:27复查：**
+
+| 项目 | 结果 |
+| --- | --- |
+| 健康、登录页、匿名私有session | 200 / 200 / 401；`no-referrer`；HTML `no-store`；未知路径由宿主回落到应用（200） |
+| `/share`、匿名 `/api/v1/briefs/latest` | 200 / 401 |
+| 入口脚本 `/assets/index-CAyAB5W2.js` | 与本机构建一致；原始529,704字节；br 136,014、gzip 160,373；`public, max-age=31536000, immutable` |
+| 样式 `/assets/index-BTWQCIf9.css` | 与本机构建一致；原始44,730字节；br 7,473、gzip 8,428 |
+| 启动顺序 | 18:22:39 Gateway与宿主启动；18:22:43 API开始监听；18:22:48、18:22:52两次晨报检查 |
+
+**冷启动**（本机、匿名登录页、1440px、3次）：第0次TTFB/FCP/应用绘制为3626/4532/4624ms，其后FCP为1392、1268ms，应用绘制为1709、1698ms，传输约142KB，与r11相当。
+
+日常本地实例保持停止，本轮没有启动、停止或迁移它，本地数据仍为schema27。
+
+交接为 `tmp\azure-preview-20260920\release-r12-20260924.json`、更新后的 `release-status.json`（r11快照另存为 `release-status-r11-20260924.json`）与 `runtime-parameters-r12.json`；部署证据位于 `tmp\r12-deploy`。
+
+### 2026-09-24：r11记录（历史）
+
+**r11当日部署为Ready `newsscout--0000008`，现已由r12替代。** ACR `ckc` 于14:17:30–14:26:25（+08）成功，唯一tag为 `preview-20260924-r11-476dc152`，镜像为 `<ACR>/newsscout@sha256:9b106c8585dbe5107be4fcfbe02d6eccc8e8b04fa2591e98c9909771ab947cb1`。14:31:48确认r10副本归零，14:32:50新revision Ready，14:33:44完成Single/min=max=1交接；其间约62秒无可用副本，没有并行两个Worker。16项环境变量名、7项secret、AuthConfig、唯一批准身份、0条IP规则、Terra/low/5000及资源规格保持。前后配置对比只有revision名称、revision FQDN、image、`SCOUTNEWS_RELEASE_ID` 与 `lastModifiedAt` 不同；资源tag与私有参数已同步为 `preview-20260924-r11`。
 
 本轮内容：精选按事件重要性和价值重新排序，并加入来源、版块和同一模型版本的配额；晨报在北京时间6点固定为一期，下一期之前直接返回保存的快照；分享改为一键下载当天约10条新闻的图片；修复Anthropic News解析。规则见 [架构说明](ARCHITECTURE.md)，测试见 [测试指南第15节](TESTING.md#15-r11-精选价值排序固定晨报与每日分享图2026-09-24)。
 
@@ -609,6 +637,8 @@ Blob导出是短期副本，不是灾备。托管备份不包含本机keyring、
 **r8迁移的额外边界：** `0028_reader_publication_candidates.sql` 只新增发布时间部分索引，但“DDL是增量的”不等于旧程序能重新启动。当前锁定SQLx 0.8.6，默认迁移校验会拒绝数据库中已应用、旧镜像却未内嵌的版本。因此一旦28实际应用，不能直接重新激活只含1–27的r7镜像作为可用回退；应修复前进，或另行批准恢复到兼容的新数据库。不得删除 `_sqlx_migrations` 记录、修改旧SQL校验和或关闭迁移校验来绕过此边界。实际已应用版本须现场读取，不能从候选构建推断。
 
 **r11迁移29的边界：** `0029_editorial_significance.sql` 新增 `news_editorial_significance`，并以原签名替换 `reader_editorial_features` 与 `reader_editorial_recommendations_for_profile`，不改表结构和数据。同一SQLx校验规则下，29一旦应用，只含1–28的r10镜像不能作为可用回退。发布记录按启动顺序推断云端已为29（API在监听前执行迁移），没有现场读取；做回退决策前须先读取。常规做法是修复前进，或经批准把滚动前的恢复点（2026-09-24 14:16:06 +08）恢复到新服务器。`tmp\brief-r11\rollback-0029.sql` 会恢复旧函数并删除迁移记录第29行，与上面的规则冲突，只作为需要明确批准的应急材料；它只在隔离评估副本的事务内执行过并已整体回滚。
+
+**r12迁移30的边界：** `0030_reader_source_status.sql` 只在 `reader_editorial_features` 里重新套用0025的读者范围来源状态表达式，不改表结构和数据。同一SQLx校验规则下，30一旦应用，只含1–29的r11镜像不能作为可用回退。发布记录按启动顺序推断云端已为30，没有现场读取；做回退决策前须先读取。常规做法是修复前进，或经批准把滚动前的恢复点（2026-09-24 18:20:51 +08）恢复到新服务器。r12 还会在规则版本变化后重选当天已保存的晨报：原选文完整保存在 `admin_audits`（`edition_reselect` 的 `before_value`），可据此核对；据此改回当天那一期属于数据写入，须另行批准，没有准备现成脚本。
 
 1. 先核对并保存当前完整私有参数、活动revision、digest和真实副本数。需要另行封闭入口时，只用当前digest修改应用级ingress，不提前启动新镜像；封入口本身不停止后台调度。已验证的维护切换接受旧副本停止后的短暂不可用，不承诺零停机。
 2. 在获准维护窗临时改为Multiple，以便停用当前revision；随后必须确认全部旧副本/Worker归零，才可启动下一版。Multiple仅是维护过渡，不允许新旧Worker并行、分流或加副本；无法确认停旧即结束本次更新。

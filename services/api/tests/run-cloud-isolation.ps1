@@ -32,6 +32,7 @@ try {
     $env:SCOUTNEWS_E2E_DATABASE_URL = $env:SCOUTNEWS_DIRECTORY_TEST_DATABASE_URL
     & (Join-Path $root 'scripts\rust.ps1') -CargoArgs @('test','source_directory_database_contract','--','--ignored','--nocapture')
     & (Join-Path $root 'scripts\rust.ps1') -CargoArgs @('test','morning_database_contract','--','--ignored','--nocapture')
+    & (Join-Path $root 'scripts\rust.ps1') -CargoArgs @('test','daily_selection_','--','--ignored','--nocapture','--test-threads=1')
 } finally {
     Remove-Item Env:\SCOUTNEWS_CLOUD_TEST_DATABASE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:\SCOUTNEWS_DIRECTORY_TEST_DATABASE_URL -ErrorAction SilentlyContinue

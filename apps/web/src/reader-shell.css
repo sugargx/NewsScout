@@ -1,7 +1,7 @@
 :root { scrollbar-gutter: stable; }
 .ns-reader-shell { min-height: 100dvh; background: var(--cp-bg); color: var(--cp-text); font-size: 14px; }
 .ns-reader-shell *, .ns-reader-shell *::before, .ns-reader-shell *::after { box-sizing: border-box; }
-.ns-reader-shell :is(button, input, select, textarea):focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-reader-shell :is(button, input, select, textarea):focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 
 /* Sidebar — CoDesign `.sidebar` (176px, #e9ede7, right border). */
 .ns-reader-sidebar {

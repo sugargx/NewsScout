@@ -245,6 +245,20 @@ test("cloud daily share downloads a local image, publishes nothing and keeps leg
   await expect(earlier).not.toBeChecked();
   await screenshot(page, info, "daily-share-ai-first");
 
+  // Fluent draws its own focus border and inset shadow; only the shared ring may show (r12 review).
+  for (const name of ["复制文字版", "下载分享图"]) {
+    const button = page.getByRole("button", { name, exact: true });
+    const edge = () => button.evaluate(element => { const style = getComputedStyle(element);
+      return { border: style.borderTopColor, radius: style.borderTopLeftRadius, shadow: style.boxShadow }; });
+    const rest = await edge();
+    await button.focus(); await page.keyboard.press("Tab"); await page.keyboard.press("Shift+Tab");
+    await expect(button).toBeFocused();
+    expect(await button.evaluate(element => element.hasAttribute("data-fui-focus-visible"))).toBe(true);
+    expect(await edge(), name).toEqual({ ...rest, shadow: "none" });
+    expect(await button.evaluate(element => { const style = getComputedStyle(element);
+      return `${style.outlineStyle} ${style.outlineWidth} ${style.outlineOffset}`; }), name).toBe("solid 3px 2px");
+  }
+
   const downloading = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载分享图", exact: true }).click();
   const download = await downloading;

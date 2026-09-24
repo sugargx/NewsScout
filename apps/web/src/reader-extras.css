@@ -62,7 +62,7 @@
 .ns-library-item { width: 100%; margin: 0; padding: var(--cp-row-padding) 0; border: 0; border-bottom: 1px solid var(--cp-border); border-radius: 0; background: none; color: var(--cp-text); font: inherit; text-align: left; cursor: pointer; }
 .ns-library-item[aria-pressed=true] { padding-inline: 14px; background: var(--cp-accent-soft); box-shadow: inset 3px 0 var(--cp-accent); }
 .ns-library-item:hover strong { color: var(--cp-accent); }
-.ns-library-item:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: -3px; }
+.ns-library-item:focus-visible { outline: var(--cp-focus-ring); outline-offset: -3px; }
 .ns-library-item strong { display: block; margin-bottom: 6px; font: 600 18px/1.45 var(--cp-font-display); }
 .ns-library-item span { display: block; margin-top: 4px; color: var(--cp-text-muted); font-size: 11px; line-height: 1.7; }
 .ns-library-list>.ns-reader-button { margin: 16px auto 0; display: flex; }

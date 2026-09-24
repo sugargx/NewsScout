@@ -53,7 +53,7 @@ function SignInPage() {
       <div className="ns-auth-wordmark">NewsScout <span>邀请测试版</span></div>
       <h1 id="sign-in-title" ref={heading} tabIndex={-1}>把值得读的新闻，留在你的阅读空间。</h1>
       <p>受邀账号登录后可浏览新闻、设置兴趣、管理来源与采集，也可以整理和分享阅读发现。</p>
-      <p className="ns-auth-detail">收藏、兴趣主题和分享草稿随账号保存，不与其他用户混用。</p>
+      <p className="ns-auth-detail">收藏、兴趣主题和阅读记录随账号保存，不与其他用户混用；每日分享图只在你的浏览器中生成。</p>
       <a className="ns-auth-login" href={`/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnTo)}`}>使用 Microsoft 账户登录</a>
       <p className="ns-auth-detail">支持工作、学校及个人 Microsoft 账户；组织账户可能需要管理员许可。</p>
       <Link to="/privacy">数据与隐私说明</Link>
@@ -330,7 +330,9 @@ export function PrivacyPage() {
     <h1>数据与隐私</h1>
     <p>这是供受邀用户体验和反馈的测试环境，不承诺生产级持续可用性。请勿输入敏感、保密内容或第三方凭据。</p>
     <h2>随账号保存的内容</h2>
-    <p>登录身份标识、显示名称、兴趣主题、收藏、阅读记录、个人来源设置和分享草稿用于提供服务。其他用户不能读取或修改你的这些数据。只有主动发布的分享内容可通过分享链接访问；你可以撤回分享。</p>
+    <p>登录身份标识、显示名称、兴趣主题、收藏、阅读记录和个人来源设置用于提供服务；旧版分享草稿也随账号保存。其他用户不能读取或修改你的这些数据。</p>
+    <h2>每日分享图</h2>
+    <p>分享图在你的浏览器中生成，不上传到服务，也不创建公开链接；排序偏好只保存在当前浏览器。旧版主动发布的分享仍可通过其链接访问，你可以在“今日分享”页撤回。</p>
     <h2>运行与安全日志</h2>
     <p>服务记录请求结果、耗时、采集任务状态和必要的安全事件，用于排错与防止滥用。不把密码、令牌、搜索内容或新闻正文写入 telemetry。</p>
     <h2>可选择的使用统计</h2>

@@ -3,7 +3,7 @@
 .ns-admin-page *, .ns-admin-page *::before, .ns-admin-page *::after { box-sizing: border-box; }
 .ns-back-link { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 14px; color: var(--cp-text-muted); font-size: 12px; font-weight: 650; text-decoration: none; }
 .ns-back-link:hover { color: var(--cp-accent); }
-.ns-back-link:focus-visible, .ns-text-link:focus-visible, .ns-link-button:focus-visible, .ns-line-item a:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; border-radius: 2px; }
+.ns-back-link:focus-visible, .ns-text-link:focus-visible, .ns-link-button:focus-visible, .ns-line-item a:focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; border-radius: 2px; }
 
 .ns-panel { margin: 0 0 14px; padding: 20px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-surface); background: var(--cp-surface); }
 .ns-panel h2 { margin: 0 0 8px; color: var(--cp-text); font: 600 20px/1.3 var(--cp-font-display); }
@@ -49,7 +49,7 @@
 .ns-source-filters { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; margin: 0 0 10px; padding: 11px; border-radius: var(--cp-radius-surface); background: var(--cp-control-well); }
 .ns-source-filters-4 { grid-template-columns: 2fr repeat(3, minmax(0, 1fr)); }
 .ns-source-filters :is(input, select) { width: 100%; min-width: 0; min-height: 38px; padding: 8px 10px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-control); background: var(--cp-raised); color: var(--cp-text); }
-.ns-source-filters :is(input, select):focus-visible, .ns-source-interval input:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-source-filters :is(input, select):focus-visible, .ns-source-interval input:focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-source-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; min-height: 34px; margin: 0 0 12px; }
 .ns-source-summary p { margin: 0; color: var(--cp-text-muted); font-size: 12px; }
 .ns-source-list, .ns-line-list { display: grid; gap: 9px; }
@@ -69,7 +69,7 @@
 .ns-source-invalid { color: var(--cp-danger); font-size: 12px; }
 .ns-source-disclosure { margin-top: 12px; color: var(--cp-text-muted); font-size: 13px; }
 .ns-source-disclosure>summary { width: fit-content; color: var(--cp-accent); font-weight: 650; cursor: pointer; }
-.ns-source-disclosure>summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-source-disclosure>summary:focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-source-disclosure>p { margin: 8px 0 12px; line-height: 1.7; }
 .ns-add-source .ns-form-grid { margin-top: 14px; }
 .ns-add-source .ns-save-row { margin-top: 14px; }

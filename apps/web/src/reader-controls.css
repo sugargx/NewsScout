@@ -38,7 +38,14 @@
 .ns-reader-button.ns-reader-button[aria-disabled=true] { cursor: default; }
 .ns-reader-button.ns-reader-button[aria-busy=true] { cursor: default; box-shadow: inset 0 -2px 0 var(--cp-accent); }
 .ns-reader-button.ns-reader-button[aria-pressed=true] { color: var(--cp-accent); background: var(--cp-accent-soft); }
-.ns-reader-button.ns-reader-button:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-reader-button.ns-reader-button:focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
+/* Fluent adds its own focus border, radius and inset shadow under [data-fui-focus-visible]; keep only the shared ring. */
+.ns-reader-button.ns-reader-button[data-fui-focus-visible] { border-radius: var(--ns-control-radius); }
+.ns-reader-button.ns-reader-button[data-variant=secondary][data-fui-focus-visible] { border-color: var(--cp-border); }
+.ns-reader-button.ns-reader-button:not([aria-busy=true])[data-fui-focus-visible] { box-shadow: none; }
+.ns-reader-button.ns-reader-button[aria-busy=true][data-fui-focus-visible] { box-shadow: inset 0 -2px 0 var(--cp-accent); }
+:is(.ns-reader-shell, .ns-beta) .fui-Button:not(.ns-reader-button)[data-fui-focus-visible] { border-color: transparent; }
+:is(.ns-reader-shell, .ns-beta) .fui-Button:not(.ns-reader-button):not([aria-busy=true])[data-fui-focus-visible] { box-shadow: none; }
 .ns-reader-button.ns-reader-button .fui-Button__icon { width: 16px; height: 16px; margin: 0; font-size: 16px; }
 .ns-reader-button.ns-reader-button>svg { flex: 0 0 14px; width: 14px; height: 14px; }
 .ns-reader-button.ns-icon-button.ns-icon-button { width: var(--ns-control-height); min-width: var(--ns-control-height); max-width: var(--ns-control-height); height: var(--ns-control-height); padding: 0; }
@@ -59,7 +66,7 @@
 .ns-toggle.is-on { background: var(--cp-accent); }
 .ns-toggle.is-on>span { transform: translateX(16px); }
 .ns-toggle:disabled { cursor: not-allowed; opacity: .55; }
-.ns-toggle:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-toggle:focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-toggle-line { display: inline-flex; align-items: center; gap: 8px; }
 
 /* Fields · CoDesign .field / .add-topic label */
@@ -71,7 +78,7 @@
 .ns-field input:disabled, .ns-field select:disabled, .ns-field textarea:disabled { background: var(--cp-control-well); color: var(--cp-text-muted); cursor: not-allowed; }
 .ns-field.has-error input, .ns-field.has-error select, .ns-field.has-error textarea { border-color: var(--cp-danger); }
 .ns-field-error { color: var(--cp-danger); font-size: 12px; line-height: 1.5; }
-.ns-reader-shell .ns-field :is(input, select, textarea):focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-reader-shell .ns-field :is(input, select, textarea):focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 
 /* Interest weights · CoDesign .weight-list / .weight-row */
 .ns-weight-list { display: grid; gap: 9px; }
@@ -112,7 +119,7 @@
 .ns-reader-shell .ns-reader-tabs [role=tab][aria-selected=true] { border-bottom-color: var(--cp-accent); background: none; color: var(--cp-text); }
 .ns-reader-shell .ns-reader-tabs [role=tab] .fui-Tab__content { padding: 0; font-weight: 400; }
 .ns-reader-shell .ns-reader-tabs [role=tab][aria-selected=true] .fui-Tab__content { font-weight: 700; }
-.ns-reader-shell .ns-reader-tabs [role=tab][data-fui-focus-visible] { box-shadow: none; outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-reader-shell .ns-reader-tabs [role=tab][data-fui-focus-visible] { box-shadow: none; outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-reader-tab-panel { min-width: 0; padding-top: 16px; }
 
 /* Reader position, problems and queue start */

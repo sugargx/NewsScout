@@ -21,6 +21,7 @@ fn fixture_id(kind: &str, ordinal: i32) -> Uuid {
         "content" => 0x52_u128,
         "release-event" => 0x53_u128,
         "release-content" => 0x54_u128,
+        "publisher" => 0x55_u128,
         _ => unreachable!("unknown performance fixture kind"),
     };
     Uuid::from_u128((namespace << 120) | ordinal as u128)
@@ -106,7 +107,27 @@ async fn seed(pool: &PgPool) -> Result<()> {
 }
 
 async fn seed_release_family(pool: &PgPool, releases: &[(i32, &str, &str)]) -> Result<()> {
-    let source = fixture_id("source", 1);
+    // The vendor's own release feed is first-party material. editorial-significance-v1
+    // correctly keeps an unclassified source's patch release out of the daily brief.
+    let publisher = fixture_id("publisher", 1);
+    sqlx::query(
+        "INSERT INTO publishers(id,name,entity_type) VALUES($1,'PERF_R8_RELEASE_VENDOR','company')
+         ON CONFLICT(id) DO NOTHING",
+    )
+    .bind(publisher)
+    .execute(pool)
+    .await?;
+    let source = fixture_id("source", 2);
+    sqlx::query(
+        "INSERT INTO sources(id,publisher_id,name,endpoint,content_type,adapter_type,tier,lifecycle_status,last_success_at)
+         VALUES($1,$2,'PERF_R8_RELEASES',$3,'release','rss','T1','stable',now())
+         ON CONFLICT(id) DO NOTHING",
+    )
+    .bind(source)
+    .bind(publisher)
+    .bind(format!("https://perf.scoutnews.test/{source}/releases.atom"))
+    .execute(pool)
+    .await?;
     for &(ordinal, target, version) in releases {
         let event = fixture_id("release-event", ordinal);
         let content = fixture_id("release-content", ordinal);
@@ -160,6 +181,7 @@ async fn seed_release_family(pool: &PgPool, releases: &[(i32, &str, &str)]) -> R
 
 async fn verify_coverage_context(
     pool: &PgPool,
+    a_id: Uuid,
     a_store: &PostgresStore,
     b_store: &PostgresStore,
 ) -> Result<()> {
@@ -200,7 +222,20 @@ async fn verify_coverage_context(
             assert!(coverage.members.iter().any(|member| member.event_id == hidden_id));
         }
         if kind == "release-event" {
+            // Saved editions are fixed, and reader A saved one earlier in this contract.
+            // Check the live selection a new edition would save from current material.
+            sqlx::query(
+                "DELETE FROM daily_brief_items WHERE brief_id IN(SELECT id FROM daily_briefs WHERE owner_user_id=$1)",
+            )
+            .bind(a_id.to_string())
+            .execute(pool)
+            .await?;
+            sqlx::query("DELETE FROM daily_briefs WHERE owner_user_id=$1")
+                .bind(a_id.to_string())
+                .execute(pool)
+                .await?;
             let brief = a_store.latest_brief().await?;
+            assert!(!brief.is_snapshot);
             let visible = brief.items.iter().find(|event| event.id == visible_id)
                 .context("eligible release seed must appear in the private brief")?;
             if visible.coverage.as_ref().is_some_and(|coverage| {
@@ -638,6 +673,6 @@ pub(super) async fn verify_reader_performance(pool: &PgPool, a: &Reader, b: &Rea
         rank300_execution_ms={rank300_execution_ms:.3}"
     );
     eprintln!("PERF_R8 stage=coverage-context-regressions");
-    verify_coverage_context(pool, &a_store, &b_store).await?;
+    verify_coverage_context(pool, a.id, &a_store, &b_store).await?;
     Ok(())
 }

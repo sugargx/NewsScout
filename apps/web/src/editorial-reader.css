@@ -55,7 +55,7 @@
 .ns-reader-shell .ns-view-switch [role=tab] .fui-Tab__icon { width: 16px; height: 16px; font-size: 16px; color: inherit; }
 .ns-filters { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; margin-bottom: 18px; padding: 11px; border-radius: var(--cp-radius-surface); background: var(--cp-control-well); }
 .ns-filters>label { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 10px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-control); background: var(--cp-raised); color: var(--cp-text-muted); }
-.ns-filters>label:focus-within { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-filters>label:focus-within { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-filters input, .ns-filters select { width: 100%; min-width: 0; height: 38px; padding: 0 10px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-control); background: var(--cp-raised); color: var(--cp-text); }
 .ns-filters>label input { padding: 0; border: 0; outline: 0; background: transparent; }
 .ns-reader-shell .ns-filters>label input:focus-visible { outline: 0; }
@@ -151,7 +151,9 @@
 .ns-beta .ns-section-heading { margin-top: 24px; }
 .ns-beta .ns-workspace-heading { margin-top: 0; }
 
-.ns-reader-shell :is(details>summary, .ns-weekly-outline button, .ns-fresh, .ns-latest-entry, .ns-segmented>button, .ns-filter-chip, .ns-button-link):focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-reader-shell :is(details>summary, .ns-weekly-outline button, .ns-fresh, .ns-latest-entry, .ns-filter-chip, .ns-button-link):focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
+/* Segments sit edge to edge inside a 3px well, so their ring is drawn inside the button instead of over the neighbour. */
+.ns-reader-shell .ns-segmented>button:focus-visible { outline: var(--cp-focus-ring); outline-offset: -3px; }
 
 @media (max-width: 1024px) {
   .ns-selection-overview { grid-template-columns: minmax(0, 1fr); gap: 20px; }
@@ -164,9 +166,9 @@
   .ns-page-head-actions>* { flex: 1 1 auto; }
   .ns-task-row { flex-direction: column; align-items: stretch; }
   .ns-segmented { display: flex; }
-  .ns-segmented>button { flex: 1; justify-content: center; min-height: 40px; }
+  .ns-segmented>button { flex: 1; justify-content: center; min-height: var(--ns-control-height); }
   .ns-reader-shell .ns-view-switch .ns-reader-tabs { width: 100%; }
-  .ns-reader-shell .ns-view-switch [role=tab] { flex: 1; justify-content: center; min-height: 40px; }
+  .ns-reader-shell .ns-view-switch [role=tab] { flex: 1; justify-content: center; min-height: var(--ns-control-height); }
   .ns-filters, .ns-reading-controls { grid-template-columns: 1fr; }
   .ns-filters input, .ns-filters select { height: 44px; }
   .ns-filters>label input { height: 42px; }

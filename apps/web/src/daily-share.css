@@ -17,13 +17,13 @@
 .ns-share-preview-head, .ns-share-picker-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
 .ns-share-col-title { margin: 0; color: var(--cp-text); font: 600 18px var(--cp-font-display); }
 .ns-share-col-title:focus { outline: none; }
-.ns-share-col-title:focus-visible { border-radius: 4px; outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-share-col-title:focus-visible { border-radius: 4px; outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-share-preview-head span, .ns-share-picker-head span { color: var(--cp-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .ns-share-reset, .ns-share-open { margin-left: auto; padding: 4px 2px; border: 0; background: none; color: var(--cp-link, var(--cp-accent)); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 /* The preview is always the light image, so its fade uses the image's own background in both themes. */
 .ns-share-frame-wrap { --ns-share-image-bg: #fcfcf9; position: relative; min-width: 0; }
 .ns-share-frame { max-height: min(72vh, 900px); overflow: auto; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-surface); background: var(--cp-bg-elevated); overscroll-behavior: contain; }
-.ns-share-frame:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-share-frame:focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-share-frame img { display: block; width: 100%; height: auto; }
 .ns-share-frame-wrap[data-more]::after { content: ""; position: absolute; right: 1px; bottom: 1px; left: 1px; height: 88px; border-radius: 0 0 var(--cp-radius-surface) var(--cp-radius-surface); background: linear-gradient(to bottom, color-mix(in srgb, var(--ns-share-image-bg) 0%, transparent), var(--ns-share-image-bg) 82%); pointer-events: none; }
 .ns-share-scroll-hint { position: absolute; bottom: 14px; left: 50%; z-index: 1; margin: 0; padding: 4px 12px; border: 1px solid var(--cp-border); border-radius: 999px; background: var(--cp-raised); color: var(--cp-text-soft); font-size: 12px; line-height: 1.6; white-space: nowrap; transform: translateX(-50%); pointer-events: none; }
@@ -42,7 +42,7 @@ html[data-theme="dark"] .ns-share-options li.is-selected label { border-color: v
 .ns-share-options label:hover { border-color: var(--cp-border-strong); }
 .ns-share-options label:has(input:disabled) { cursor: not-allowed; }
 .ns-share-options label:has(input:disabled)>span { opacity: .55; }
-.ns-share-options label:has(input:focus-visible) { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-share-options label:has(input:focus-visible) { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-share-options input { width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--cp-accent); }
 .ns-share-options input:focus-visible { outline: none; }
 .ns-share-position { min-width: 24px; color: var(--cp-accent); font: 700 13px/1.6 var(--cp-font-body); font-variant-numeric: tabular-nums; }
@@ -74,7 +74,8 @@ html[data-theme="dark"] .ns-share-options li.is-selected label { border-color: v
   .ns-share-toolbar { padding: 12px; }
   .ns-share-order, .ns-share-actions { width: 100%; }
   .ns-share-order .ns-segmented { flex: 1 1 100%; }
-  .ns-share-actions { margin-left: 0; }
-  .ns-share-actions>* { flex: 1 1 0; }
+  /* Two equal columns keep every label on one line; with system sharing, the primary 分享图片 takes the full row below. */
+  .ns-share-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 0; }
+  .ns-share-actions>:nth-child(3) { grid-column: 1 / -1; }
   .ns-share-options label { padding: 12px; }
 }

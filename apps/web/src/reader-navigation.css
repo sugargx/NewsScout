@@ -19,7 +19,7 @@
   cursor: pointer;
 }
 .ns-reader-nav-item:hover, .ns-reader-nav-item.is-active { background: var(--cp-surface); color: var(--cp-accent); }
-.ns-reader-nav-item:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-reader-nav-item:focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-reader-nav-icon { display: inline-flex; flex: 0 0 18px; font-size: 18px; }
 .ns-reader-nav-icon svg { width: 18px; height: 18px; }
 .ns-reader-nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

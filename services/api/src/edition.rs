@@ -105,6 +105,17 @@ pub(crate) fn edition_refresh_at(settings: &ReaderSettings, edition: NaiveDate) 
 /// How long readers keep the previous edition while this morning's run finishes.
 pub(crate) const EDITION_GRACE_HOURS: i64 = 3;
 
+/// Whether `now` falls inside `edition`'s grace window. Measured from the slot
+/// itself so a late-evening edition hour keeps its full grace past midnight.
+pub(crate) fn within_grace(
+    settings: &ReaderSettings,
+    edition: NaiveDate,
+    now: DateTime<Utc>,
+) -> bool {
+    let start = slot(edition, settings.hour);
+    settings.mode == "daily" && now >= start && now < start + Duration::hours(EDITION_GRACE_HOURS)
+}
+
 pub fn next_slot(
     settings: &ReaderSettings,
     configured_at: DateTime<Utc>,
@@ -381,7 +392,18 @@ impl EditionStore {
                 }
             }
         }
-        self.finalize(state, date).await
+        self.finalize(state, date).await?;
+        reselect_after_rule_change(state, date).await;
+        Ok(())
+    }
+}
+
+/// A saved edition stays fixed, except that today's edition is re-selected once
+/// when the selection rule changes. Failure keeps the saved edition and must not
+/// stall collection or the other readers' editions.
+async fn reselect_after_rule_change(state: &AppState, date: NaiveDate) {
+    if state.store.reselect_outdated_brief(date).await.is_err() {
+        tracing::warn!("edition reselection failed; the saved edition is kept");
     }
 }
 
@@ -497,6 +519,7 @@ pub(crate) async fn archive_cloud_readers(state: &AppState, now: DateTime<Utc>) 
         // Reuse the existing readiness gate and immutable snapshot contract,
         // but with this reader's recommendations, feedback and visible jobs.
         edition.finalize(&reader, date).await?;
+        reselect_after_rule_change(&reader, date).await;
     }
     Ok(())
 }
@@ -570,6 +593,644 @@ mod tests {
         let mut empty = brief.clone();
         empty.items.clear();
         assert!(!ready_for_snapshot(&empty, 0, 0, 20));
+    }
+
+    #[test]
+    fn grace_lasts_three_hours_from_the_slot_even_across_midnight() {
+        let morning = ReaderSettings::default();
+        let date = NaiveDate::from_ymd_opt(2026, 9, 24).unwrap();
+        let start = slot(date, 6);
+        assert_eq!(start.to_rfc3339(), "2026-09-23T22:00:00+00:00");
+        assert!(!within_grace(&morning, date, start - Duration::seconds(1)));
+        assert!(within_grace(&morning, date, start));
+        assert!(within_grace(
+            &morning,
+            date,
+            start + Duration::hours(EDITION_GRACE_HOURS) - Duration::seconds(1)
+        ));
+        assert!(!within_grace(
+            &morning,
+            date,
+            start + Duration::hours(EDITION_GRACE_HOURS)
+        ));
+        // Yesterday's edition is never "preparing" once today's slot has passed.
+        assert!(!within_grace(&morning, date.pred_opt().unwrap(), start));
+
+        let late = ReaderSettings {
+            hour: 23,
+            ..ReaderSettings::default()
+        };
+        let after_midnight = slot(date, 23) + Duration::hours(2);
+        assert_eq!(reader::local_date(after_midnight).to_string(), "2026-09-25");
+        assert_eq!(edition_date(&late, after_midnight), date);
+        assert!(within_grace(&late, date, after_midnight));
+        assert!(!within_grace(
+            &late,
+            date,
+            slot(date, 23) + Duration::hours(EDITION_GRACE_HOURS)
+        ));
+
+        let interval = ReaderSettings {
+            mode: "interval".into(),
+            ..ReaderSettings::default()
+        };
+        assert!(!within_grace(&interval, date, start));
+    }
+
+    const FIXTURE_BODY: &str = "Fixture material describing a bounded platform update with measured latency and throughput results. Fixture material describing a bounded platform update with measured latency and throughput results. Fixture material describing a bounded platform update with measured latency and throughput results.";
+
+    async fn isolated_pool() -> Result<sqlx::PgPool> {
+        let connection = std::env::var("SCOUTNEWS_E2E_DATABASE_URL")?;
+        let url = url::Url::parse(&connection)?;
+        ensure_isolated_database(&url, url.path().trim_start_matches('/'))?;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&connection)
+            .await?;
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        Ok(pool)
+    }
+
+    async fn fixture_source(
+        pool: &sqlx::PgPool,
+        entity: &str,
+        lifecycle: &str,
+    ) -> Result<uuid::Uuid> {
+        let (publisher, source) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        sqlx::query("INSERT INTO publishers(id,name,entity_type) VALUES($1,$2,$3)")
+            .bind(publisher)
+            .bind(format!("Selection fixture {publisher}"))
+            .bind(entity)
+            .execute(pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO sources(id,publisher_id,name,endpoint,content_type,adapter_type,tier,lifecycle_status,last_success_at)
+             VALUES($1,$2,$3,$4,'blog','rss','T1',$5,now())",
+        )
+        .bind(source)
+        .bind(publisher)
+        .bind(format!("Selection fixture {source}"))
+        .bind(format!("https://selection.scoutnews.test/{source}/feed"))
+        .bind(lifecycle)
+        .execute(pool)
+        .await?;
+        Ok(source)
+    }
+
+    /// One summarised event with one evidence item per given source.
+    async fn fixture_event(
+        pool: &sqlx::PgPool,
+        title: &str,
+        topic: &str,
+        published: DateTime<Utc>,
+        sources: &[uuid::Uuid],
+    ) -> Result<uuid::Uuid> {
+        let event = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO events(id,canonical_title,summary,importance,primary_topic,event_type,
+                first_seen_at,updated_at,summary_kind,summary_model,summary_format_version,
+                content_version,summary_points,summarized_at)
+             VALUES($1,$2,$3,'Fixture importance',$4,'blog',$5,now(),'copilot','gpt-5.6-terra',3,1,$6,now())",
+        )
+        .bind(event)
+        .bind(title)
+        .bind(format!("{title}: bounded fixture summary."))
+        .bind(topic)
+        .bind(published)
+        .bind(serde_json::json!([format!("{title}: fixture point")]))
+        .execute(pool)
+        .await?;
+        for source in sources {
+            let content = uuid::Uuid::new_v4();
+            let url = format!("https://selection.scoutnews.test/{source}/{event}");
+            sqlx::query(
+                "INSERT INTO content_items(id,source_id,content_type,original_url,canonical_url,title,
+                    content_hash,published_at,metadata)
+                 VALUES($1,$2,'blog',$3,$3,$4,$5,$6,$7)",
+            )
+            .bind(content)
+            .bind(source)
+            .bind(&url)
+            .bind(title)
+            .bind(content.to_string())
+            .bind(published)
+            .bind(serde_json::json!({
+                "feedSummary": FIXTURE_BODY,
+                "sourceMetadata": {"datePrecision": "time"}
+            }))
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "INSERT INTO event_evidence(event_id,content_item_id,is_official) VALUES($1,$2,true)",
+            )
+            .bind(event)
+            .bind(content)
+            .execute(pool)
+            .await?;
+        }
+        Ok(event)
+    }
+
+    /// Fixtures stay referenced by saved editions, so retire them instead of deleting.
+    async fn retire_fixture(
+        pool: &sqlx::PgPool,
+        events: &[uuid::Uuid],
+        sources: &[uuid::Uuid],
+    ) -> Result<()> {
+        sqlx::query("UPDATE events SET status='withdrawn' WHERE id=ANY($1)")
+            .bind(events)
+            .execute(pool)
+            .await?;
+        sqlx::query("UPDATE sources SET lifecycle_status='paused' WHERE id=ANY($1)")
+            .bind(sources)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the isolated E2E database; never uses personal data or Copilot"]
+    async fn daily_selection_significance_contract() -> Result<()> {
+        let pool = isolated_pool().await?;
+        // Exact scores pin the documented editorial-significance-v1 rubric, listed
+        // from most to least significant.
+        let cases: [(&str, &str, Option<&str>, i64, &str); 12] = [
+            (
+                "Introducing Claude Opus 5.5",
+                "release",
+                Some("company"),
+                95,
+                "first_party",
+            ),
+            (
+                "阿里发布 Qwen 3.5",
+                "news",
+                Some("company"),
+                80,
+                "first_party",
+            ),
+            (
+                "Changelog: API improvements",
+                "release",
+                Some("company"),
+                70,
+                "first_party",
+            ),
+            (
+                "Anthropic launches Claude Opus 5.5",
+                "news",
+                Some("publication"),
+                65,
+                "editorial",
+            ),
+            (
+                "Startup launches a new enterprise dashboard",
+                "news",
+                Some("publication"),
+                55,
+                "editorial",
+            ),
+            ("Foo 2.0", "release", Some("project"), 55, "project"),
+            (
+                "Jane Doe joins Anthropic as head of research",
+                "news",
+                Some("publication"),
+                45,
+                "editorial",
+            ),
+            ("Weekly notes", "news", None, 45, "unknown"),
+            (
+                "Claude Opus 5.5 feels much better at coding",
+                "discussion",
+                Some("community"),
+                42,
+                "community",
+            ),
+            (
+                "A survey of retrieval methods",
+                "research",
+                Some("index"),
+                35,
+                "index",
+            ),
+            (
+                "llama.cpp v1.2.3",
+                "release",
+                Some("project"),
+                30,
+                "project",
+            ),
+            (
+                "Foo 2.1.0-beta.1",
+                "release",
+                Some("project"),
+                30,
+                "project",
+            ),
+        ];
+        let mut previous = i64::MAX;
+        let mut basis = std::collections::HashMap::new();
+        for (title, kind, entity, score, role) in cases {
+            let value: serde_json::Value =
+                sqlx::query_scalar("SELECT news_editorial_significance($1,$2,$3)")
+                    .bind(title)
+                    .bind(kind)
+                    .bind(entity)
+                    .fetch_one(&pool)
+                    .await?;
+            assert_eq!(value["score"].as_i64(), Some(score), "{title}: {value}");
+            assert_eq!(value["role"].as_str(), Some(role), "{title}");
+            assert!(
+                score <= previous,
+                "{title} must not outrank an earlier case"
+            );
+            previous = score;
+            basis.insert(
+                title,
+                value["basis"].as_str().unwrap_or_default().to_owned(),
+            );
+        }
+        let first_party = &basis["Introducing Claude Opus 5.5"];
+        assert!(
+            first_party.contains("明确发布动作 +20") && first_party.contains("旗舰模型版本 +5")
+        );
+        assert!(basis["Jane Doe joins Anthropic as head of research"].contains("人事动态 -10"));
+        assert!(basis["llama.cpp v1.2.3"].contains("补丁/预发布版本 -15"));
+        assert!(basis["Foo 2.0"].contains("主版本 +10"));
+        assert!(!basis["Claude Opus 5.5 feels much better at coding"].contains("旗舰模型版本"));
+
+        // Independent publishers lift an event by 10 each (at most 30); one
+        // publisher's copy of the same report does not.
+        let now = Utc::now();
+        let mut sources = Vec::new();
+        for _ in 0..3 {
+            sources.push(fixture_source(&pool, "publication", "stable").await?);
+        }
+        let title = "Anthropic launches Claude Opus 5.5";
+        let corroborated = fixture_event(
+            &pool,
+            title,
+            "模型与平台",
+            now - Duration::hours(2),
+            &sources,
+        )
+        .await?;
+        let single = fixture_event(
+            &pool,
+            title,
+            "模型与平台",
+            now - Duration::hours(2),
+            &sources[..1],
+        )
+        .await?;
+        let observing = fixture_source(&pool, "company", "observing").await?;
+        let unconfirmed = fixture_event(
+            &pool,
+            "Fixture Labs quarterly platform notes",
+            "工程与开源",
+            now - Duration::hours(3),
+            &[observing],
+        )
+        .await?;
+        let rows = sqlx::query(
+            "SELECT id,editorial,confirmed FROM reader_editorial_features(ARRAY[$1,$2]::uuid[])",
+        )
+        .bind(corroborated)
+        .bind(single)
+        .fetch_all(&pool)
+        .await?;
+        let editorial = |id: uuid::Uuid| -> Result<serde_json::Value> {
+            rows.iter()
+                .find(|row| row.try_get::<uuid::Uuid, _>("id").ok() == Some(id))
+                .context("fixture event missing from features")?
+                .try_get("editorial")
+                .map_err(Into::into)
+        };
+        let (lifted, alone) = (editorial(corroborated)?, editorial(single)?);
+        assert_eq!(
+            lifted["significance"].as_f64().unwrap() - alone["significance"].as_f64().unwrap(),
+            20.0,
+            "{lifted} / {alone}"
+        );
+        assert!(
+            lifted["significanceBasis"]
+                .as_str()
+                .unwrap()
+                .contains("3 家独立发布者 +20")
+        );
+        assert!(
+            !alone["significanceBasis"]
+                .as_str()
+                .unwrap()
+                .contains("家独立发布者")
+        );
+
+        // A reader's own confirmation of an observing source counts as confirmed
+        // for that reader only (0025 contract, restored by 0030).
+        let reader = uuid::Uuid::new_v4().to_string();
+        let confirmed = |actor: String| {
+            let pool = pool.clone();
+            async move {
+                let scoped = ScopedDb::from(pool).reader(&actor);
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT confirmed FROM reader_editorial_features(ARRAY[$1]::uuid[])",
+                )
+                .bind(unconfirmed)
+                .fetch_one(&scoped)
+                .await
+            }
+        };
+        assert!(!confirmed(reader.clone()).await?);
+        sqlx::query(
+            "INSERT INTO user_source_overrides(user_id,source_id,confirmed) VALUES($1,$2,true)",
+        )
+        .bind(&reader)
+        .bind(observing)
+        .execute(&pool)
+        .await?;
+        assert!(confirmed(reader.clone()).await?);
+        assert!(!confirmed("local".into()).await?);
+
+        sqlx::query("DELETE FROM user_source_overrides WHERE user_id=$1")
+            .bind(&reader)
+            .execute(&pool)
+            .await?;
+        sources.push(observing);
+        retire_fixture(&pool, &[corroborated, single, unconfirmed], &sources).await?;
+        pool.close().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the isolated E2E database; never uses personal data or Copilot"]
+    async fn daily_selection_edition_contract() -> Result<()> {
+        use crate::store::Store;
+        let pool = isolated_pool().await?;
+        let now = Utc::now();
+        let mut sources = Vec::new();
+        let mut events = Vec::new();
+        for publisher in 0..3 {
+            let source = fixture_source(&pool, "company", "stable").await?;
+            sources.push(source);
+            for item in 0..2 {
+                let ordinal = publisher * 2 + item;
+                events.push(
+                    fixture_event(
+                        &pool,
+                        &format!("Fixture Labs quarterly platform notes {ordinal}"),
+                        if item == 0 {
+                            "模型与平台"
+                        } else {
+                            "工程与开源"
+                        },
+                        now - Duration::hours(1 + ordinal as i64),
+                        &[source],
+                    )
+                    .await?,
+                );
+            }
+        }
+        let reader = uuid::Uuid::new_v4().to_string();
+        let store =
+            crate::postgres_store::PostgresStore::new(ScopedDb::from(pool.clone()).reader(&reader));
+        let today = reader::local_date(now);
+        let saved = store
+            .brief(today, true)
+            .await?
+            .context("fixture edition was not saved")?;
+        let expected: Vec<_> = saved.items.iter().map(|event| event.id).collect();
+        assert!(expected.len() >= 2, "fixture must fill a real edition");
+        let brief_id: uuid::Uuid = sqlx::query_scalar(
+            "SELECT id FROM daily_briefs WHERE owner_user_id=$1 AND local_date=$2",
+        )
+        .bind(&reader)
+        .bind(today)
+        .fetch_one(&pool)
+        .await?;
+        let audits = |target: uuid::Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM admin_audits WHERE action='edition_reselect' AND target_id=$1",
+                )
+                .bind(target.to_string())
+                .fetch_one(&pool)
+                .await
+            }
+        };
+        let rule = |target: uuid::Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>("SELECT rule_version FROM daily_briefs WHERE id=$1")
+                    .bind(target)
+                    .fetch_one(&pool)
+                    .await
+            }
+        };
+        // Make today's edition look like one chosen by the previous rule.
+        sqlx::query(
+            "UPDATE daily_briefs SET rule_version='article-value-v1',sections='[]' WHERE id=$1",
+        )
+        .bind(brief_id)
+        .execute(&pool)
+        .await?;
+        sqlx::query("DELETE FROM daily_brief_items WHERE brief_id=$1 AND rank>1")
+            .bind(brief_id)
+            .execute(&pool)
+            .await?;
+        // An outdated past edition is history and never changes.
+        let past_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO daily_briefs(id,local_date,status,generated_at,published_at,rule_version,
+                window_start,window_end,sections,owner_user_id)
+             SELECT $1,local_date-1,status,generated_at-interval '1 day',published_at-interval '1 day',
+                rule_version,window_start-interval '1 day',window_end-interval '1 day',sections,owner_user_id
+             FROM daily_briefs WHERE id=$2",
+        )
+        .bind(past_id)
+        .bind(brief_id)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO daily_brief_items(brief_id,event_id,rank,section,selection_reason,snapshot)
+             SELECT $1,event_id,rank,section,selection_reason,snapshot FROM daily_brief_items WHERE brief_id=$2",
+        )
+        .bind(past_id)
+        .bind(brief_id)
+        .execute(&pool)
+        .await?;
+        assert!(
+            !store
+                .reselect_outdated_brief(today.pred_opt().unwrap())
+                .await?
+        );
+        assert_eq!(rule(past_id).await?, "article-value-v1");
+        assert_eq!(audits(past_id).await?, 0);
+
+        // Today's outdated edition is re-selected once, at its original cutoff.
+        assert!(store.reselect_outdated_brief(today).await?);
+        let reselected = store
+            .brief(today, false)
+            .await?
+            .context("edition missing")?;
+        assert!(reselected.is_snapshot);
+        assert_eq!(
+            reselected
+                .items
+                .iter()
+                .map(|event| event.id)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(reselected.window_end, saved.window_end);
+        assert!(!reselected.sections.is_empty());
+        assert_eq!(rule(brief_id).await?, reader::DAILY_SELECTION_RULE);
+        let (before, after): (serde_json::Value, serde_json::Value) = sqlx::query_as(
+            "SELECT before_value,after_value FROM admin_audits
+             WHERE action='edition_reselect' AND target_id=$1 AND actor=$2",
+        )
+        .bind(brief_id.to_string())
+        .bind(&reader)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(before["ruleVersion"], "article-value-v1");
+        assert_eq!(before["items"].as_array().map(Vec::len), Some(1));
+        assert_eq!(after["replaced"], true);
+        assert_eq!(after["ruleVersion"], reader::DAILY_SELECTION_RULE);
+
+        // Once only: nothing happens again, even if the stored version reverts.
+        assert!(!store.reselect_outdated_brief(today).await?);
+        sqlx::query("UPDATE daily_briefs SET rule_version='article-value-v1' WHERE id=$1")
+            .bind(brief_id)
+            .execute(&pool)
+            .await?;
+        assert!(!store.reselect_outdated_brief(today).await?);
+        assert_eq!(audits(brief_id).await?, 1);
+
+        // Without qualified candidates the saved edition is kept and marked once.
+        sqlx::query("DELETE FROM admin_audits WHERE action='edition_reselect' AND target_id=$1")
+            .bind(brief_id.to_string())
+            .execute(&pool)
+            .await?;
+        sqlx::query("UPDATE events SET status='withdrawn' WHERE id=ANY($1)")
+            .bind(&events)
+            .execute(&pool)
+            .await?;
+        assert!(!store.reselect_outdated_brief(today).await?);
+        assert_eq!(audits(brief_id).await?, 1);
+        assert_eq!(rule(brief_id).await?, "article-value-v1");
+        let kept = store
+            .brief(today, false)
+            .await?
+            .context("kept edition missing")?;
+        assert_eq!(
+            kept.items.iter().map(|event| event.id).collect::<Vec<_>>(),
+            expected
+        );
+        assert!(!store.reselect_outdated_brief(today).await?);
+        assert_eq!(audits(brief_id).await?, 1);
+
+        // Grace window at fixed times: the previous edition is served, flagged as
+        // refreshing, only while this morning's run is unfinished and within 3 h.
+        let edition = NaiveDate::from_ymd_opt(2099, 3, 2).unwrap();
+        let previous = edition.pred_opt().unwrap();
+        sqlx::query(
+            "INSERT INTO daily_briefs(id,local_date,status,generated_at,published_at,rule_version,
+                window_start,window_end,sections,owner_user_id)
+             SELECT $1,$2,status,generated_at,published_at,rule_version,window_start,window_end,sections,owner_user_id
+             FROM daily_briefs WHERE id=$3",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(previous)
+        .bind(brief_id)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO daily_brief_items(brief_id,event_id,rank,section,selection_reason,snapshot)
+             SELECT b.id,i.event_id,i.rank,i.section,i.selection_reason,i.snapshot
+             FROM daily_brief_items i JOIN daily_briefs b ON b.owner_user_id=$1 AND b.local_date=$2
+             WHERE i.brief_id=$3",
+        )
+        .bind(&reader)
+        .bind(previous)
+        .bind(brief_id)
+        .execute(&pool)
+        .await?;
+        let morning = slot(edition, 6);
+        sqlx::query(
+            "INSERT INTO morning_runs(owner_user_id,local_date,status,scheduled_at,started_at,message)
+             VALUES($1,$2,'summarizing',$3,$3,'isolated grace assertion')",
+        )
+        .bind(&reader)
+        .bind(edition)
+        .bind(morning)
+        .execute(&pool)
+        .await?;
+        let before_slot = store
+            .latest_brief_at(morning - Duration::seconds(1))
+            .await?;
+        assert!(before_slot.is_snapshot && !before_slot.refresh_pending);
+        assert_eq!(before_slot.local_date, previous.to_string());
+        assert_eq!(before_slot.next_refresh_at, Some(morning));
+        let preparing = store.latest_brief_at(morning + Duration::hours(1)).await?;
+        assert!(preparing.is_snapshot && preparing.refresh_pending);
+        assert_eq!(preparing.local_date, previous.to_string());
+        let expired = store
+            .latest_brief_at(morning + Duration::hours(EDITION_GRACE_HOURS))
+            .await?;
+        assert!(!expired.is_snapshot && !expired.refresh_pending);
+        sqlx::query("UPDATE morning_runs SET status='partial',finished_at=now() WHERE owner_user_id=$1 AND local_date=$2")
+            .bind(&reader)
+            .bind(edition)
+            .execute(&pool)
+            .await?;
+        let finished = store.latest_brief_at(morning + Duration::hours(1)).await?;
+        assert!(!finished.is_snapshot && !finished.refresh_pending);
+
+        // A late edition hour keeps its grace past local midnight.
+        let original: String =
+            sqlx::query_scalar("SELECT value FROM app_settings WHERE key='reader_settings'")
+                .fetch_one(&pool)
+                .await?;
+        let mut late: serde_json::Value = serde_json::from_str(&original)?;
+        late["hour"] = 23.into();
+        sqlx::query("UPDATE app_settings SET value=$1 WHERE key='reader_settings'")
+            .bind(late.to_string())
+            .execute(&pool)
+            .await?;
+        sqlx::query("UPDATE morning_runs SET status='summarizing',finished_at=NULL WHERE owner_user_id=$1 AND local_date=$2")
+            .bind(&reader)
+            .bind(edition)
+            .execute(&pool)
+            .await?;
+        let evening = slot(edition, 23);
+        let after_midnight = store.latest_brief_at(evening + Duration::hours(2)).await;
+        let late_expired = store
+            .latest_brief_at(evening + Duration::hours(EDITION_GRACE_HOURS))
+            .await;
+        sqlx::query("UPDATE app_settings SET value=$1 WHERE key='reader_settings'")
+            .bind(&original)
+            .execute(&pool)
+            .await?;
+        let after_midnight = after_midnight?;
+        assert!(after_midnight.is_snapshot && after_midnight.refresh_pending);
+        assert_eq!(after_midnight.local_date, previous.to_string());
+        let late_expired = late_expired?;
+        assert!(!late_expired.is_snapshot && !late_expired.refresh_pending);
+
+        for table in ["daily_briefs", "morning_runs"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE owner_user_id=$1"))
+                .bind(&reader)
+                .execute(&pool)
+                .await?;
+        }
+        sqlx::query("DELETE FROM admin_audits WHERE actor=$1")
+            .bind(&reader)
+            .execute(&pool)
+            .await?;
+        retire_fixture(&pool, &events, &sources).await?;
+        pool.close().await;
+        Ok(())
     }
 
     #[tokio::test]

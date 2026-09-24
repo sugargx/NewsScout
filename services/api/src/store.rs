@@ -20,6 +20,11 @@ pub trait Store: Send + Sync {
     async fn visitor_event(&self, id: Uuid, interests: &VisitorInterests) -> Result<Option<Event>>;
     async fn update_event_state(&self, id: Uuid, input: EventStateInput) -> Result<Option<Event>>;
     async fn brief(&self, date: NaiveDate, persist: bool) -> Result<Option<DailyBrief>>;
+    /// Re-select today's saved edition once after a selection-rule change; past
+    /// editions never change. Returns whether the saved items were replaced.
+    async fn reselect_outdated_brief(&self, _date: NaiveDate) -> Result<bool> {
+        Ok(false)
+    }
     async fn brief_history(&self) -> Result<Vec<BriefHistory>>;
     async fn latest_brief(&self) -> Result<DailyBrief>;
     async fn visitor_brief(

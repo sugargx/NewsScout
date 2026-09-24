@@ -6,7 +6,7 @@
 .ns-reader-row-title, .ns-reader-story-title { margin: 0 0 6px; color: var(--cp-text); font: 600 18px/1.45 var(--cp-font-display); overflow-wrap: anywhere; }
 .ns-reader-row-title>button, .ns-reader-story-title>button { padding: 0; border: 0; border-radius: 2px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .ns-reader-row-openable:hover .ns-reader-row-title>button, .ns-reader-row-title>button:hover, .ns-reader-story-title>button:hover { color: var(--cp-accent); }
-.ns-reader-shell .ns-reader-row-title>button:focus-visible, .ns-reader-shell .ns-reader-story-title>button:focus-visible { outline: 3px solid color-mix(in srgb, var(--cp-focus) 35%, transparent); outline-offset: 2px; }
+.ns-reader-shell .ns-reader-row-title>button:focus-visible, .ns-reader-shell .ns-reader-story-title>button:focus-visible { outline: var(--cp-focus-ring); outline-offset: 2px; }
 .ns-reader-row-preview { display: -webkit-box; margin: 0 0 9px; overflow: hidden; color: var(--cp-text-muted); line-height: 1.65; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ns-reader-story-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--cp-text-muted); font-size: 11px; }
 .ns-reader-story-meta>span:first-child, .ns-reader-story-topic { color: var(--cp-accent); font-weight: 700; }

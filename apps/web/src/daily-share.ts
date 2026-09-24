@@ -132,7 +132,9 @@ export function shareFileName(date: string) {
 
 const FONT = '"PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Source Han Sans SC", "Segoe UI", system-ui, sans-serif';
 const COLORS = { bg: "#fcfcf9", text: "#17211e", soft: "#4f5b56", muted: "#66716c", accent: "#275d52", accentSoft: "#e4eeea", border: "#dce1da" };
-const WIDTH = 1080, PAD = 72, NUMBER = 84, X = PAD + NUMBER, CONTENT = WIDTH - X - PAD, MAX_HEIGHT = 16000;
+const WIDTH = 1080, PAD = 72, NUMBER = 84, X = PAD + NUMBER, CONTENT = WIDTH - X - PAD;
+// iOS Safari draws nothing on a canvas above 16,777,216 px (1080 × 15,534); a longer image gets the "too long" message instead.
+const MAX_HEIGHT = 15_500;
 const TOKEN = /[\u2e80-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]|[^\s\u2e80-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]+|\s+/g;
 const CLOSING = /^[，。、；：！？）」』》〉”’,.;:!?)]$/;
 
@@ -270,8 +272,12 @@ export function renderShareImage(input: { date: string; weekday: string; entries
   return canvas;
 }
 
+// Encoding releases the canvas: iOS Safari keeps each 40–60 MB bitmap until garbage collection and stops drawing once its total canvas budget is spent.
 export function canvasPng(canvas: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("图片编码失败，请重试。")), "image/png"));
+  return new Promise((resolve, reject) => canvas.toBlob(blob => {
+    canvas.width = 0; canvas.height = 0;
+    if (blob) resolve(blob); else reject(new Error("图片编码失败，请重试。"));
+  }, "image/png"));
 }
 
 export function downloadBlob(blob: Blob, name: string) {

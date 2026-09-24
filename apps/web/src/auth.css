@@ -3,6 +3,8 @@
 .ns-auth-wordmark { display: flex; align-items: center; gap: 12px; font: 700 24px/1.5 var(--cp-font-display); }
 .ns-auth-wordmark span { color: var(--cp-text-muted); font: 400 12px/1.5 system-ui, sans-serif; }
 .ns-auth-card h1 { margin: 32px 0 20px; font: 600 clamp(26px, 4vw, 34px)/1.5 var(--cp-font-display); }
+/* Focused on load only so screen readers announce the page; it is not a control. */
+.ns-auth-card h1:focus { outline: none; }
 .ns-auth-detail { color: var(--cp-text-muted); font-size: 13px; }
 .ns-auth-login { display: flex; align-items: center; justify-content: center; min-height: 48px; margin: 28px 0 12px; padding: 8px 16px; border-radius: 8px; background: var(--cp-accent); color: var(--cp-accent-fg); text-decoration: none; font-weight: 600; }
 .ns-auth-login:focus-visible { outline: 3px solid var(--cp-focus); outline-offset: 3px; }

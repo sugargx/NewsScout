@@ -762,11 +762,7 @@ impl PostgresStore {
         edition: NaiveDate,
         now: DateTime<Utc>,
     ) -> Result<bool> {
-        if edition != reader::local_date(now)
-            || now
-                >= crate::edition::slot(edition, settings.hour)
-                    + chrono::Duration::hours(crate::edition::EDITION_GRACE_HOURS)
-        {
+        if !crate::edition::within_grace(settings, edition, now) {
             return Ok(false);
         }
         Ok(sqlx::query_scalar(
@@ -786,6 +782,35 @@ impl PostgresStore {
         .bind(edition)
         .fetch_one(&self.pool)
         .await?)
+    }
+
+    /// The edition a reader sees at `now`: the saved snapshot, the previous one
+    /// while this morning's run is inside its grace window, or a live preview.
+    pub(crate) async fn latest_brief_at(&self, now: DateTime<Utc>) -> Result<DailyBrief> {
+        let (settings, _) = crate::edition::EditionStore::new(self.pool.clone())
+            .settings()
+            .await?;
+        if settings.mode != "daily" {
+            return self.build_brief(now, None).await;
+        }
+        let edition = crate::edition::edition_date(&settings, now);
+        if let Some(mut brief) = self.snapshot(edition).await? {
+            brief.next_refresh_at = Some(crate::edition::edition_refresh_at(&settings, edition));
+            return Ok(brief);
+        }
+        let preparing = self.preparing_edition(&settings, edition, now).await?;
+        if preparing {
+            if let Some(previous) = self.previous_edition(edition).await? {
+                if let Some(mut brief) = self.snapshot(previous).await? {
+                    brief.refresh_pending = true;
+                    return Ok(brief);
+                }
+            }
+        }
+        // No saved edition (collection disabled, failed or not yet run): live preview.
+        let mut brief = self.build_brief(now, None).await?;
+        brief.refresh_pending = preparing;
+        Ok(brief)
     }
 }
 
@@ -1317,31 +1342,7 @@ impl Store for PostgresStore {
     }
 
     async fn latest_brief(&self) -> Result<DailyBrief> {
-        let now = Utc::now();
-        let (settings, _) = crate::edition::EditionStore::new(self.pool.clone())
-            .settings()
-            .await?;
-        if settings.mode != "daily" {
-            return self.build_brief(now, None).await;
-        }
-        let edition = crate::edition::edition_date(&settings, now);
-        if let Some(mut brief) = self.snapshot(edition).await? {
-            brief.next_refresh_at = Some(crate::edition::edition_refresh_at(&settings, edition));
-            return Ok(brief);
-        }
-        let preparing = self.preparing_edition(&settings, edition, now).await?;
-        if preparing {
-            if let Some(previous) = self.previous_edition(edition).await? {
-                if let Some(mut brief) = self.snapshot(previous).await? {
-                    brief.refresh_pending = true;
-                    return Ok(brief);
-                }
-            }
-        }
-        // No saved edition (collection disabled, failed or not yet run): live preview.
-        let mut brief = self.build_brief(now, None).await?;
-        brief.refresh_pending = preparing;
-        Ok(brief)
+        self.latest_brief_at(Utc::now()).await
     }
 
     async fn visitor_brief(
@@ -1454,6 +1455,115 @@ impl Store for PostgresStore {
         } else {
             Ok(Some(brief))
         }
+    }
+
+    async fn reselect_outdated_brief(&self, date: NaiveDate) -> Result<bool> {
+        // Outdated = saved under an earlier rule and not yet re-selected (or kept)
+        // for the current one. The audit row is both the backup and the once-only marker.
+        const OUTDATED: &str = "SELECT b.id,COALESCE(b.window_end,b.generated_at) AS cutoff
+            FROM daily_briefs b WHERE b.local_date=$1 AND b.status='published'
+              AND b.owner_user_id=scoutnews_actor() AND b.rule_version<>$2
+              AND NOT EXISTS(SELECT 1 FROM admin_audits a WHERE a.actor=scoutnews_actor()
+                AND a.action='edition_reselect' AND a.target_id=b.id::text
+                AND a.after_value->>'ruleVersion'=$2)";
+        let now = Utc::now();
+        if date != reader::local_date(now) {
+            return Ok(false);
+        }
+        // Runs on every scheduler tick, so probe without locking first.
+        if sqlx::query(OUTDATED)
+            .bind(date)
+            .bind(reader::DAILY_SELECTION_RULE)
+            .fetch_optional(&self.pool)
+            .await?
+            .is_none()
+        {
+            return Ok(false);
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(format!("brief:{}:{date}", self.pool.actor()))
+            .execute(&mut *tx)
+            .await?;
+        let locked = format!("{OUTDATED} FOR UPDATE OF b");
+        let Some(saved) = sqlx::query(&locked)
+            .bind(date)
+            .bind(reader::DAILY_SELECTION_RULE)
+            .fetch_optional(&mut *tx)
+            .await?
+        else {
+            return Ok(false);
+        };
+        let id: Uuid = saved.try_get("id")?;
+        let cutoff: DateTime<Utc> = saved.try_get("cutoff")?;
+        let before: Value = sqlx::query_scalar(
+            "SELECT jsonb_build_object('ruleVersion',b.rule_version,'generatedAt',b.generated_at,
+              'windowStart',b.window_start,'windowEnd',b.window_end,'sections',b.sections,
+              'items',COALESCE((SELECT jsonb_agg(jsonb_build_object('eventId',i.event_id,'rank',i.rank,
+                'section',i.section,'selectionReason',i.selection_reason,'snapshot',i.snapshot) ORDER BY i.rank)
+                FROM daily_brief_items i WHERE i.brief_id=b.id),'[]'::jsonb))
+            FROM daily_briefs b WHERE b.id=$1",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        // Same boundary as the original selection: nothing published after it enters.
+        let brief = self.build_brief(cutoff, None).await?;
+        let replaced = !brief.items.is_empty();
+        if replaced {
+            sqlx::query(
+                "UPDATE daily_briefs SET rule_version=$2,generated_at=$3,window_start=$4,sections=$5 WHERE id=$1",
+            )
+            .bind(id)
+            .bind(reader::DAILY_SELECTION_RULE)
+            .bind(now)
+            .bind(brief.window_start)
+            .bind(serde_json::to_value(&brief.sections)?)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("DELETE FROM daily_brief_items WHERE brief_id=$1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            for (index, event) in brief.items.iter().enumerate() {
+                sqlx::query(r#"INSERT INTO daily_brief_items(brief_id,event_id,rank,section,selection_reason,snapshot)
+                    VALUES($1,$2,$3,$4,$5,$6)"#).bind(id).bind(event.id).bind((index+1) as i32)
+                    .bind(&event.primary_topic).bind(&event.score.explanation).bind(serde_json::to_value(event)?)
+                    .execute(&mut *tx).await?;
+            }
+            sqlx::query("UPDATE morning_runs SET message=$2 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()")
+                .bind(date)
+                .bind(format!("选文规则已更新，今日晨报按新规则重选一次：{} 条；往期晨报不变", brief.items.len()))
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("INSERT INTO admin_audits(id,actor,action,target_type,target_id,before_value,after_value,reason)
+            VALUES($1,scoutnews_actor(),'edition_reselect','daily_brief',$2,$3,$4,$5)")
+            .bind(Uuid::new_v4())
+            .bind(id.to_string())
+            .bind(before)
+            .bind(serde_json::json!({
+                "ruleVersion": reader::DAILY_SELECTION_RULE,
+                "replaced": replaced,
+                "items": brief.items.len(),
+            }))
+            .bind(if replaced {
+                "选文规则升级：当日晨报按新规则重选一次，原选文保存在 before_value"
+            } else {
+                "选文规则升级：新规则下没有合格条目，保留原晨报"
+            })
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        // Once per edition (the audit row above prevents repeats); no reader identity is logged.
+        tracing::info!(
+            %date,
+            replaced,
+            items = brief.items.len(),
+            rule = reader::DAILY_SELECTION_RULE,
+            "today's saved edition checked once against the current selection rule"
+        );
+        Ok(replaced)
     }
 
     async fn brief_history(&self) -> Result<Vec<BriefHistory>> {

@@ -7,6 +7,8 @@
   --cp-sidebar: var(--cp-bg-elevated);
   --cp-warm: var(--cp-surface-soft);
   --cp-focus: var(--cp-warning);
+  /* Full-strength ring: ≥3:1 against every page and surface colour in both themes (WCAG 1.4.11). */
+  --cp-focus-ring: 3px solid var(--cp-focus);
   --cp-raised: var(--cp-surface);
   --cp-control-well: var(--cp-bg-elevated);
   --cp-radius-control: 6px;

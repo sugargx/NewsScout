@@ -2,6 +2,16 @@
 
 本文件记录 ScoutNews 的已实现变更与文档范围，不是实时运行状态。当前包版本为 `0.2.0`；以下日期不代表新增 Git tag、包版本或完成整个 V0。
 
+## 2026-09-28：双身份自助注册与即时准入
+
+- 删除 `approved_accounts`/`SCOUTNEWS_INVITED_READERS`、申请编号和403邀请页；受支持身份首次私有请求即时创建或恢复 `app_users`。
+- 保留AAD Microsoft入口，新增Microsoft Entra External ID邮箱+密码注册登录。后端严格固定provider别名与issuer，使用稳定subject建号，不按邮箱或显示名合并账号；未知provider、错误issuer和匿名请求在建号前401。
+- 登录页提供Microsoft和邮箱两个入口，并说明手机号当前不能作为第一登录因子；未自建密码、短信OTP或找回系统。
+- Bicep新增客户OIDC AuthConfig、Key Vault client secret引用及两项运行环境变量；环境tag改为 `customer-preview`。
+- 云端r15为ACR `ckj`、Ready `newsscout--0000012`、Single/1，镜像 `sha256:9b9f46de…db2b`。双入口、即时建号、错误issuer拒绝、公开健康及GitHub App零推理探针通过；数据库schema30、内容和5000额度未改。
+
+Node构建/typecheck、Rust 175通过/12忽略、云端会话28/28、隔离PostgreSQL合同、Bicep/Azure validate通过。完整真人邮箱注册仍需用户使用非管理员备用邮箱完成；手机号第一登录因子不受当前External ID支持。
+
 ## 2026-09-28：Azure Copilot GitHub App 自动轮换
 
 - Azure不再注入 `COPILOT_GITHUB_TOKEN` fine-grained PAT，改用GitHub App Device Flow user token bundle。Key Vault保存generation、固定账号ID、`ghu_`/`ghr_`及到期时间；独立非秘密环境配置固定预期数字账号，首次及每代轮换后调用 `/user` 核验。

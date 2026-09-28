@@ -110,14 +110,15 @@ Before a separate runtime deployment:
   **1 CPU / 2 GiB**, and external HTTPS ingress targeting **3000 only**. Internal
   Axum `127.0.0.1:8080` and optional gateway `127.0.0.1:8787` are never ingress
   ports. A running background scheduler is incompatible with scale-to-zero.
-- Complete invited-user authentication/authorization before creating any public
-  application endpoint. The foundation provides no anonymous app/API.
-  A valid Entra tenant/object ID is not an invitation: protected preview routes
-  must additionally enforce an explicit approved `(tenant ID, object ID)` list,
-  or a parent-verified equivalent assignment policy. Missing, empty, or invalid
-  invitation configuration must fail closed. Do not use email addresses, tenant
-  membership alone, or the `invited-preview` resource tag as the invitation gate.
-  Any deliberately public health/share routes require separate explicit approval.
+- Configure both supported EasyAuth providers before opening self-service access:
+  `aad` for Microsoft accounts and the exact External ID OIDC alias/issuer for
+  customer email accounts. The foundation provides no anonymous private API.
+  The Rust boundary accepts only provider-verified stable subjects, never an
+  email/display name supplied by the browser. Unknown providers, issuer drift,
+  malformed principals, missing proxy trust, and anonymous private requests fail
+  closed. Public health/share routes remain explicit exceptions. External ID does
+  not support phone numbers as first-factor sign-in; SMS is an optional paid MFA
+  add-on and must not be represented as phone-account registration.
 - Pull from the output ACR using the assigned identity (AcrPull). Registry admin
   and anonymous pull are disabled. ACR supports a later remote Linux build; no
   Docker image is required for foundation provisioning.

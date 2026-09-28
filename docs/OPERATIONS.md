@@ -1,8 +1,8 @@
 # 运行与发布手册
 
-适用环境：Windows 可信本地、旧 Dev Tunnel 与 Azure 邀请测试；维护日期：2026-09-28。除明确说明外，命令从 ScoutNews 项目根目录执行。本页保留现有本地/隧道操作；云端 what-if、Linux 构建、digest 部署、恢复与轮换使用 [Azure 运行手册](AZURE-PREVIEW.md)。更新文档本身不启动服务、不改设置、不恢复数据库。
+适用环境：Windows 可信本地、旧 Dev Tunnel 与 Azure 开放预览；维护日期：2026-09-28。除明确说明外，命令从 ScoutNews 项目根目录执行。本页保留现有本地/隧道操作；云端 what-if、Linux 构建、digest 部署、恢复与轮换使用 [Azure 运行手册](AZURE-PREVIEW.md)。更新文档本身不启动服务、不改设置、不恢复数据库。
 
-**当前状态（2026-09-28，以 `release-status.json` 为准）：r13 revision `newsscout--0000010` Ready，仅1个批准身份，云端schema仍为30。** 12:46:40确认旧版本停止后启动新版本，12:47:44 Ready，12:48:36完成Single/min=max=1交接，约63秒不可用；AuthConfig、账号/Origin/CSRF、资源、凭据引用、扩缩与设置保持。r13只改Web窗口激活与恢复界面，无API、数据库、迁移、采集或数据变化；需要回退本轮前端时可在保留最新私有参数的前提下重新部署r12 digest，不需要因r13恢复数据库。日常本地实例保持停止，本轮只临时启动15173生产预览并已停止，未重启或迁移日常栈，日常库仍为27；已有本地备份不等于已执行27→30恢复演练或切版。旧Dev Tunnel已退役，本页命令不授权重放历史操作。
+**当前状态（2026-09-28，以 `release-status.json` 为准）：r15 revision `newsscout--0000012` Ready，云端schema仍为30。** Single/min=max=1；20项环境变量、7项Key Vault引用，已移除 `SCOUTNEWS_INVITED_READERS`，新增固定客户OIDC provider/issuer。AuthConfig同时保留AAD与 `newsscout-account`，Microsoft或邮箱身份认证后即时建号；匿名、未知provider和错误issuer仍401。r14 GitHub App凭据继续通过零推理探针。日常本地实例保持停止，未重启或迁移，日常库仍为27；已有本地备份不等于已执行27→30恢复演练或切版。旧Dev Tunnel已退役，本页命令不授权重放历史操作。
 
 ## 1. 先分清运行环境
 
@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | 日常个人版 | 5173，Vite 开发服务 | 8080 | 8787 | 55433，`scoutnews` |
 | 旧匿名公开试读（已退役） | 历史端口5190，独立只读网关 | 历史配置读取8080 | 不直接访问 | 不直接访问 |
-| Azure 认证邀请预览 | 平台HTTPS → Node3000；公开登录200，私有API仍需真实身份及明确批准 | 容器内 `127.0.0.1:8080` | 容器内 `127.0.0.1:8787` | 独立云端私网5432、TLS `verify-full`，不连接本机库 |
+| Azure 认证开放预览 | 平台HTTPS → Node3000；公开登录200，私有API需AAD或固定External ID issuer的真实身份，首次访问即时建号 | 容器内 `127.0.0.1:8080` | 容器内 `127.0.0.1:8787` | 独立云端私网5432、TLS `verify-full`，不连接本机库 |
 | 隔离真实 E2E | 15173 | 18080 | 18787 | 55432，每次新建 `scoutnews_e2e_<UUID>` |
 | 页面替身验证 | 15173，Vite preview | 请求在浏览器内拦截 | 不需要 | 不需要 |
 | 人工评审候选网关 | 示例 15190 | 只读访问现有 8080 | 不直接访问 | 不直接访问 |
@@ -264,7 +264,7 @@ pwsh -NoProfile -File .\services\api\tests\run-owner-upgrade.ps1 `
 
 恢复完成必须从实际 HTTPS 检查 `/health` 的 `readOnly=true`、文章读取与入口资源；只检查进程 ID、本地端口或 TLS 握手不够。当前启动器没有针对“活着但失联”的自动重连保证，仍需保持宿主电脑和附着式启动器运行。连接复发时沿用上述诊断边界，不把一次恢复写成长期托管。
 
-## 8. Azure 邀请测试操作入口
+## 8. Azure 开放预览操作入口
 
 完整命令以 [Azure 运行手册](AZURE-PREVIEW.md) 为准，不能混用旧隧道命令与云端生命周期。
 
@@ -278,4 +278,4 @@ pwsh -NoProfile -File .\services\api\tests\run-owner-upgrade.ps1 `
 | 恢复与回退 | 云端 PITR 恢复到新私网服务器；镜像回退用已确认 digest 并核对 schema 兼容，不回滚迁移文件或覆盖个人数据库 |
 | 轮换 | access token到期前自动轮换并把新的refresh token写成Key Vault新版本；账号由独立数字ID固定，`ready=false`、`accountVerified=false`、`durable=false`、refresh失败或14天内到期必须告警。切换验收必须对当前Key Vault版本做不改token值的元数据写入并读回，不能把旧bundle另写为最新版本。授权撤销或refresh token完全过期时用一次性Device Flow重新初始化，不能回退PAT |
 
-采集取消、自助账号删除和完整使用分析面板仍未提供。r8预览已开放登录，`approved_accounts` 当前仅1个明确批准身份；真实OAuth/读取先于维护通道采集。新环境默认空名单，但不能用 `[]` 覆盖当前名单；每次增加/撤销仍须用户明确批准、使用本人真实申请编号，不匹配邮箱、整个tenant或CLI guest OID。按 [第6.5节](AZURE-PREVIEW.md#65-批准账号与撤销访问) 使用完整私有参数、同一运行digest、先what-if后部署和验证，回退不恢复已撤销成员。第二真实账号及私有偏好/编辑/发布/撤销/导出live覆盖仍有限，见 [第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)；文档命令不表示已执行。
+采集取消、自助账号删除和完整使用分析面板仍未提供。开放预览保留Microsoft登录，并新增External ID邮箱+密码自助注册；两种受支持provider认证后立即创建独立应用账号，不再维护批准名单。运行参数必须固定客户provider别名、exact issuer、discovery endpoint、client ID与Key Vault secret名；回退旧镜像也不得重新注入邀请名单逻辑。手机号目前不能作为External ID第一登录因子，只能在明确启用付费短信能力后作为MFA。第二真实账号及私有偏好/编辑/发布/导出live覆盖仍有限，见 [第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)；文档命令不表示已执行。

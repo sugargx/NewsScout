@@ -1,4 +1,4 @@
-# Azure 认证邀请测试运行手册
+# Azure 认证开放预览运行手册
 
 维护日期：2026-09-28。适用于独立仓库 `sugargx/NewsScout` 的完整应用，不是旧5190只读网关。命令从项目根目录在 PowerShell 中执行；基座脚本需要 PowerShell7。**第1节记录带时间的维护者交接，其余操作步骤不表示已经全部执行；实际运行结果须按记录时间区分。**
 
@@ -6,7 +6,17 @@
 
 本仓库公开，ACR登录服务器和应用地址只保存在私有记录 `tmp\azure-preview-20260920`（不入库），文中分别写作 `<ACR>` 和 `<应用FQDN>`。
 
-**最新发布（2026-09-28）：r14已部署，Ready revision为 `newsscout--0000011`。** ACR `ckh` 构建唯一tag `preview-20260928-r14-oauth-53fb2ddb3c6c`，镜像为 `<ACR>/scoutnews@sha256:af61d1c5e43c3628db98147db4b2d44e221d4632cd93538f0affaf0029564276`。16:34（+08）完成第二次部署，最终Single/min=max=1、旧r13归零、公开 `/health` 200；云端schema仍为30，数据库、来源、读者状态、5000共享额度和资源规格未改。
+**最新发布（2026-09-28）：r15已部署，Ready revision为 `newsscout--0000012`。** ACR `ckj` 构建唯一tag `preview-20260928-r15-auth-fd5e02de65c3`，镜像为 `<ACR>/scoutnews@sha256:9b9f46de4d2f6605a298ea7f9d3c5a789a5d4687eac2edd2b9d9d5d58a98db2b`。最终Single/min=max=1、r14退出、公开 `/health` 200且deployment为 `customer-preview`；云端schema仍为30，数据库、新闻、读者状态、5000共享额度和资源规格未改。
+
+r15删除维护者邀请名单、申请编号与403 `invitation_required` 流程。EasyAuth同时保留AAD并新增 `newsscout-account` External ID provider；Microsoft账号或邮箱账号认证后按稳定issuer/subject即时创建独立 `app_users`。20项环境变量中不再有 `SCOUTNEWS_INVITED_READERS`，新增客户provider和exact issuer；7项Key Vault引用新增 `customer-auth-client-secret`。AAD与客户OIDC可信代理探针均返回session 200且user ID不同，错误issuer、未知provider和匿名均401。登录页真实部署验证两个入口、无邀请文案，并明确手机号当前不能作为第一登录因子。
+
+本轮本地验证为Node全仓typecheck/生产构建、Rust 175通过/12忽略、云端会话28/28、Bicep编译、Azure validate及全新隔离PostgreSQL合同。what-if只有Container App/AuthConfig预期修改和同一UAMI role assignment的引用渲染、0 delete；零推理Copilot探针继续 `accountVerified/durable=true`、16模型及精确Terra。External ID真实授权页显示邮箱输入和Create one，但没有可安全使用的备用邮箱，因此完整真人注册仍由用户完成。
+
+交接为 `tmp\azure-preview-20260920\release-r15-20260928.json`、更新后的 `release-status.json`、`runtime-parameters-r15.json` 及 `tmp\customer-auth` 下的构建/what-if证据。
+
+### 2026-09-28：r14记录（历史）
+
+**r14当日部署为Ready `newsscout--0000011`，现已由r15替代。** ACR `ckh` 构建唯一tag `preview-20260928-r14-oauth-53fb2ddb3c6c`，镜像为 `<ACR>/scoutnews@sha256:af61d1c5e43c3628db98147db4b2d44e221d4632cd93538f0affaf0029564276`。16:34（+08）完成第二次部署，最终Single/min=max=1、旧r13归零、公开 `/health` 200；云端schema仍为30，数据库、来源、读者状态、5000共享额度和资源规格未改。
 
 r14将Azure Copilot从 `copilot-github-token` fine-grained PAT迁移到专用GitHub App Device Flow。Gateway要求显式 `github-app` 模式、公开Client ID、独立固定的数字账号ID和无版本bundle URL；bundle存放 `ghu_`/`ghr_`、generation与两类到期时间。UAMI在vault范围继续只读，只对该bundle secret取得Secrets Officer；应用配置从7项secret降为6项，不再注入 `COPILOT_GITHUB_TOKEN`。GitHub返回新token对后，Gateway先保留并持久化新一代，再核验同一账号；瞬时 `/user` 或Key Vault故障不会重用已消费的旧refresh token。
 
@@ -459,10 +469,15 @@ $appParameters = @(
     "vaultUri=$($f.keyVault.uri)"
     "exportStorageUrl=$($f.storage.blobEndpoint)"
     "loginClientId=$($login.clientId)"
+    "customerAuthEnabled=true"
+    "customerAuthProviderName=newsscout-account"
+    "customerAuthClientId=<external-id-client-id>"
+    "customerAuthIssuer=<exact-external-id-v2-issuer>"
+    "customerAuthWellKnownConfiguration=<external-id-openid-configuration-url>"
+    "customerAuthClientSecretName=customer-auth-client-secret"
     "copilotAuthMode=disabled"
     "copilotGitHubClientId="
     "copilotGitHubAccountId="
-    "invitedReaders=[]"
     "releaseId=$release"
 )
 az deployment group what-if --subscription $subscription --resource-group $rg `
@@ -471,7 +486,7 @@ az deployment group what-if --subscription $subscription --resource-group $rg `
 if ($LASTEXITCODE -ne 0) { throw '应用 what-if 失败。' }
 ```
 
-**人工核对 what-if 的资源范围与模板后，才执行下一段。** 拒绝非预期删除、规格/副本增加、非目标资源和安全边界变化。此首轮示例仅含空名单及资源/secret引用，不把 secret value 填入参数；含实际准入身份的完整运行参数必须按第6.5节私有保存。
+**人工核对 what-if 的资源范围与模板后，才执行下一段。** 拒绝非预期删除、规格/副本增加、非目标资源和安全边界变化。参数只保存External ID公开client ID、固定issuer/discovery URL及Key Vault secret名称，不把client secret值写入参数。
 
 ```powershell
 az deployment group create --subscription $subscription --resource-group $rg `
@@ -514,24 +529,24 @@ what-if必须只包含预期的新revision配置、移除旧PAT引用及
 $appId = "$($f.resourceGroupId)/providers/Microsoft.App/containerApps/$appName"
 $authId = "$appId/authConfigs/current"
 az resource show --subscription $subscription --ids $authId --api-version 2026-01-01 `
-    --query 'properties.{enabled:platform.enabled,https:httpSettings.requireHttps,anonymous:globalValidation.unauthenticatedClientAction,allowedOrigins:login.allowedExternalRedirectUrls,providerEnabled:identityProviders.azureActiveDirectory.enabled,clientId:identityProviders.azureActiveDirectory.registration.clientId,secretSetting:identityProviders.azureActiveDirectory.registration.clientSecretSettingName,issuer:identityProviders.azureActiveDirectory.registration.openIdIssuer,audiences:identityProviders.azureActiveDirectory.validation.allowedAudiences}' `
+    --query 'properties.{enabled:platform.enabled,https:httpSettings.requireHttps,anonymous:globalValidation.unauthenticatedClientAction,allowedOrigins:login.allowedExternalRedirectUrls,aadEnabled:identityProviders.azureActiveDirectory.enabled,aadClientId:identityProviders.azureActiveDirectory.registration.clientId,aadSecretSetting:identityProviders.azureActiveDirectory.registration.clientSecretSettingName,aadIssuer:identityProviders.azureActiveDirectory.registration.openIdIssuer,aadAudiences:identityProviders.azureActiveDirectory.validation.allowedAudiences,customerEnabled:identityProviders.customOpenIdConnectProviders."newsscout-account".enabled,customerClientId:identityProviders.customOpenIdConnectProviders."newsscout-account".registration.clientId,customerSecretSetting:identityProviders.customOpenIdConnectProviders."newsscout-account".registration.clientCredential.clientSecretSettingName,customerDiscovery:identityProviders.customOpenIdConnectProviders."newsscout-account".registration.openIdConnectConfiguration.wellKnownOpenIdConfiguration}' `
     --output json --only-show-errors
 if ($LASTEXITCODE -ne 0) { throw '不能确认 EasyAuth 配置，禁止开放。' }
 az resource show --subscription $subscription --ids $appId --api-version 2026-01-01 `
-    --query "properties.configuration.secrets[?name=='entra-client-secret'].{name:name,keyVaultUrl:keyVaultUrl,identity:identity}" `
+    --query "properties.configuration.secrets[?name=='entra-client-secret'||name=='customer-auth-client-secret'].{name:name,keyVaultUrl:keyVaultUrl,identity:identity}" `
     --output json --only-show-errors
-if ($LASTEXITCODE -ne 0) { throw '不能确认登录 secret reference，禁止开放。' }
+if ($LASTEXITCODE -ne 0) { throw '不能确认登录 secret references，禁止开放。' }
 az containerapp show --subscription $subscription --resource-group $rg --name $appName `
     --query '{fqdn:properties.configuration.ingress.fqdn,revision:properties.latestReadyRevisionName,external:properties.configuration.ingress.external,targetPort:properties.configuration.ingress.targetPort,ipRules:properties.configuration.ingress.ipSecurityRestrictions,image:properties.template.containers[0].image}' `
     --output json --only-show-errors
 if ($LASTEXITCODE -ne 0) { throw '不能确认应用运行配置。' }
 ```
 
-从ARM返回的投影核对平台/provider都已enabled、HTTPS、登录client ID、issuer/audience；`secretSetting`须为 `entra-client-secret`，对应secret的Key Vault引用和UAMI必须匹配本次基座，**不读取secret值**。`allowedOrigins`须恰好包含自身的精确HTTPS origin，不加通配符或第三方域名。确认bootstrap规则仍在、3000端口和digest正确、实际FQDN与 `WEB_ORIGIN`/redirect URI一致，并审查运行健康及迁移结果；缺字段、引用不符或内部尚未就绪时禁止开放。`AllowAnonymous` 必须配合第2节私有 API fail-closed边界，不能单凭该字段判定成功或关闭认证。
+从ARM返回的投影核对平台、AAD和客户OIDC provider都已enabled、HTTPS、两个client ID与各自issuer/discovery配置正确；secret setting须分别为 `entra-client-secret` 与 `customer-auth-client-secret`，对应Key Vault引用和UAMI必须匹配本次基座，**不读取secret值**。`allowedOrigins`须恰好包含自身的精确HTTPS origin，不加通配符或第三方域名。确认bootstrap规则仍在、3000端口和digest正确、实际FQDN与两个redirect URI及 `WEB_ORIGIN` 一致，并审查运行健康及迁移结果；缺字段、引用不符或内部尚未就绪时禁止开放。`AllowAnonymous` 必须配合第2节私有 API fail-closed边界，不能单凭该字段判定成功或关闭认证。
 
-**当前预览已完成上述引导并开放登录，实际证据见第1节。** 后续新环境必须重新核对；不能因已有一个成功环境而跳过控制面与身份验证，也不能为复现引导而清空当前批准名单。
+**当前预览已完成上述引导并开放登录，实际证据见第1节。** 后续新环境必须重新核对；不能因已有一个成功环境而跳过控制面、issuer和身份验证。
 
-新环境先以 `openToUsers=false` / `invitedReaders=[]` 部署经测试/复审的不可变镜像，核对认证、健康和迁移。维护者再批准**空名单的受控OAuth窗口**：同一digest、名单及其余参数，what-if后只改 `openToUsers=true`。空名单仍拒绝私有API；所有者真实登录取得本人申请编号后，按第6.5节独立审批，不能预填推测的OID。下面仅是首次引导示例，不用于重置已开放预览：
+新环境先以 `openToUsers=false` 部署经测试/复审的不可变镜像，核对两个认证入口、健康、迁移和应用内401边界。随后保持同一digest及其余参数，what-if后只改 `openToUsers=true`。一旦开放，所有通过受支持provider认证的用户都可即时建立独立NewsScout账号；不再存在维护者批准名单。下面仅是首次引导示例，不用于重置已开放预览：
 
 ```powershell
 az deployment group what-if --subscription $subscription --resource-group $rg `
@@ -546,114 +561,38 @@ az deployment group create --subscription $subscription --resource-group $rg `
 if ($LASTEXITCODE -ne 0) { throw '入口配置失败。' }
 ```
 
-此时网络入口公开，并非只允许维护者IP；网络开放与应用名单是两层控制，私有访问仍须明确批准。扩大试用前确认授权对象，并如实说明第1节未覆盖的live流程，不能把有限预览宣传为全量验收。若出现认证绕过、串号或数据泄露疑点，以**当前版本完整参数和相同digest**先what-if再将 `openToUsers` 改回 `false`，保留去敏证据；不以本地模式、跨源放行或关闭CSRF排错。
+此时网络入口公开，并非只允许维护者IP；私有访问仍须完成AAD或固定External ID issuer认证。扩大试用前确认External ID用户流与费用策略，并如实说明第1节未覆盖的live流程，不能把有限预览宣传为全量验收。若出现认证绕过、串号或数据泄露疑点，以**当前版本完整参数和相同digest**先what-if再将 `openToUsers` 改回 `false`，保留去敏证据；不以本地模式、跨源放行或关闭CSRF排错。
 
 ### 6.4 验收证据与扩大试用的门槛
 
 当前已接受的是第1节列出的有限预览范围；下列未完成项不是已通过的用户流程：
 
-1. **已验证身份/读取**：真实Microsoft OAuth、本人申请编号及明确批准，真实session/runtime/briefs/interests/events读取200；匿名/伪造principal私有请求401。控制探测的有效未批准principal403不等于第二个真实账号已验收。
+1. **已验证身份/读取**：真实Microsoft OAuth及真实session/runtime/briefs/interests/events读取200；匿名、未知provider、错误issuer和伪造principal私有请求401。External ID授权页、应用绑定与回调已验证；完整备用邮箱注册仍须真人完成。
 2. **已验证维护业务**：已登录批准profile的两次有界维护采集和真实Terra摘要、晨报/Radar内容；不是浏览器采集按钮证据。记录HTTP200的job对象与后续任务结果，不能将返回任务等同完成。
-3. **已验证的辅助范围**：隔离PG、真实浏览器mock契约、独立review/邀请页critic、UAMI合成Blob与实际遥测；只接受对应范围。
-4. **仍需live双账号/写入**：第二个真实Microsoft账号，以及本人偏好、来源覆盖/自定义来源、账号切换和跨账号所有权。不得用UI隐藏或合成principal替代真实账号证据。
-5. **仍需live分享/撤销/导出**：私有编辑、只公开所选不可变快照、撤回与禁止重发、名单撤销后的清理/重载、本人JSON归档/返回及限额；当前均无完整用户流程验收。
-6. **仍需独立运维演练**：Azure备份恢复、secret轮换及兼容版本回退；保留有限错误码、版本和时间，不记录凭据、名单或正文。本地私有副本恢复成功不替代Azure灾备演练。
+3. **已验证的辅助范围**：隔离PG、真实浏览器mock契约、独立登录页review、UAMI合成Blob与实际遥测；隔离库验证AAD与客户OIDC即时建号、三账号独立状态/RLS及错误provider/issuer拒绝，只接受对应范围。
+4. **仍需live双账号/写入**：一个真实External ID邮箱账号，以及本人偏好、来源覆盖/自定义来源、账号切换和跨账号所有权。不得用UI隐藏或合成principal替代真实账号证据。
+5. **仍需live分享/撤销/导出**：私有编辑、只公开所选不可变快照、撤回与禁止重发、本人JSON归档/返回及限额；当前均无完整用户流程验收。
+6. **仍需独立运维演练**：Azure备份恢复、两个登录client secret轮换及兼容版本回退；保留有限错误码、版本和时间，不记录凭据、身份subject或正文。本地私有副本恢复成功不替代Azure灾备演练。
 
 旧Dev Tunnel已由最终聚合确认退役，临时UI候选与云诊断已清理，不需为文档再启动它们。后续服务变更仍须单独授权，不因预览开放而自动停止个人API、Gateway或数据库。
 
-### 6.5 批准账号与撤销访问
+### 6.5 自助账号、身份隔离与访问阻断
 
-**当前已完成首位用户真实OAuth和明确批准，现有名单1项；本节用于后续经授权的审批/撤销，不得重置已批准身份。** 新环境默认 `invitedReaders=[]`，没有“自动所有者”。用户亲自登录后，在“这个账号还未获邀。”页面选中“申请编号”，手动交给维护者；系统不会自动提交。只审批用户明确同意的实际编号，禁止用邮箱、显示名、整个tenant或Azure CLI guest OID替代。真人撤销流程的live验收仍待完成。
+开放预览没有逐用户批准名单。平台先验证AAD或固定External ID provider，Node只把平台principal送到loopback API，Rust再严格检查provider、issuer和稳定subject。首次成功请求即时建立 `app_users`；邮箱、显示名和浏览器提交的用户ID都不参与授权。
 
-#### 持久私有参数
+- AAD账号以Microsoft tenant/object稳定标识映射；客户账号以部署时固定External ID issuer下的 `sub` 映射。两种身份默认是两个账号，不按相同邮箱自动合并。需要账号合并时必须另行设计双方重新认证、冲突与回滚流程，不能直接更新subject。
+- External ID用户流只启用邮箱+密码注册登录。手机号在当前平台不能作为第一登录因子；短信仅是可选付费MFA，不得在界面或文档中宣传为手机号账号。NewsScout不自建密码、短信OTP或找回系统。
+- `customer-auth-client-secret` 只保存在Key Vault并由UAMI引用。当前凭据到期为2028-09-27 23:59:59Z；最迟于2028-08-28开始轮换演练。轮换时先新增凭据和Key Vault新版本，再用同一镜像what-if/部署并验证邮箱入口，最后删除旧凭据；不把secret值写入参数、日志或发布记录。
+- 禁用单个客户账号应在External ID目录完成；禁用Microsoft账号由其上游目录负责。应用当前没有逐用户封禁或自助删除接口，禁用登录也不会删除已有数据或撤回公开快照。数据删除仍由维护者按明确请求执行并保留最小审计。
+- 若怀疑provider误配、issuer漂移、认证绕过或跨账号数据泄露，先用当前完整参数与同一digest将 `openToUsers=false`，核对旧revision退出；再修复AuthConfig或应用验证。不要临时信任邮箱、关闭CSRF、暴露Rust端口或改成本地身份。
 
-- 从**已与运行revision及当前入口配置核对一致**的完整ARM参数文件建立/维护 `tmp\azure-preview-20260920\runtime-parameters.private.json`；保留 `parameters.<name>.value` 结构、全部参数及现有名单。不论原文件名是 `runtime-parameters.json` 还是 `.private.json`，包含实际准入身份后都属私有文件。当前入口已开放，不能照抄封闭/空名单bootstrap基线，也不能用只含名单的文件让其他设置回到默认值。
-- 仅新环境首次bootstrap的名单为 `[]`；接续当前环境必须保留现有名单，并持续维护此私有文件用于每次部署。只存申请编号及配置/secret引用，不存secret值。`tmp` 已被Git与Docker构建上下文排除，但仍须限制本地访问，并保存受控副本。禁止提交、截图、粘贴完整文件/名单到共享日志或交接中。
-- 每次批准/撤销只修改 `invitedReaders`，**保持同一个已部署、支持准入的不可变image digest**，以及 `openToUsers`、资源/凭据引用、release参数等其余值不变。使用同一审核版本的Bicep模板；不要顺便更新镜像、打开入口或回放旧名单。
-- 名单是运行环境配置，变更会创建新revision；按第8节执行已验证的单Worker维护流程，不能把Single revision当成排他锁。需要先封闭入口的维护窗单独what-if/部署，名单变更本身不夹带开关入口。
+每次身份配置或secret轮换后至少验证：
 
-下面仅编辑已存在的完整私有参数文件；`$subscription`、`$rg`、`$appName`、`$artifact` 沿用已核对上下文。把 `$expectedImage` 换成维护者确认的**当前运行版本**完整image引用，不复用历史构建或其他环境的digest：
-
-```powershell
-$privateParameters = Join-Path $artifact 'runtime-parameters.private.json'
-$expectedImage = '<registry>/newsscout@sha256:<confirmed-deployed-64-hex-digest>'
-$operation = 'approve' # 撤销时明确改为 'revoke'，每次只执行一种操作。
-if (-not (Test-Path -LiteralPath $privateParameters -PathType Leaf)) {
-    throw '先准备与实际运行版本一致的完整私有参数文件；不自动覆盖或补默认值。'
-}
-if ($expectedImage -notmatch '^\S+@sha256:[0-9a-f]{64}$') {
-    throw '必须填写已核对的不可变image引用。'
-}
-if ($operation -notin @('approve', 'revoke')) { throw '只允许approve或revoke。' }
-$document = Get-Content -LiteralPath $privateParameters -Raw | ConvertFrom-Json
-$values = $document.parameters
-if ($values.image.value -cne $expectedImage -or $values.appName.value -cne $appName -or
-    $values.openToUsers.value -isnot [bool] -or $values.invitedReaders.value -isnot [array]) {
-    throw '参数文件格式或部署基线不符，停止；不打印完整参数。'
-}
-function ConvertTo-InvitationKey {
-    param([string]$Value)
-    $parts = $Value.Trim().Split(':')
-    $tid = [guid]::Empty
-    $oid = [guid]::Empty
-    if ($parts.Count -ne 2 -or
-        -not [guid]::TryParseExact($parts[0], 'D', [ref]$tid) -or
-        -not [guid]::TryParseExact($parts[1], 'D', [ref]$oid) -or
-        $tid -eq [guid]::Empty -or $oid -eq [guid]::Empty) {
-        throw '申请编号必须是两个非空UUID组成的tenant:object对，不能使用名称或通配符。'
-    }
-    '{0:D}:{1:D}' -f $tid, $oid
-}
-$key = ConvertTo-InvitationKey (Read-Host '粘贴实际申请编号；撤销时使用私有记录中的原编号')
-$members = @($values.invitedReaders.value | ForEach-Object { ConvertTo-InvitationKey $_ })
-if ($members.Count -gt 100) { throw '原名单超过100项，停止。' }
-$next = @(
-    if ($operation -eq 'approve') { @($members + $key) | Sort-Object -Unique }
-    else { $members | Where-Object { $_ -cne $key } }
-)
-if ($next.Count -gt 100) { throw '最多批准100个账号。' }
-if ($operation -eq 'revoke' -and $key -cnotin $members) {
-    throw '原名单没有该编号；先确认目标，不把无变更当作撤销成功。'
-}
-$values.invitedReaders.value = @($next)
-$document | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $privateParameters -Encoding utf8
-```
-
-数组去重/格式化不替代人工身份审批；不得开启transcript、打印申请编号、完整principal、参数对象或token。删除最后一项后必须保留JSON `[]`，不能删除变量或改成空字符串。私有文件此时是**拟部署配置**，不是批准/撤销已经在运行时生效的证明。
-
-先做what-if，输出仅资源范围，避免在控制台显示名单：
-
-```powershell
-$parameterHash = (Get-FileHash -LiteralPath $privateParameters -Algorithm SHA256).Hash
-$templateHash = (Get-FileHash -LiteralPath '.\infra\cloud-app.bicep' -Algorithm SHA256).Hash
-az deployment group what-if --subscription $subscription --resource-group $rg `
-    --template-file .\infra\cloud-app.bicep --parameters "@$privateParameters" `
-    --mode Incremental --result-format ResourceIdOnly --no-pretty-print --only-show-errors
-if ($LASTEXITCODE -ne 0) { throw '名单变更what-if失败；尚未生效。' }
-```
-
-人工核对私有文件差异仅为所批准/撤销的条目，审核模板与资源范围，确认单Worker维护条件满足后，才执行下面的部署。what-if未通过或参数/模板发生变化时重新审核，不使用自动回滚到旧名单：
-
-```powershell
-if ((Get-FileHash -LiteralPath $privateParameters -Algorithm SHA256).Hash -cne $parameterHash -or
-    (Get-FileHash -LiteralPath '.\infra\cloud-app.bicep' -Algorithm SHA256).Hash -cne $templateHash) {
-    throw 'what-if后参数或模板已变化，禁止部署。'
-}
-$changeName = "admission-$operation-$(Get-Date -Format 'yyyyMMddHHmmss')"
-az deployment group create --subscription $subscription --resource-group $rg `
-    --name $changeName --template-file .\infra\cloud-app.bicep `
-    --parameters "@$privateParameters" --mode Incremental `
-    --query properties.provisioningState --output tsv --only-show-errors
-if ($LASTEXITCODE -ne 0) { throw '部署未确认成功；不得宣称批准或撤销已生效。' }
-```
-
-#### 生效检查与失败处理
-
-1. 核对新revision Running/Ready、image与 `$expectedImage` 相同、入口状态未被改变、旧revision/Worker已退出。仅保存时间、digest/revision、操作类型、名单数量和去敏结果；审批身份记录留在受控私有位置。
-2. 批准后由本人点击“已获批准，重新进入”，验证其私有会话与本人数据；该按钮本身不授予权限。首批只批准实际完成OAuth的所有者，未批准同事仍应看到本人申请码而不是私有工作台。
-3. 撤销后，用原会话发起私有请求应收到403 `invitation_required`，界面清除旧document/mutation/缓存并重载。验证未批准者不新建 `app_users`，其余批准账号未被串号；显式发布快照与 `/health` 仍按匿名契约访问。撤销账号访问不是删除账号数据，也不会自动撤回已发布快照。
-4. 只改文件、ARM成功或新revision健康都不代表撤销已验证；旧revision未退出时不宣称即时生效。紧急撤销若部署/验证失败，先以**当前已确认运行参数和相同digest**单独what-if/部署 `openToUsers=false`，阻断外部访问，再排障；不换成信任本地身份、不临时放宽名单。
-5. 后续升级、轮换、恢复及回退都保留最新批准/撤销结果，不从旧发布参数恢复已撤销成员。不支持该准入契约的旧image不能作为对外开放的回退版本。
+1. AuthConfig同时存在AAD和 `newsscout-account`，客户provider的client ID、secret setting及discovery URL与受控参数一致。
+2. `/.auth/login/aad` 与 `/.auth/login/newsscout-account` 分别进入正确身份页面，回调只允许应用自身HTTPS origin。
+3. 匿名、未知provider、错误issuer和伪造principal的私有session均401，且不会创建 `app_users`。
+4. 两个受支持provider可各自建立session，user ID不同；兴趣、状态、曝光、来源、晨报、分享、导出和任务保持RLS隔离。
+5. 健康、显式公开快照与私有API的匿名例外范围不因开放注册扩大。
 
 ## 7. 日常运行、限额与隐私
 

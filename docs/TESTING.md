@@ -445,3 +445,18 @@ ACR `cka` 与Ready `newsscout--0000006` 的实际发布记录见Azure手册。17
 | 旧凭据 | GitHub官方凭据吊销接口返回202，随后旧PAT访问 `/user` 返回401；吊销后零推理探针仍确认账号、持久化写回、16模型和精确Terra；Key Vault `copilot-github-token` 再次软删除、`Recoverable` 90天且未purge，计划2026-12-27 16:47（+08）清除 |
 
 证据边界：真实摘要使用不写数据库的短材料，只验证推理链路，不代表新闻质量评测；强制refresh由同容器中的独立维护进程发起，随后立即重启revision让常驻Gateway读取最新bundle。Microsoft登录后的全部产品流程沿用既有r13证据，本轮没有重新宣称第二真实读者或全部私有工作流live验收。
+
+## 19. r15 自助账号与双身份入口（2026-09-28）
+
+| 证据 | 结果 |
+| --- | --- |
+| 本地构建 | Node全仓typecheck/生产构建通过；Rust 175通过、12忽略；Bicep编译通过 |
+| 会话与页面 | `cloud-session.spec.ts` 28/28；部署登录页200，Microsoft与邮箱入口存在，无申请编号/未获邀文案，显示手机号限制 |
+| 隔离数据库 | Microsoft与客户OIDC首次请求即时建号；三个身份的CSRF、兴趣、状态、曝光、来源、晨报、分享、导出和任务按RLS隔离；匿名、未知provider和错误issuer不建号 |
+| ACR与部署 | `ckj`成功；digest `sha256:9b9f46de…db2b`；Azure validate与what-if通过、0 delete；Ready `newsscout--0000012`、Single/1、旧revision退出 |
+| AuthConfig | AAD和 `newsscout-account` 同时enabled；客户provider使用 `ClientSecretPost`、精确discovery URL及Key Vault secret setting |
+| 真实前门 | `/health` 200且 `customer-preview`；AAD与客户登录路由分别到Microsoft和CIAM授权端点；匿名session 401 |
+| 容器身份探针 | AAD与客户OIDC session均200且user ID不同；错误issuer、未知provider和匿名均401 |
+| Copilot回归 | 零推理探针 `accountVerified/credentialDurable/persistenceWriteVerified=true`，16模型、精确Terra、0次推理 |
+
+证据边界：客户授权页及Create one来自真实部署，但未输入真实备用邮箱；完整邮件注册、验证、找回和首次用户操作仍需真人完成。External ID当前不支持手机号作为第一登录因子，短信只能作为可选付费MFA。

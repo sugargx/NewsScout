@@ -1,6 +1,6 @@
 # 当前实现架构
 
-适用版本：0.2；维护日期：2026-09-28。本文区分可信本地、Azure认证完整应用及已退役的旧匿名网关，不把代码或 [V0规格](V0-SPEC.md) 当全量验收。**r13已部署为Ready `newsscout--0000010`，云端schema仍为30，仍仅1个明确批准身份。** r13只修改Web会话生命周期：窗口隐藏或失焦时保留已接受工作台，同时暂停新的私有请求；返回后核对同一身份再放行，慢速或失败核对在原页面上显示恢复层，账号变化、401或邀请撤销仍重新载入。r11改为按事件重要性与价值选文，晨报在北京时间6点固定为一期并直接返回保存的快照，分享改为浏览器本地生成的每日分享图；r12让当天已保存的晨报在选文规则版本变化后按新规则重选一次，并用迁移30修复0029丢掉的读者来源状态。r13无API、数据库、迁移、Gateway或cloud-host变化；原RLS、身份门禁及Origin/CSRF保持。事件列表的后端耗时与全历史探索慢路径未在本轮处理，实际交接与测量见Azure手册。日常本地实例保持停止，本轮未重启或迁移，本地数据仍为27。第二真实账号及其余私有分享/导出live流程受证据范围限制；产品词汇见根目录 `CONTEXT.md`。
+适用版本：0.2；维护日期：2026-09-28。本文区分可信本地、Azure认证完整应用及已退役的旧匿名网关，不把代码或 [V0规格](V0-SPEC.md) 当全量验收。**r15已部署为Ready `newsscout--0000012`，云端schema仍为30。** Azure同时接受Microsoft AAD与固定External ID客户OIDC，认证后按不可变issuer/subject即时建号；邀请名单和申请编号已移除，未知provider、错误issuer、匿名和伪造principal仍在建号前401。Node可信代理、Origin/CSRF、owner route拒绝与PostgreSQL事务角色/RLS保持。r14 GitHub App凭据自动轮换、r13窗口恢复、r12价值排序/固定晨报及此前阅读能力不变。日常本地实例保持停止，本轮未重启或迁移，本地数据仍为27。完整真人邮箱注册及其余私有分享/导出live流程受证据范围限制；产品词汇见根目录 `CONTEXT.md`。
 
 ## 进程与职责
 
@@ -25,18 +25,18 @@ Container Apps 为 Consumption、1 CPU/2 GiB、min=max=1，使用 Single revisio
 
 认证链路如下：
 
-1. 平台 EasyAuth 使用 Microsoft identity，注册 audience 为工作/学校与个人 Microsoft 账号，issuer 使用 `common/v2.0`。组织策略可能要求管理员批准。注册应用的 client ID 与访问 Azure 资源的 UAMI client ID 是两个不同身份。
+1. 平台 EasyAuth 同时配置两个入口：`aad` 保留 `common/v2.0`，支持工作/学校与个人 Microsoft 账号；`newsscout-account` 使用专用 Microsoft Entra External ID issuer，提供邮箱+密码自助注册/登录。组织策略仍可能要求管理员批准Microsoft工作账号。两个登录应用的client ID与访问Azure资源的UAMI client ID互不相同。
 2. 平台允许匿名到达登录/隐私/静态页面及明确发布的快照，因此 `AllowAnonymous` 不是“私有 API 不认证”。`/p/:id` 的投影和 `/health` 有明确例外，其余 API 在 Rust 中校验。
 3. Node 仅转发有限请求头，覆盖 `X-ScoutNews-Proxy-Token` 为内部配置值。Rust 同时要求可信代理密钥与 EasyAuth `X-MS-CLIENT-PRINCIPAL`，拒绝重复/冲突认证头，使用租户/对象身份映射内部用户，不把浏览器传来的用户 ID 当授权。
 4. 写请求必须同时匹配精确 `WEB_ORIGIN` 和该用户的 CSRF token；读取若带 Origin 也须匹配。前端从 `/api/v1/session` 获取会话及能力，账号切换/过期时丢弃私有缓存。仅隐藏按钮不构成授权。
-5. 云端拒绝模型提供方/连接、阅读设置、模型处理设置/全局重试及分享基础地址修改；主题、来源、采集、草稿和隐私仍属完整应用。已部署的 `approved_accounts` 使用Bicep `invitedReaders` array（新环境默认 `[]`、最多100项），JSON传入Rust必需的 `SCOUTNEWS_INVITED_READERS`；缺失/格式错误拒绝启动，`[]`拒绝全部私有API。只匹配真实认证用户申请编号中的 `<tenant UUID>:<object UUID>`，不按邮箱/名称/整个tenant或CLI guest OID推断；当前1项名单仅私有保存。
-6. 每个私有请求校验名单；有效但未获邀principal在创建 `app_users` 前收到403 `invitation_required` 和本人 `invitationKey`。UI只读显示申请编号，需本人手动发送，不自动批准。已完成首个真实OAuth/批准/读取；撤销后的document、mutation和缓存清除/重载是实现契约，尚无完整真人撤销流程验收。匿名显式快照与健康检查保持例外；证据分层见 [Azure手册第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)。
+5. 云端拒绝模型提供方/连接、阅读设置、模型处理设置/全局重试及分享基础地址修改；主题、来源、采集、草稿和隐私仍属完整应用。认证成功后不再检查维护者邀请名单；Rust只接受 `aad` 或部署时固定别名与exact issuer的客户OIDC principal，其他provider、错误issuer、缺少稳定subject或伪造header均401。
+6. 受支持provider的首次私有请求以 `(issuer, subject)` 即时创建或更新 `app_users`，不使用邮箱/显示名作为账号主键。Microsoft身份继续使用tenant/object稳定标识；External ID使用固定issuer下的`sub`。两种入口是两个独立身份，除非以后显式实现受验证的账号合并，不会因邮箱相同自动串号。手机号当前只可作为External ID付费短信MFA/恢复验证，不能作为第一登录因子；应用不自建密码或短信认证系统。
 
 Azure Copilot 使用独立的 GitHub App Device Flow。一次授权后，Key Vault 保存带版本、generation ID、账号ID及两类到期时间的 JSON bundle；不保存 GitHub App client secret。预期GitHub数字账号ID还作为独立的非秘密部署配置固定，Gateway不信任可写bundle自报的账号。Gateway 以UAMI读取bundle，在首次提供token前调用 `/user` 核验账号，在access token剩余90分钟时主动刷新，也接受SDK会话在剩余1小时内触发刷新。GitHub一旦返回新的 `ghu_` / `ghr_` 对，旧refresh token已经失效，因此Gateway先把新一代保留在内存并尝试写入Key Vault，再针对同一新access token核验 `/user`；瞬时核验失败只重试这对新凭据，不会再次提交已消费的旧refresh token。账号与Key Vault写回都验证后健康状态才ready；持久化失败继续标记`durable=false`并重试，不退回旧PAT、其他账号或其他模型。正常持续运行会不断延长refresh token窗口；授权被撤销或超过整个refresh有效期未能轮换时才需要再次完成Device Flow。
 
 该链路已于2026-09-28作为r14部署：容器配置无旧PAT，零推理模型探针、真实Terra/low摘要、强制refresh产生新Key Vault版本、revision重启后的常驻Gateway状态均通过；旧PAT secret已软删除。固定版本元数据探针只验证写权限，不把旧bundle写成最新版本。
 
-外部匿名与伪造principal的私有session请求实际返回401。真正OAuth后的前门读取200早于维护调用；后续维护通道使用该已建档批准profile进行两次采集，不能把这种调用冒充浏览器行为或第二账号验证。不得直接暴露Rust或以可信本地模式绕过Azure边界。
+外部匿名、未知provider、错误issuer与伪造principal的私有session请求返回401。受支持AAD或客户OIDC principal首次访问即建档；不得直接暴露Rust或以可信本地模式绕过Azure边界。
 
 ### 数据库、身份和共享材料
 

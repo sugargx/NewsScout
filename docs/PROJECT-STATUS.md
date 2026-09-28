@@ -1,14 +1,20 @@
 # 项目状态
 
-文档维护日期：2026-09-28。当前Azure邀请预览以更新后的 `release-status.json` 及Azure手册为准；旧Dev Tunnel已退役。下面保留本地升级与早期隧道/CoDesign交付记录，不将历史数字当作实时统计。
+文档维护日期：2026-09-28。当前Azure开放预览以更新后的 `release-status.json` 及Azure手册为准；旧Dev Tunnel已退役。下面保留本地升级与早期隧道/CoDesign交付记录，不将历史数字当作实时统计。
 
 ## 当前定位
 
-**0.2保留可信本地阅读闭环，完整Azure认证邀请预览已开放。** 云端除阅读/模型管理设置外保留主题、来源/私有自定义来源、采集、每日分享及隐私/导出，不是缩水公开构建。当前仅1个批准身份；真实OAuth/读取和维护通道采集已验证，仍不等于所有私人工作流live验收、完整V0或生产SLA。旧隧道已退役，包版本仍为 `0.2.0`。
+**0.2保留可信本地阅读闭环，完整Azure认证开放预览已开放。** 云端除阅读/模型管理设置外保留主题、来源/私有自定义来源、采集、每日分享及隐私/导出，不是缩水公开构建。Microsoft账号即时进入，External ID提供邮箱+密码自助注册；手机号不支持第一登录因子。真实Microsoft OAuth、双provider控制面、后端即时建号与RLS隔离已验证，仍不等于所有私人工作流live验收、完整V0或生产SLA。旧隧道已退役，包版本仍为 `0.2.0`。
 
 项目名为 ScoutNews，阅读界面显示 NewsScout。日常使用见根 `README.md`；公开访客说明见 [公开阅读契约](PUBLIC-READER.md)。
 
 ## 最新修复与运行记录（2026-09-28）
+
+**云端r15已发布：ACR `ckj`、Ready `newsscout--0000012`，Single/min=max=1。** 镜像为 `sha256:9b9f46de…db2b`。邀请白名单、申请编号与403准入页已删除；AAD与 `newsscout-account` 同时启用，20项环境变量、7项secret引用，环境tag为 `customer-preview`。公开健康200，两个登录入口200；可信代理探针中AAD与客户OIDC即时建号且user ID不同，错误issuer、未知provider和匿名均401。零推理Copilot探针继续确认16模型、Terra、账号核验与Key Vault持久化。数据库、迁移、内容和5000共享额度未改。
+
+本地验证为Node全仓typecheck/构建、Rust 175通过/12忽略、云端会话28/28、Bicep及全新隔离PostgreSQL合同。External ID授权页和Create one已验证；完整真人邮箱注册仍需非管理员备用邮箱。手机号作为账号不受External ID支持，未自建不安全的短信/密码系统。
+
+## 2026-09-28 r14记录（历史）
 
 **云端r14已发布：ACR `ckh`、Ready `newsscout--0000011`，Single/min=max=1。** 镜像为 `sha256:af61d1c5…4276`。Azure Copilot已从静态PAT迁移到GitHub App Device Flow和Key Vault可轮换bundle：独立账号固定、首次/轮换后账号核验、90分钟主动刷新窗口、失效refresh token不重用，以及固定版本元数据写回探针。应用不再包含 `COPILOT_GITHUB_TOKEN` 或旧PAT secret引用，运行secret从7项降为6项；旧Key Vault secret已软删除、未purge。
 

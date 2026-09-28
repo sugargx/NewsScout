@@ -33,7 +33,7 @@ param invitedReaders array = []
 resource environment 'Microsoft.App/managedEnvironments@2026-01-01' existing = {
   name: environmentName
 }
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2025-01-31' existing = {
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2024-11-30' existing = {
   name: identityName
 }
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {

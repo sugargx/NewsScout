@@ -6,13 +6,19 @@
 
 本仓库公开，ACR登录服务器和应用地址只保存在私有记录 `tmp\azure-preview-20260920`（不入库），文中分别写作 `<ACR>` 和 `<应用FQDN>`。
 
-**最新发布（2026-09-28）：r15已部署，Ready revision为 `newsscout--0000012`。** ACR `ckj` 构建唯一tag `preview-20260928-r15-auth-fd5e02de65c3`，镜像为 `<ACR>/scoutnews@sha256:9b9f46de4d2f6605a298ea7f9d3c5a789a5d4687eac2edd2b9d9d5d58a98db2b`。最终Single/min=max=1、r14退出、公开 `/health` 200且deployment为 `customer-preview`；云端schema仍为30，数据库、新闻、读者状态、5000共享额度和资源规格未改。
+**最新发布（2026-09-28）：r16已部署，Ready revision为 `newsscout--0000013`。** ACR `ckk` 构建唯一tag `preview-20260928-r16-copy-f0d32ba`，镜像为 `<ACR>/scoutnews@sha256:0a109331c0458fd79305edfde98d90c426a7088f73e0cd5b8b11ac43df90b4d4`。本轮只将登录说明精简为“登录后即可创建自己的阅读空间。”；实际页面确认旧申请/人工批准措辞不存在，Microsoft和邮箱入口保持。最终Single/min=max=1、r15退出、公开 `/health` 200；认证、云端schema30、数据库、新闻、5000共享额度和资源规格未改。
+
+本轮Web typecheck、定向Playwright 1/1、ACR Linux构建、Azure validate/what-if及真实部署页面验证通过。what-if有效容器变化只有镜像digest与 `SCOUTNEWS_RELEASE_ID`，0 delete。交接为 `tmp\azure-preview-20260920\release-r16-20260928.json`、`runtime-parameters-r16.json` 及 `tmp\customer-auth\what-if-r16.json`。
+
+### 2026-09-28：r15记录（历史）
+
+**r15当日部署为Ready `newsscout--0000012`，现已由r16替代。** ACR `ckj` 构建唯一tag `preview-20260928-r15-auth-fd5e02de65c3`，镜像为 `<ACR>/scoutnews@sha256:9b9f46de4d2f6605a298ea7f9d3c5a789a5d4687eac2edd2b9d9d5d58a98db2b`。最终Single/min=max=1、r14退出、公开 `/health` 200且deployment为 `customer-preview`；云端schema仍为30，数据库、新闻、读者状态、5000共享额度和资源规格未改。
 
 r15删除维护者邀请名单、申请编号与403 `invitation_required` 流程。EasyAuth同时保留AAD并新增 `newsscout-account` External ID provider；Microsoft账号或邮箱账号认证后按稳定issuer/subject即时创建独立 `app_users`。20项环境变量中不再有 `SCOUTNEWS_INVITED_READERS`，新增客户provider和exact issuer；7项Key Vault引用新增 `customer-auth-client-secret`。AAD与客户OIDC可信代理探针均返回session 200且user ID不同，错误issuer、未知provider和匿名均401。登录页真实部署验证两个入口、无邀请文案，并明确手机号当前不能作为第一登录因子。
 
 本轮本地验证为Node全仓typecheck/生产构建、Rust 175通过/12忽略、云端会话28/28、Bicep编译、Azure validate及全新隔离PostgreSQL合同。what-if只有Container App/AuthConfig预期修改和同一UAMI role assignment的引用渲染、0 delete；零推理Copilot探针继续 `accountVerified/durable=true`、16模型及精确Terra。External ID真实授权页显示邮箱输入和Create one，但没有可安全使用的备用邮箱，因此完整真人注册仍由用户完成。
 
-交接为 `tmp\azure-preview-20260920\release-r15-20260928.json`、更新后的 `release-status.json`、`runtime-parameters-r15.json` 及 `tmp\customer-auth` 下的构建/what-if证据。
+交接为 `tmp\azure-preview-20260920\release-r15-20260928.json`、`runtime-parameters-r15.json` 及 `tmp\customer-auth` 下的构建/what-if证据。
 
 ### 2026-09-28：r14记录（历史）
 

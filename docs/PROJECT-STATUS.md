@@ -10,6 +10,10 @@
 
 ## 最新修复与运行记录（2026-09-28）
 
+**云端r16已发布：ACR `ckk`、Ready `newsscout--0000013`，Single/min=max=1。** 镜像为 `sha256:0a109331…b4d4`。本轮只将登录说明精简为“登录后即可创建自己的阅读空间。”，并增加回归断言确保旧申请/人工批准措辞不存在；双身份、数据库schema30、模型、内容和资源规格均未改。Web typecheck、定向Playwright 1/1、Azure validate/what-if、公开健康及真实部署页面验证通过。
+
+## 2026-09-28 r15记录（历史）
+
 **云端r15已发布：ACR `ckj`、Ready `newsscout--0000012`，Single/min=max=1。** 镜像为 `sha256:9b9f46de…db2b`。邀请白名单、申请编号与403准入页已删除；AAD与 `newsscout-account` 同时启用，20项环境变量、7项secret引用，环境tag为 `customer-preview`。公开健康200，两个登录入口200；可信代理探针中AAD与客户OIDC即时建号且user ID不同，错误issuer、未知provider和匿名均401。零推理Copilot探针继续确认16模型、Terra、账号核验与Key Vault持久化。数据库、迁移、内容和5000共享额度未改。
 
 本地验证为Node全仓typecheck/构建、Rust 175通过/12忽略、云端会话28/28、Bicep及全新隔离PostgreSQL合同。External ID授权页和Create one已验证；完整真人邮箱注册仍需非管理员备用邮箱。手机号作为账号不受External ID支持，未自建不安全的短信/密码系统。

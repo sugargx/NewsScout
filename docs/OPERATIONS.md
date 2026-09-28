@@ -2,7 +2,7 @@
 
 适用环境：Windows 可信本地、旧 Dev Tunnel 与 Azure 开放预览；维护日期：2026-09-28。除明确说明外，命令从 ScoutNews 项目根目录执行。本页保留现有本地/隧道操作；云端 what-if、Linux 构建、digest 部署、恢复与轮换使用 [Azure 运行手册](AZURE-PREVIEW.md)。更新文档本身不启动服务、不改设置、不恢复数据库。
 
-**当前状态（2026-09-28，以 `release-status.json` 为准）：r15 revision `newsscout--0000012` Ready，云端schema仍为30。** Single/min=max=1；20项环境变量、7项Key Vault引用，已移除 `SCOUTNEWS_INVITED_READERS`，新增固定客户OIDC provider/issuer。AuthConfig同时保留AAD与 `newsscout-account`，Microsoft或邮箱身份认证后即时建号；匿名、未知provider和错误issuer仍401。r14 GitHub App凭据继续通过零推理探针。日常本地实例保持停止，未重启或迁移，日常库仍为27；已有本地备份不等于已执行27→30恢复演练或切版。旧Dev Tunnel已退役，本页命令不授权重放历史操作。
+**当前状态（2026-09-28，以 `release-status.json` 为准）：r16 revision `newsscout--0000013` Ready，云端schema仍为30。** 本轮仅替换登录页一句文案，镜像和发布ID变化；双EasyAuth、20项环境变量、7项Key Vault引用、Single/min=max=1、数据库和模型设置均沿用r15。公开登录页已实测只显示“登录后即可创建自己的阅读空间。”，旧申请/人工批准措辞不存在。日常本地实例保持停止，未重启或迁移，日常库仍为27；旧Dev Tunnel已退役。
 
 ## 1. 先分清运行环境
 

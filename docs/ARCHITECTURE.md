@@ -1,6 +1,6 @@
 # 当前实现架构
 
-适用版本：0.2；维护日期：2026-09-28。本文区分可信本地、Azure认证完整应用及已退役的旧匿名网关，不把代码或 [V0规格](V0-SPEC.md) 当全量验收。**r15已部署为Ready `newsscout--0000012`，云端schema仍为30。** Azure同时接受Microsoft AAD与固定External ID客户OIDC，认证后按不可变issuer/subject即时建号；邀请名单和申请编号已移除，未知provider、错误issuer、匿名和伪造principal仍在建号前401。Node可信代理、Origin/CSRF、owner route拒绝与PostgreSQL事务角色/RLS保持。r14 GitHub App凭据自动轮换、r13窗口恢复、r12价值排序/固定晨报及此前阅读能力不变。日常本地实例保持停止，本轮未重启或迁移，本地数据仍为27。完整真人邮箱注册及其余私有分享/导出live流程受证据范围限制；产品词汇见根目录 `CONTEXT.md`。
+适用版本：0.2；维护日期：2026-09-28。本文区分可信本地、Azure认证完整应用及已退役的旧匿名网关，不把代码或 [V0规格](V0-SPEC.md) 当全量验收。**r16已部署为Ready `newsscout--0000013`，云端schema仍为30。** r16只精简登录说明；认证架构沿用r15：Microsoft AAD与固定External ID客户OIDC按不可变issuer/subject即时建号，未知provider、错误issuer、匿名和伪造principal在建号前401。Node可信代理、Origin/CSRF、owner route拒绝与PostgreSQL事务角色/RLS保持。日常本地实例保持停止，本轮未重启或迁移，本地数据仍为27。
 
 ## 进程与职责
 

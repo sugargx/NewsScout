@@ -88,7 +88,8 @@ test("cloud requires login before loading private pages and keeps privacy availa
   const customer = page.getByRole("link", { name: "使用邮箱注册或登录", exact: true });
   await expect(microsoft).toHaveAttribute("href", "/.auth/login/aad?post_login_redirect_uri=%2Fsources");
   await expect(customer).toHaveAttribute("href", "/.auth/login/newsscout-account?post_login_redirect_uri=%2Fsources");
-  await expect(page.getByText("无需再提交申请或等待人工批准", { exact: false })).toBeVisible();
+  await expect(page.getByText("登录后即可创建自己的阅读空间。", { exact: true })).toBeVisible();
+  await expect(page.getByText("无需再提交申请或等待人工批准", { exact: false })).toHaveCount(0);
   expect(requests.every(request => request.path === "/api/v1/session")).toBe(true);
   await page.screenshot({ path: info.outputPath("cloud-sign-in.png") });
   await page.getByRole("link", { name: "数据与隐私说明", exact: true }).click();

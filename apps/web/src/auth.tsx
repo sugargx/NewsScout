@@ -91,7 +91,7 @@ function SignInPage() {
     <section className="ns-auth-card" aria-labelledby="sign-in-title">
       <div className="ns-auth-wordmark">NewsScout <span>开放预览</span></div>
       <h1 id="sign-in-title" ref={heading} tabIndex={-1}>把值得读的新闻，留在你的阅读空间。</h1>
-      <p>登录后即可创建自己的阅读空间，无需再提交申请或等待人工批准。</p>
+      <p>登录后即可创建自己的阅读空间。</p>
       <p className="ns-auth-detail">收藏、兴趣主题和阅读记录随账号保存，不与其他用户混用；每日分享图只在你的浏览器中生成。</p>
       <div className="ns-auth-actions">
         <a className="ns-auth-login" href={`/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnTo)}`}>使用 Microsoft 账户登录</a>

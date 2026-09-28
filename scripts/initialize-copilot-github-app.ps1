@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory)][guid]$TenantId,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]{8,128}$')][string]$GitHubClientId,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9-]{3,24}$')][string]$VaultName,
-    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9-]{1,39}$')][string]$ExpectedGitHubLogin,
+    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_-]{1,39}$')][string]$ExpectedGitHubLogin,
     [ValidatePattern('^[A-Za-z0-9-]{1,127}$')][string]$SecretName = 'copilot-github-oauth-bundle',
     [switch]$ReplaceExisting,
     [switch]$OpenBrowser

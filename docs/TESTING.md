@@ -425,3 +425,23 @@ ACR `cka` 与Ready `newsscout--0000006` 的实际发布记录见Azure手册。17
 - 直接嵌套恢复截图覆盖 1440 和 390；1024 仅覆盖静默确认，768 仅覆盖隐私弹窗。深色与 forced-colors 的恢复证据只覆盖 390 首次连接，不扩大为完整主题认证。
 - 私有请求闸门和账号隔离由请求记录及源码/用例断言证明；最终截图目录没有独立网络 manifest。
 - App Insights窗口内只有发布探测流量，不能据此推断登录用户切换应用时的实际网络耗时。
+
+## 18. r14 GitHub App 凭据轮换与Azure切换（2026-09-28）
+
+本轮不改数据库schema或新闻数据，目标是把Azure Copilot从最长约8天、不可续期的静态PAT切换为GitHub App user token bundle，并验证刷新后旧refresh token失效时仍不会丢失新一代凭据。
+
+| 证据 | 结果 |
+| --- | --- |
+| Gateway单元测试 | 12/12通过：bundle/URL严格解析、显式模式、外部账号固定、首次账号核验、并发单次refresh、先持久化新一代再核验、瞬时 `/user` 恢复、不重用旧refresh token、Key Vault延迟恢复、固定版本元数据探针不重写bundle |
+| 本地构建 | Node全仓typecheck与生产构建通过；Rust 176通过、12忽略；Bicep编译、PowerShell AST、`git diff --check`通过 |
+| ACR | Linux构建 `ckh` 成功；不可变镜像 `sha256:af61d1c5…4276` |
+| Device Flow初始化 | 专用账号核验通过；立即refresh通过；第二代bundle写入Key Vault。现场修复登录名下划线校验和PowerShell `?api-version` 插值后重跑成功；失败轮次均未写入bundle |
+| what-if与滚动 | 修正Managed Identity API为East Asia支持的 `2024-11-30` 后，what-if只有Container App/Auth deploy和bundle secret级role create、0 delete；最终 `newsscout--0000011`、Single/1 |
+| 配置边界 | `github-app`、Client ID、外部账号固定及无版本bundle URL存在；旧 `COPILOT_GITHUB_TOKEN` 不存在；应用只有6项非Copilot secret引用 |
+| 零推理探针 | `credentialAccepted/accountVerified/credentialDurable/persistenceWriteVerified=true`；16个模型；精确 `gpt-5.6-terra` 可用；0次推理 |
+| 真实模型调用 | 容器内Gateway返回HTTP200、provider `github-copilot`、模型 `gpt-5.6-terra`、`reasoningEffort=low`、非空内容 |
+| 运行时refresh | 强制refresh成功；Key Vault版本1→2、generation变化、账号不变、refresh有效期更新至2027-03-28 16:40（+08）；revision重启后Gateway仍 `ready/accountVerified/durable=true` |
+| 运行日志与前门 | 公网 `/health` 200；最终Single/1；300行日志中0个credential initialization/refresh/persistence/process-exit错误 |
+| 旧凭据 | GitHub官方凭据吊销接口返回202，随后旧PAT访问 `/user` 返回401；吊销后零推理探针仍确认账号、持久化写回、16模型和精确Terra；Key Vault `copilot-github-token` 再次软删除、`Recoverable` 90天且未purge，计划2026-12-27 16:47（+08）清除 |
+
+证据边界：真实摘要使用不写数据库的短材料，只验证推理链路，不代表新闻质量评测；强制refresh由同容器中的独立维护进程发起，随后立即重启revision让常驻Gateway读取最新bundle。Microsoft登录后的全部产品流程沿用既有r13证据，本轮没有重新宣称第二真实读者或全部私有工作流live验收。

@@ -6,29 +6,21 @@
 
 本仓库公开，ACR登录服务器和应用地址只保存在私有记录 `tmp\azure-preview-20260920`（不入库），文中分别写作 `<ACR>` 和 `<应用FQDN>`。
 
-**最新发布（2026-09-28）：r13已部署，Ready revision为 `newsscout--0000010`。** ACR `cke` 于12:35:53–12:44:24（+08）成功，唯一tag为 `preview-20260928-r13-526c47f6`，镜像为 `<ACR>/newsscout@sha256:2a990ebb968d1fd4fc846cad21d86cf1042208fc4ee4d95f5559877cab97f3e5`。12:46:40确认r12副本归零，12:47:44新revision Ready，12:48:36完成Single/min=max=1交接；其间约63秒无可用副本，没有并行两个Worker。16项环境变量名、7项secret、唯一批准身份、0条IP规则、AuthConfig、身份、registry、资源与扩缩设置保持；环境变量只有 `SCOUTNEWS_RELEASE_ID` 不同。Terra/low/5000 保存在数据库设置中，本轮未改。资源tag与私有参数已同步为 `preview-20260928-r13`。
+**最新发布（2026-09-28）：r14已部署，Ready revision为 `newsscout--0000011`。** ACR `ckh` 构建唯一tag `preview-20260928-r14-oauth-53fb2ddb3c6c`，镜像为 `<ACR>/scoutnews@sha256:af61d1c5e43c3628db98147db4b2d44e221d4632cd93538f0affaf0029564276`。16:34（+08）完成第二次部署，最终Single/min=max=1、旧r13归零、公开 `/health` 200；云端schema仍为30，数据库、来源、读者状态、5000共享额度和资源规格未改。
 
-本轮修复窗口切换时的整页骨架：已接受的私有工作台在 hidden/blur 后继续挂载，但新的私有请求立即进入闸门；visible/focus 后批量合并重复激活事件并静默核对session，只有同一身份和新的CSRF信息确认后才放行。首次访问尚未接受session时仍只显示公开几何骨架；后台核对超过8秒或失败时在原页面上显示恢复层。账号变化、401或邀请撤销仍清除私有缓存并重新载入。恢复层改用同一 Fluent/Tabster 模态栈，保留移动Drawer、隐私弹窗、未保存草稿与过渡后的正确焦点。
+r14将Azure Copilot从 `copilot-github-token` fine-grained PAT迁移到专用GitHub App Device Flow。Gateway要求显式 `github-app` 模式、公开Client ID、独立固定的数字账号ID和无版本bundle URL；bundle存放 `ghu_`/`ghr_`、generation与两类到期时间。UAMI在vault范围继续只读，只对该bundle secret取得Secrets Officer；应用配置从7项secret降为6项，不再注入 `COPILOT_GITHUB_TOKEN`。GitHub返回新token对后，Gateway先保留并持久化新一代，再核验同一账号；瞬时 `/user` 或Key Vault故障不会重用已消费的旧refresh token。
 
-本轮记录168项源码/上下文哈希，清单SHA-256以 `526c47f6` 开头：相对r12无新增、删除，只有 `apps\web\src\auth.tsx` 和 `auth.css` 两项变化。最终记录时重新生成清单，文件哈希仍与ACR构建输入完全一致。**没有API、数据库、迁移、Gateway、cloud-host、采集或数据变化；云端继续使用r12留下的schema30。** r13自身不需要数据库恢复；如只回退本轮前端，可在保留最新身份、机密和邀请名单的前提下重新部署r12 digest。
+首次Device Flow核对专用账号并立即refresh后，第二代bundle写入Key Vault。容器内零推理探针确认 `accountVerified=true`、`persistenceWriteVerified=true`、`credentialDurable=true`、16个可用模型及精确Terra；真实摘要调用返回HTTP200、`gpt-5.6-terra` / `low`和非空内容。随后由运行镜像强制执行一次refresh，Key Vault版本从1增至2、generation变化、账号不变、refresh有效期更新到2027-03-28 16:40（+08）；revision重启后常驻Gateway仍为 `ready/accountVerified/durable=true`，再次模型探针通过。最终300行日志中0个初始化、refresh、持久化或进程退出错误。
 
-**12:49前门、12:55一致性与遥测复查：**
+第一次部署被Azure拒绝，因为模板使用了East Asia不支持的Managed Identity稳定API `2025-01-31`；自动回滚重新激活r13且前门 `/health` 保持200。模板改为已注册的 `2024-11-30` 后重新编译，第二次what-if只有Container App/Auth deploy和bundle secret级role create、0 delete，随后切换成功。旧fine-grained PAT随后通过GitHub官方凭据吊销接口撤销并实测 `/user` 返回401；吊销后再次运行容器零推理探针，账号、持久化写回、16个模型与精确Terra仍全部通过。遗留Key Vault `copilot-github-token` 于16:47再次软删除，`Recoverable` 90天且未purge，计划于2026-12-27 16:47（+08）清除。
 
-| 项目 | 结果 |
-| --- | --- |
-| 健康、登录页、匿名私有session | 200 / 200 / 401；`no-referrer`；HTML `no-store`；未知路径由宿主回落到应用（200） |
-| `/share`、匿名 `/api/v1/briefs/latest` | 200 / 401 |
-| 入口脚本 `/assets/index-CFSYbHUy.js` | 与最终本机构建一致；原始530,950字节；SHA-256 `18439add…7d75df7`；br 136,261、gzip 160,848 |
-| 样式 `/assets/index-DO05GJ2K.css` | 与最终本机构建一致；原始44,689字节；SHA-256 `baec4805…50d0dd5`；br 7,443、gzip 8,417 |
-| 启动与运行 | API已监听；无晨报重选、调度失败或启动错误；Single/1副本 |
-| App Insights | 从滚动开始只有一次预期匿名401，0个5xx、0个异常 |
-| 部署前端mock E2E | 真实Azure HTML/JS/CSS上8/8通过：移动隐私焦点2项、静默激活3项、失败恢复2项、390px嵌套慢恢复与草稿1项 |
+本轮本地验证为Gateway 12/12、Node全仓typecheck/生产构建、Rust 176通过/12忽略、Bicep编译、PowerShell AST和diff检查；ACR Linux构建成功。GitHub App初始化脚本现场修正了企业/托管式登录名中的下划线以及PowerShell secret URL插值，均另行提交。r14无迁移或数据变化；回退旧镜像也不得重新注入旧PAT，必要时只能恢复旧secret作为短时应急且须记录风险。
 
-最终本地生产构建上的 `cloud-session` 31/31、`cloud-workflows` 16/16及响应式证据10/10通过；独立UI评审在修正恢复层透明入场帧后接受。部署前端E2E拦截了私有API，所以证明的是实际发布静态资源与前端会话状态机，不是Microsoft OAuth、真实私有网络或云端后端延迟。自动化浏览器没有Microsoft登录态，点击登录只到Microsoft账号提示页，没有选择或输入凭据；获邀用户仍须在登录后的Windows浏览器中切换到其他应用再返回，确认页面不闪骨架。
+交接为 `tmp\azure-preview-20260920\release-r14-20260928.json`、更新后的 `release-status.json`、`runtime-parameters-r14.json` 及 `tmp\oauth-r14` 下的构建/what-if/部署/探针证据。
 
-日常本地实例保持停止；本轮只临时启动15173生产预览做测试并已停止，没有启动、停止或迁移5173/8080/8787/55433日常栈，本地数据仍为schema27。
+### 2026-09-28：r13记录（历史）
 
-交接为 `tmp\azure-preview-20260920\release-r13-20260928.json`、更新后的 `release-status.json`（r12快照另存为 `release-status-r12-20260924.json`）与 `runtime-parameters-r13.json`；部署证据位于 `tmp\r13-deploy`。
+**r13已由r14替代；其Ready revision为 `newsscout--0000010`。** ACR `cke` 于12:35:53–12:44:24（+08）成功，唯一tag为 `preview-20260928-r13-526c47f6`，镜像为 `<ACR>/newsscout@sha256:2a990ebb968d1fd4fc846cad21d86cf1042208fc4ee4d95f5559877cab97f3e5`。12:46:40确认r12副本归零，12:47:44新revision Ready，12:48:36完成Single/min=max=1交接；其间约63秒无可用副本。r13只修改窗口激活、页面保留与恢复层；完整记录保留在 `release-r13-20260928.json`。
 
 ### 2026-09-24：r12记录（历史）
 

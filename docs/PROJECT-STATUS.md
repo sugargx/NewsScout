@@ -10,13 +10,15 @@
 
 ## 最新修复与运行记录（2026-09-28）
 
-**云端r13已发布：ACR `cke`、Ready `newsscout--0000010`，12:48:36完成Single/1副本交接。** 12:46:40先确认r12 Worker归零，12:47:44新版本就绪，其间约63秒无可用副本。168个构建输入与r12数量相同，只修改 `apps\web\src\auth.tsx` 和 `auth.css`；API、数据库、迁移、Gateway与cloud-host未改。16项环境变量、7项机密、唯一受邀读者、0条IP规则、AuthConfig、身份、registry、资源与扩缩设置保持，环境变量只有发布ID不同。
+**云端r14已发布：ACR `ckh`、Ready `newsscout--0000011`，Single/min=max=1。** 镜像为 `sha256:af61d1c5…4276`。Azure Copilot已从静态PAT迁移到GitHub App Device Flow和Key Vault可轮换bundle：独立账号固定、首次/轮换后账号核验、90分钟主动刷新窗口、失效refresh token不重用，以及固定版本元数据写回探针。应用不再包含 `COPILOT_GITHUB_TOKEN` 或旧PAT secret引用，运行secret从7项降为6项；旧Key Vault secret已软删除、未purge。
 
-窗口隐藏、失焦或切换到其他应用时，已接受的私有工作台继续挂载；新的私有API请求立即暂停，返回窗口后静默核对session，只有同一身份确认后才放行。首次连接仍使用公开几何骨架；核对超过8秒或失败时在原页面上显示恢复层。账号变化、401或邀请撤销仍清除私有缓存并重新载入。恢复层与移动Drawer、隐私弹窗共用Fluent/Tabster模态栈，并在节点过渡后恢复到实际仍连接的控件。
+部署验证包括：容器内账号/Key Vault实际写回/16模型零推理探针，精确Terra可用；一条真实 `gpt-5.6-terra` / `low` 摘要HTTP200；运行时强制refresh创建第二个Key Vault版本并更新refresh有效期至2027-03-28，revision重启后常驻Gateway仍 `ready/accountVerified/durable=true`；最终日志无credential、持久化或进程错误。第一次部署因不受East Asia支持的Managed Identity API版本失败并自动恢复r13；改用 `2024-11-30` 后what-if 0 delete并成功切换。
 
-测试结果：最终生产构建上的 `cloud-session` 31/31、`cloud-workflows` 16/16、响应式证据10/10通过；独立UI评审复查接受。部署后的真实Azure HTML/JS/CSS在拦截私有API后8/8通过，入口脚本和样式的字节数及SHA-256与最终本机构建一致。App Insights从滚动开始只记录一次预期匿名401，0个5xx、0个异常。自动化浏览器没有Microsoft登录态，因此真实Windows应用切换仍需唯一获邀用户本人复查，不能把mock前端结果写成OAuth或真实网络验收。
+本地验证为Gateway 12/12、Node全仓typecheck/构建、Rust 176通过/12忽略、Bicep、PowerShell AST与ACR Linux构建。r13的窗口失焦页面保留和会话闸门继续存在；唯一获邀用户、数据库schema30、5000共享额度、资源规格和数据均未改变。GitHub上的旧PAT已通过官方吊销接口撤销并实测401；Key Vault副本再次软删除，保留至2026-12-27的恢复窗口。
 
-r13无schema或数据变化，云端仍沿用r12的schema30；若只回退本轮前端，可在保留当前身份、机密与邀请名单的前提下重新部署r12 digest，不需要因r13恢复数据库。日常本地实例保持停止，本轮只临时启动15173生产预览做测试并已停止，没有启动、停止或迁移5173/8080/8787/55433日常栈，本地数据仍为schema27。
+## 2026-09-28 r13记录（历史）
+
+**云端r13为ACR `cke`、Ready `newsscout--0000010`，现已由r14替代。** 它只修改 `apps\web\src\auth.tsx` 和 `auth.css`，实现窗口隐藏/失焦时保留已接受工作台、暂停新私有请求、返回后静默核对session，以及慢速/失败恢复层；API、数据库、迁移、Gateway与cloud-host未改。最终生产构建 `cloud-session` 31/31、`cloud-workflows` 16/16、响应式证据10/10和部署前端mock 8/8通过。
 
 ## 2026-09-24 r12记录（历史）
 

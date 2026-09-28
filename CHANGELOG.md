@@ -2,6 +2,15 @@
 
 本文件记录 ScoutNews 的已实现变更与文档范围，不是实时运行状态。当前包版本为 `0.2.0`；以下日期不代表新增 Git tag、包版本或完成整个 V0。
 
+## 2026-09-28：Azure Copilot GitHub App 自动轮换
+
+- Azure不再注入 `COPILOT_GITHUB_TOKEN` fine-grained PAT，改用GitHub App Device Flow user token bundle。Key Vault保存generation、固定账号ID、`ghu_`/`ghr_`及到期时间；独立非秘密环境配置固定预期数字账号，首次及每代轮换后调用 `/user` 核验。
+- access token剩余90分钟时主动refresh；GitHub返回新token对后先保留并持久化新一代，再做账号核验。瞬时账号核验或Key Vault写入失败不会重用已经失效的旧refresh token；健康状态区分账号核验、持久化和14天内到期。
+- Key Vault写权限只授予bundle secret；切换探针通过固定版本元数据写入/读回验证权限，不把旧bundle另写成最新版本。SDK client在运行子进程断开后会重新start，错误后丢弃失效client。
+- 云端r14为ACR `ckh`、Ready `newsscout--0000011`、Single/1，镜像 `sha256:af61d1c5…4276`。零推理探针确认16个模型及Terra；真实Terra/low摘要200；强制refresh创建第二个Key Vault版本，revision重启后Gateway仍ready/durable。旧PAT经GitHub官方接口吊销并验证401，Key Vault副本再次软删除。
+
+本地Gateway 12/12、Node typecheck/build、Rust 176通过/12忽略、Bicep/PowerShell及ACR Linux构建通过。第一次部署因不受East Asia支持的Managed Identity API版本失败并自动恢复r13，修正为 `2024-11-30` 后what-if 0 delete并成功切换。详细证据见 [测试指南](docs/TESTING.md) §18 和 [Azure手册](docs/AZURE-PREVIEW.md)。
+
 ## 2026-09-28：窗口切换保留工作台与会话闸门
 
 - 已接受的私有工作台在窗口隐藏、失焦或切换到其他应用时继续挂载，不再用整页骨架替换。离开窗口会立即暂停新的私有API请求；返回后批量合并重复的 `visibilitychange` / `focus` 事件，并静默核对当前session，只有同一身份和新的CSRF数据确认后才放行。

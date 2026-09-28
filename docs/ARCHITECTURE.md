@@ -34,6 +34,8 @@ Container Apps 为 Consumption、1 CPU/2 GiB、min=max=1，使用 Single revisio
 
 Azure Copilot 使用独立的 GitHub App Device Flow。一次授权后，Key Vault 保存带版本、generation ID、账号ID及两类到期时间的 JSON bundle；不保存 GitHub App client secret。预期GitHub数字账号ID还作为独立的非秘密部署配置固定，Gateway不信任可写bundle自报的账号。Gateway 以UAMI读取bundle，在首次提供token前调用 `/user` 核验账号，在access token剩余90分钟时主动刷新，也接受SDK会话在剩余1小时内触发刷新。GitHub一旦返回新的 `ghu_` / `ghr_` 对，旧refresh token已经失效，因此Gateway先把新一代保留在内存并尝试写入Key Vault，再针对同一新access token核验 `/user`；瞬时核验失败只重试这对新凭据，不会再次提交已消费的旧refresh token。账号与Key Vault写回都验证后健康状态才ready；持久化失败继续标记`durable=false`并重试，不退回旧PAT、其他账号或其他模型。正常持续运行会不断延长refresh token窗口；授权被撤销或超过整个refresh有效期未能轮换时才需要再次完成Device Flow。
 
+该链路已于2026-09-28作为r14部署：容器配置无旧PAT，零推理模型探针、真实Terra/low摘要、强制refresh产生新Key Vault版本、revision重启后的常驻Gateway状态均通过；旧PAT secret已软删除。固定版本元数据探针只验证写权限，不把旧bundle写成最新版本。
+
 外部匿名与伪造principal的私有session请求实际返回401。真正OAuth后的前门读取200早于维护调用；后续维护通道使用该已建档批准profile进行两次采集，不能把这种调用冒充浏览器行为或第二账号验证。不得直接暴露Rust或以可信本地模式绕过Azure边界。
 
 ### 数据库、身份和共享材料

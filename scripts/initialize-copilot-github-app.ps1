@@ -179,7 +179,7 @@ try {
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         try {
             $saved = Invoke-RestMethod -Method Put `
-                -Uri "$vaultBase/secrets/$SecretName?api-version=7.4" `
+                -Uri "$vaultBase/secrets/${SecretName}?api-version=7.4" `
                 -Headers $vaultHeaders -ContentType 'application/json' -Body $vaultPayload
             break
         } catch {
@@ -187,7 +187,7 @@ try {
             Start-Sleep -Seconds (2 * $attempt)
         }
     }
-    $verified = Invoke-RestMethod -Uri "$vaultBase/secrets/$SecretName?api-version=7.4" `
+    $verified = Invoke-RestMethod -Uri "$vaultBase/secrets/${SecretName}?api-version=7.4" `
         -Headers $vaultHeaders
     $storedBundle = $verified.value | ConvertFrom-Json
     if ($storedBundle.generationId -ne $generationId) {

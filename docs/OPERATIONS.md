@@ -278,4 +278,4 @@ pwsh -NoProfile -File .\services\api\tests\run-owner-upgrade.ps1 `
 | 恢复与回退 | 云端 PITR 恢复到新私网服务器；镜像回退用已确认 digest 并核对 schema 兼容，不回滚迁移文件或覆盖个人数据库 |
 | 轮换 | access token到期前自动轮换并把新的refresh token写成Key Vault新版本；账号由独立数字ID固定，`ready=false`、`accountVerified=false`、`durable=false`、refresh失败或14天内到期必须告警。切换验收必须对当前Key Vault版本做不改token值的元数据写入并读回，不能把旧bundle另写为最新版本。授权撤销或refresh token完全过期时用一次性Device Flow重新初始化，不能回退PAT |
 
-采集取消、自助账号删除和完整使用分析面板仍未提供。开放预览保留Microsoft登录，并新增External ID邮箱+密码自助注册；两种受支持provider认证后立即创建独立应用账号，不再维护批准名单。运行参数必须固定客户provider别名、exact issuer、discovery endpoint、client ID与Key Vault secret名；回退旧镜像也不得重新注入邀请名单逻辑。手机号目前不能作为External ID第一登录因子，只能在明确启用付费短信能力后作为MFA。第二真实账号及私有偏好/编辑/发布/导出live覆盖仍有限，见 [第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)；文档命令不表示已执行。
+采集取消、自助账号删除和完整使用分析面板仍未提供。使用数据待办是建立仅维护者可见的Azure Workbook：服务端从账号创建/最后活动时间生成无原始身份的DAU/WAU/MAU、新增用户、登录入口占比及留存聚合，排除发布探针账号；Workbook再组合App Insights请求量、成功率、p50/p95、慢接口及采集/摘要健康。当前选择加入的页面事件只能作为样本，不能作为全站活跃用户口径。开放预览保留Microsoft登录，并新增External ID邮箱+密码自助注册；两种受支持provider认证后立即创建独立应用账号。手机号目前不能作为External ID第一登录因子，只能在明确启用付费短信能力后作为MFA。真实邮箱账号及私有偏好/编辑/发布/导出live覆盖仍有限，见 [第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)；文档命令不表示已执行。

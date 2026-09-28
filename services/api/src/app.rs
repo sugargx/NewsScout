@@ -52,10 +52,11 @@ pub struct ProviderConnection {
     pub last_error: Option<String>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopilotAuthMode {
     Local,
     Oauth,
+    Service,
 }
 
 impl CopilotAuthMode {
@@ -63,7 +64,20 @@ impl CopilotAuthMode {
         match self {
             Self::Local => "local",
             Self::Oauth => "oauth",
+            Self::Service => "service",
         }
+    }
+}
+
+fn configured_cloud_copilot_mode(value: Option<&str>) -> Result<CopilotAuthMode, ApiError> {
+    match value.map(str::trim) {
+        Some("github-app") => Ok(CopilotAuthMode::Service),
+        Some("disabled") | None | Some("") => Err(ApiError::Configuration(
+            "Cloud Copilot managed credential is disabled".into(),
+        )),
+        Some(_) => Err(ApiError::Configuration(
+            "SCOUTNEWS_COPILOT_AUTH_MODE must be github-app or disabled".into(),
+        )),
     }
 }
 
@@ -998,9 +1012,10 @@ async fn run_ingestion(State(state): State<AppState>) -> Result<Json<serde_json:
 async fn model_providers(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let github_ready = ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]
-        .iter()
-        .all(|key| env::var(key).is_ok_and(|value| !value.is_empty()));
+    let github_ready = !state.auth.cloud()
+        && ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]
+            .iter()
+            .all(|key| env::var(key).is_ok_and(|value| !value.is_empty()));
     let preferred = automation::settings(&state).await?.model;
     let connection = state.provider.read().await;
     let default_model = select_default_model(&connection.models, &preferred);
@@ -1023,6 +1038,8 @@ async fn model_providers(
                 }
             } else if let Some(error) = &connection.last_error {
                 error.clone()
+            } else if state.auth.cloud() {
+                "Cloud Copilot managed credential is not configured or verified".into()
             } else {
                 "可直接连接本机已登录的 GitHub/Copilot 账户，无需 OAuth App".into()
             },
@@ -1055,6 +1072,9 @@ async fn model_providers(
 
 async fn github_start(State(state): State<AppState>) -> Result<Redirect, ApiError> {
     require_database(&state)?;
+    if state.auth.cloud() {
+        return Err(ApiError::Forbidden);
+    }
     let client_id = env::var("GITHUB_CLIENT_ID")
         .map_err(|_| ApiError::Configuration("GITHUB_CLIENT_ID 未配置".into()))?;
     let callback = env::var("GITHUB_CALLBACK_URL")
@@ -1090,6 +1110,9 @@ async fn github_callback(
     State(state): State<AppState>,
     Query(query): Query<OAuthCallback>,
 ) -> Result<Redirect, ApiError> {
+    if state.auth.cloud() {
+        return Err(ApiError::Forbidden);
+    }
     let _guard = state
         .generation_lock
         .try_lock()
@@ -1162,18 +1185,21 @@ fn gateway_request(
         .timeout(std::time::Duration::from_secs(60));
     Ok(match mode {
         CopilotAuthMode::Local => request,
-        CopilotAuthMode::Oauth => request.bearer_auth(if state.auth.cloud() {
-            env::var("COPILOT_GITHUB_TOKEN")
-                .ok()
-                .filter(|token| !token.trim().is_empty())
-                .ok_or_else(|| {
-                    ApiError::Configuration(
-                        "Cloud Copilot service credential is not configured".into(),
-                    )
-                })?
-        } else {
-            oauth_token()?
-        }),
+        CopilotAuthMode::Oauth if !state.auth.cloud() => request.bearer_auth(oauth_token()?),
+        CopilotAuthMode::Service if state.auth.cloud() => {
+            configured_cloud_copilot_mode(env::var("SCOUTNEWS_COPILOT_AUTH_MODE").ok().as_deref())?;
+            request.header("X-ScoutNews-Copilot-Credential", "service")
+        }
+        CopilotAuthMode::Oauth => {
+            return Err(ApiError::Configuration(
+                "Cloud Copilot cannot use a caller or static OAuth token".into(),
+            ));
+        }
+        CopilotAuthMode::Service => {
+            return Err(ApiError::Configuration(
+                "Managed Copilot service credentials are available only in Azure mode".into(),
+            ));
+        }
     })
 }
 
@@ -1274,12 +1300,21 @@ async fn probe_connection(state: &AppState, mode: CopilotAuthMode) -> Result<(),
 
 pub async fn restore_copilot(state: &AppState) -> Result<(), ApiError> {
     if state.auth.cloud() {
-        if !env::var("COPILOT_GITHUB_TOKEN").is_ok_and(|token| !token.trim().is_empty()) {
-            state.provider.write().await.last_error =
-                Some("Cloud Copilot service credential is not configured".into());
-            return Ok(());
-        }
-        let result = probe_connection(state, CopilotAuthMode::Oauth).await;
+        let mode = match configured_cloud_copilot_mode(
+            env::var("SCOUTNEWS_COPILOT_AUTH_MODE").ok().as_deref(),
+        ) {
+            Ok(mode) => mode,
+            Err(ApiError::Configuration(message)) => {
+                *state.provider.write().await = ProviderConnection {
+                    auth_mode: Some(CopilotAuthMode::Service),
+                    last_error: Some(message),
+                    ..ProviderConnection::default()
+                };
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        let result = probe_connection(state, mode).await;
         state.provider.write().await.account_login = None;
         return result;
     }
@@ -1298,6 +1333,9 @@ async fn copilot_connect_local(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_database(&state)?;
+    if state.auth.cloud() {
+        return Err(ApiError::Forbidden);
+    }
     require_local_login_enabled()?;
     let _guard = state
         .generation_lock
@@ -1327,6 +1365,9 @@ async fn copilot_probe(State(state): State<AppState>) -> Result<Json<serde_json:
 async fn copilot_disconnect(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.auth.cloud() {
+        return Err(ApiError::Forbidden);
+    }
     let _guard = state
         .generation_lock
         .try_lock()
@@ -1500,6 +1541,20 @@ mod tests {
             let mut response = expected.clone();
             response.as_object_mut().unwrap().remove(field);
             assert!(validate_cloud_generation_response(&response).is_err());
+        }
+    }
+
+    #[test]
+    fn cloud_copilot_mode_requires_explicit_github_app_configuration() {
+        assert_eq!(
+            configured_cloud_copilot_mode(Some("github-app")).unwrap(),
+            CopilotAuthMode::Service
+        );
+        for value in [None, Some(""), Some("disabled"), Some("pat"), Some("oauth")] {
+            assert!(matches!(
+                configured_cloud_copilot_mode(value),
+                Err(ApiError::Configuration(_))
+            ));
         }
     }
 

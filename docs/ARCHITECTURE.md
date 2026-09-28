@@ -10,7 +10,7 @@
 | Azure Node host | `services\cloud-host\src\server.ts`、`app.ts` | 唯一面向平台 ingress 的3000端口；完整静态页面、受控 API 转发、内部进程监督、私有导出归档与手动遥测。按 `Accept-Encoding` 优先返回 br、其次 gzip：1KB以上的 HTML/JS/CSS/SVG 在启动时预压缩并缓存，1KB以上或长度未知的 JSON 响应流式压缩 |
 | API / Worker | `services\api\src\main.rs`、`app.rs` | Axum API、来源采集、摘要队列、日程与选文；后台任务由同一 API 进程启动，不是另一个已部署 Worker 服务 |
 | 数据库 | `services\api\migrations` | PostgreSQL；原始材料、来源配置、摘要、阅读状态、快照和任务持久化 |
-| Copilot Gateway | `services\copilot-gateway\src\index.ts` | 通过 Copilot SDK 执行受约束的模型任务；不向公开访客提供代理模型接口 |
+| Copilot Gateway | `services\copilot-gateway\src\index.ts`、`github-credential.ts` | 通过 Copilot SDK 执行受约束的模型任务；Azure端管理 GitHub App user token 轮换，不向公开访客提供代理模型接口 |
 | 来源浏览器读取 | `services\source-access\browser-article.cjs`、`services\api\src\browser_articles.rs` | API 调用的受限原始博客读取助手，不是通用浏览器或持续运行的独立 HTTP 服务 |
 | 旧公开阅读网关 | `services\public-reader\server.cjs` | 5190匿名只读入口、静态页面与允许列表 API；读取本地 API，不是 Azure host，不直接连接数据库或模型 |
 | 本地进程管理 | `scripts\runtime-common.ps1` 与 `start/stop-*.ps1` | 注册并验证自己启动的进程、等待服务就绪、保存运行元数据；不按进程名称批量清理 |
@@ -31,6 +31,8 @@ Container Apps 为 Consumption、1 CPU/2 GiB、min=max=1，使用 Single revisio
 4. 写请求必须同时匹配精确 `WEB_ORIGIN` 和该用户的 CSRF token；读取若带 Origin 也须匹配。前端从 `/api/v1/session` 获取会话及能力，账号切换/过期时丢弃私有缓存。仅隐藏按钮不构成授权。
 5. 云端拒绝模型提供方/连接、阅读设置、模型处理设置/全局重试及分享基础地址修改；主题、来源、采集、草稿和隐私仍属完整应用。已部署的 `approved_accounts` 使用Bicep `invitedReaders` array（新环境默认 `[]`、最多100项），JSON传入Rust必需的 `SCOUTNEWS_INVITED_READERS`；缺失/格式错误拒绝启动，`[]`拒绝全部私有API。只匹配真实认证用户申请编号中的 `<tenant UUID>:<object UUID>`，不按邮箱/名称/整个tenant或CLI guest OID推断；当前1项名单仅私有保存。
 6. 每个私有请求校验名单；有效但未获邀principal在创建 `app_users` 前收到403 `invitation_required` 和本人 `invitationKey`。UI只读显示申请编号，需本人手动发送，不自动批准。已完成首个真实OAuth/批准/读取；撤销后的document、mutation和缓存清除/重载是实现契约，尚无完整真人撤销流程验收。匿名显式快照与健康检查保持例外；证据分层见 [Azure手册第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)。
+
+Azure Copilot 使用独立的 GitHub App Device Flow。一次授权后，Key Vault 保存带版本、generation ID、账号ID及两类到期时间的 JSON bundle；不保存 GitHub App client secret。预期GitHub数字账号ID还作为独立的非秘密部署配置固定，Gateway不信任可写bundle自报的账号。Gateway 以UAMI读取bundle，在首次提供token前调用 `/user` 核验账号，在access token剩余90分钟时主动刷新，也接受SDK会话在剩余1小时内触发刷新。GitHub一旦返回新的 `ghu_` / `ghr_` 对，旧refresh token已经失效，因此Gateway先把新一代保留在内存并尝试写入Key Vault，再针对同一新access token核验 `/user`；瞬时核验失败只重试这对新凭据，不会再次提交已消费的旧refresh token。账号与Key Vault写回都验证后健康状态才ready；持久化失败继续标记`durable=false`并重试，不退回旧PAT、其他账号或其他模型。正常持续运行会不断延长refresh token窗口；授权被撤销或超过整个refresh有效期未能轮换时才需要再次完成Device Flow。
 
 外部匿名与伪造principal的私有session请求实际返回401。真正OAuth后的前门读取200早于维护调用；后续维护通道使用该已建档批准profile进行两次采集，不能把这种调用冒充浏览器行为或第二账号验证。不得直接暴露Rust或以可信本地模式绕过Azure边界。
 
@@ -57,7 +59,7 @@ Node宿主在客户端放弃GET/HEAD时向上游传播取消，正常响应结�
 ### Azure 资源与观测
 
 - PostgreSQL17、Burstable B1ms、32 GiB，委派子网/私有 DNS，禁止公网入口；`verify-full` 校验 TLS 与主机名。7天本地冗余备份，无 HA；`PG_TRGM` allowlist 已配置，真正 `CREATE EXTENSION` 仍由应用迁移执行。
-- ACR Basic 禁止匿名拉取与 registry admin，通过 UAMI `AcrPull` 拉取镜像；运行参数引用 Key Vault，不把凭据放镜像或构建参数。数据库目前用密码连接，不声称已实现数据库 Entra token 自动刷新。
+- ACR Basic 禁止匿名拉取与 registry admin，通过 UAMI `AcrPull` 拉取镜像；运行参数引用 Key Vault，不把凭据放镜像或构建参数。UAMI在vault范围保留读取权限，只有 `copilot-github-oauth-bundle` 另授 secret 级 Secrets Officer 以持久化轮换结果。数据库目前用密码连接，不声称已实现数据库 Entra token 自动刷新。
 - `exports` Blob 容器禁止匿名与共享密钥，通过 UAMI/Entra RBAC 写入 `<user-uuid>/<random-uuid>.json`。Blob、ACR、Key Vault 的服务端点不是 private endpoint；“私有”描述访问授权，只有上述数据库明确使用私网。
 - Node 手动创建有限路由模板的 trace 与请求结果/耗时日志，未知路由记作 `unmatched`，不采集原始查询、正文或身份头。Azure Monitor 使用托管身份，未启用自动请求/依赖内容采集；Logs/Insights 保留30天，Log Analytics 日配额0.25 GiB，不是总费用硬上限。
 - 可选产品事件与必要运行日志分开：默认不收集；当前前端仅发送 `page_view`，后端有限事件 schema 不等于完整行为埋点或分析面板。事件按账号保存并保留30天，撤回同意删除该用户已有事件。
@@ -168,7 +170,7 @@ r11 起当前精选按“期”提供，每期24小时不变。日版模式下�
 
 - 私有 API 面向可信的本地单用户。来源检查和 CORS 不是多用户认证/租户隔离，不能因此把 8080 暴露到公网。
 - Gateway 的 `/v1/*` 需要 API 与 Gateway 共享的内部密钥；健康检查不代表任何访客有权调用模型。
-- 可信本地账号通道不使用环境中的服务 token；Azure 独立使用 Key Vault 服务凭据，不读本机 keyring。两种模式精确模型不可用时均明确暂停，不使用自动模型选择或隐式备用账户。
+- 可信本地账号通道不使用环境中的服务 token；Azure只接受显式 `github-app` 托管模式，通过内部共享密钥标记请求，由Gateway从Key Vault取用和轮换凭据。旧 `COPILOT_GITHUB_TOKEN` 在cloud-host中属于启动错误。两种模式精确模型不可用时均明确暂停，不使用自动模型选择或隐式备用账户。
 - 摘要只使用传入并已保留的材料，不调用工具、不读取项目文件、不自行补抓原文。来源浏览器助手是单独的、有界采集流程。
 - 公开网关采用请求、路由和字段允许列表，而不是把整个私有 API 透传。精确限制见 [公开阅读契约](PUBLIC-READER.md)。
 - 备份含个人配置、偏好与材料；公开访客的浏览器存储不在站主数据库备份内。

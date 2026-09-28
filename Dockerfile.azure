@@ -25,7 +25,7 @@ RUN npm run build
 # This stage keeps package manifests and nested workspace production dependencies, but no TS sources.
 FROM node-dependencies AS production-dependencies
 RUN npm prune --omit=dev --no-audit --no-fund \
-    && ./node_modules/.bin/copilot --version
+    && node --input-type=module -e "import { CopilotClient } from '@github/copilot-sdk'; const client = new CopilotClient({ mode: 'empty', useLoggedInUser: false, gitHubToken: 'build-probe', baseDirectory: '/tmp/copilot-build-probe', workingDirectory: '/tmp' }); if (typeof client.start !== 'function' || typeof client.stop !== 'function') throw new Error('Copilot SDK runtime is incomplete');"
 
 FROM ${RUST_IMAGE} AS rust-build
 WORKDIR /app
@@ -49,6 +49,7 @@ COPY --from=node-build /app/apps/web/dist/ ./apps/web/dist/
 COPY --from=node-build /app/services/copilot-gateway/dist/ ./services/copilot-gateway/dist/
 COPY --from=node-build /app/services/cloud-host/dist/ ./services/cloud-host/dist/
 COPY services/source-access/browser-article.cjs ./services/source-access/browser-article.cjs
+COPY scripts/probe-cloud-copilot.mjs ./scripts/probe-cloud-copilot.mjs
 COPY --from=rust-build /app/services/api/target/release/scoutnews-api ./bin/scoutnews-api
 RUN test -s apps/web/dist/index.html \
     && test -s services/copilot-gateway/dist/index.js \

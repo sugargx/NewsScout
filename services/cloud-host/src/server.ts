@@ -18,6 +18,22 @@ if (required("SCOUTNEWS_AUTH_MODE") !== "azure") throw new Error("The cloud host
 required("DATABASE_URL");
 required("SCOUTNEWS_CSRF_SECRET");
 const gatewaySecret = required("COPILOT_GATEWAY_SHARED_SECRET");
+const copilotAuthMode = required("SCOUTNEWS_COPILOT_AUTH_MODE");
+if (!["disabled", "github-app"].includes(copilotAuthMode)) {
+  throw new Error("SCOUTNEWS_COPILOT_AUTH_MODE must be disabled or github-app.");
+}
+if (process.env.COPILOT_GITHUB_TOKEN?.trim()) {
+  throw new Error("Legacy COPILOT_GITHUB_TOKEN injection is forbidden in the cloud host.");
+}
+if (copilotAuthMode === "github-app") {
+  required("SCOUTNEWS_COPILOT_GITHUB_CLIENT_ID");
+  required("SCOUTNEWS_COPILOT_GITHUB_ACCOUNT_ID");
+  required("SCOUTNEWS_COPILOT_OAUTH_BUNDLE_SECRET_URL");
+} else if (process.env.SCOUTNEWS_COPILOT_GITHUB_CLIENT_ID?.trim() ||
+    process.env.SCOUTNEWS_COPILOT_GITHUB_ACCOUNT_ID?.trim() ||
+    process.env.SCOUTNEWS_COPILOT_OAUTH_BUNDLE_SECRET_URL?.trim()) {
+  throw new Error("Managed Copilot credential settings are forbidden while Copilot is disabled.");
+}
 const origin = new URL(required("WEB_ORIGIN"));
 if (origin.protocol !== "https:" || origin.pathname !== "/" || origin.search || origin.username || origin.password) {
   throw new Error("WEB_ORIGIN must be the HTTPS application origin.");

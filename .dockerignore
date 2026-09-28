@@ -44,6 +44,9 @@ services/cloud-host/**
 services/source-access/**
 !services/source-access/package.json
 !services/source-access/browser-article.cjs
+!scripts/
+scripts/**
+!scripts/probe-cloud-copilot.mjs
 !shared/
 !shared/**
 

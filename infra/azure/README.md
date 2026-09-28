@@ -45,7 +45,9 @@ capacity reservation; deployment errors remain authoritative.
 
 1. `resource-group.bicep` creates the tagged, isolated group.
 2. `bootstrap.bicep` creates the user-assigned identity, RBAC-only Key Vault,
-   purge protection, and resource-scoped Secrets User/Secrets Officer assignments.
+   purge protection, and the vault-scoped read assignment. When GitHub App mode is
+   enabled, `cloud-app.bicep` adds Secrets Officer only at the
+   `copilot-github-oauth-bundle` secret scope so the runtime can persist rotations.
 3. The runner creates a cryptographically random administrator password directly
    in Key Vault. Deployment parameters contain a **Key Vault reference**, never a
    plaintext password. Existing secrets are reused. When a PostgreSQL server
@@ -163,6 +165,10 @@ Before a separate runtime deployment:
 | `SCOUTNEWS_CSRF_SECRET` | Parent-owned application secret, at least 32 characters, resolved from Key Vault |
 | `SCOUTNEWS_PROXY_TOKEN` | Parent-owned application secret, at least 32 characters |
 | `COPILOT_GATEWAY_SHARED_SECRET` | Parent-owned application secret, resolved from Key Vault |
+| `SCOUTNEWS_COPILOT_AUTH_MODE` | Explicitly `disabled` or `github-app`; there is no PAT fallback |
+| `SCOUTNEWS_COPILOT_GITHUB_CLIENT_ID` | Public GitHub App client ID; required only in `github-app` mode |
+| `SCOUTNEWS_COPILOT_GITHUB_ACCOUNT_ID` | Independently pinned numeric GitHub account ID; required only in `github-app` mode |
+| `SCOUTNEWS_COPILOT_OAUTH_BUNDLE_SECRET_URL` | Unversioned Key Vault URL for `copilot-github-oauth-bundle`; required only in `github-app` mode |
 | `WEB_ORIGIN` | Exact `https://<apphost>` origin after the authenticated app hostname is determined |
 | `AZURE_CLIENT_ID` | Foundation `identity.clientId`, for the attached user-assigned identity |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Key Vault `applicationinsights-connection-string`; MI exporter credential is also required |
@@ -179,11 +185,12 @@ stores. The container build context excludes those local artifacts.
 Azure startup must ignore local `.env` files, reject demo/public-only cloud mode,
 and require the API bind address `127.0.0.1:8080`.
 
-`COPILOT_GITHUB_TOKEN` is an optional, explicitly supplied service secret, not a
-restored workstation credential. If it is absent, the Copilot account remains
-blocked while the rest of the application stays usable. It is separate from the
-required `COPILOT_GATEWAY_SHARED_SECRET` and must never be a Docker build argument
-or client-visible setting.
+Azure Copilot uses a GitHub App user credential created through Device Flow by
+`scripts\initialize-copilot-github-app.ps1`. The versioned JSON bundle is stored
+only in Key Vault; the public client ID and unversioned secret URL are runtime
+settings. The Gateway pins the numeric GitHub account ID and rotates both access
+and refresh tokens. `COPILOT_GITHUB_TOKEN` is legacy configuration: if it appears
+in the cloud process environment, startup fails rather than silently using it.
 
 ## Cost and retention boundaries
 

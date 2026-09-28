@@ -287,7 +287,10 @@ Single revision 更新会先启动新 revision，旧进程可能暂时保留；*
 | `SCOUTNEWS_PROXY_TOKEN` | Key Vault `proxy-token`，至少32字节；由Node写入上游头 |
 | `SCOUTNEWS_CSRF_SECRET` | Key Vault `csrf-secret`，至少32字节；用于每用户 token |
 | `COPILOT_GATEWAY_SHARED_SECRET` | Key Vault `gateway-shared-secret`；API/Gateway必须同值 |
-| `COPILOT_GITHUB_TOKEN` | 仅启用服务模型时引用 `copilot-github-token`，不读本机 keyring |
+| `SCOUTNEWS_COPILOT_AUTH_MODE` | `disabled` 或 `github-app`；必须显式选择，不接受PAT回退 |
+| `SCOUTNEWS_COPILOT_GITHUB_CLIENT_ID` | GitHub App公开Client ID，仅 `github-app` 模式设置 |
+| `SCOUTNEWS_COPILOT_GITHUB_ACCOUNT_ID` | 预期专用GitHub账号的数字ID；独立于可写bundle固定，仅 `github-app` 模式设置 |
+| `SCOUTNEWS_COPILOT_OAUTH_BUNDLE_SECRET_URL` | Key Vault `copilot-github-oauth-bundle` 的无版本URL，仅 `github-app` 模式设置 |
 | `WEB_ORIGIN` | 实际应用的精确 HTTPS origin，无尾随 `/`、路径或 query |
 | `AZURE_CLIENT_ID` | 资源访问用 UAMI client ID，**不是** Microsoft 登录注册的 client ID |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | 同名 Key Vault secret `applicationinsights-connection-string`；导出器同时使用 ManagedIdentityCredential |
@@ -365,7 +368,20 @@ if ($login.subscriptionId -ne $subscription -or $login.tenantId -ne $tenant) {
 
 `identity.json` 仅含注册元数据；DPAPI 文件内容不得查看或放入源码/构建上下文。注册脚本复用已有记录，设置准确的 `/.auth/login/aad/callback`、退出和隐私地址；新建凭据有效期为90天，需维护到期提醒。`prepare-cloud-secrets.ps1` 只补缺失的应用 secret，保留现有值，**不是轮换命令**。丢失注册记录或凭据文件先找回受控交接，不删除记录来强迫脚本生成新注册/新密码。
 
-独立 `copilot-github-token` 已由维护者准备，不重新索取试用者 token。实际账号权限页的 **Copilot Requests 是 Read-only，不是 Write**，无需仓库写权限；不为失败探测添加仓库权限或扩大授权。`probe-cloud-copilot.mjs` 通过安全注入的服务凭据启动独立 SDK、列出精确模型，只输出模型ID、布尔状态、数量和有限错误类别，不输出凭据，也不推理。不要把 token 写入命令行、聊天、源文件或输出；此探测也不能代替容器内启动和真实摘要验证。
+Copilot不再使用 `copilot-github-token` PAT。先在维护者账号创建专用GitHub App，开启Device Flow和到期的user-to-server token，不授予NewsScout不使用的仓库、组织或Webhook权限。只记录公开Client ID；不要创建、下载或部署client secret/private key作为此流程的依赖。
+
+完成App设置后，由预期的专用GitHub账号执行一次授权。脚本只显示GitHub验证URL和一次性user code；token响应仅保存在进程内。它会核对登录名及数字账号ID，立即刷新一次以证明无client secret的续期路径可用，再把第二代 `ghu_` / `ghr_` bundle直接写入Key Vault。保存脚本输出的非秘密 `accountId`，部署时将它作为独立账号固定值传入，不能只信任bundle中的同名字段：
+
+```powershell
+.\scripts\initialize-copilot-github-app.ps1 `
+    -SubscriptionId $subscription -TenantId $tenant `
+    -VaultName $f.keyVault.name `
+    -GitHubClientId '<public-github-app-client-id>' `
+    -ExpectedGitHubLogin '<dedicated-github-login>' `
+    -OpenBrowser
+```
+
+已有bundle时脚本默认拒绝覆盖；只有明确重新授权才使用 `-ReplaceExisting`。正常运行中Gateway在access token剩余90分钟时刷新。GitHub返回新token对后旧refresh token已经失效，所以Gateway先保留并尝试持久化新一代，再对同一新access token核对独立配置的数字账号ID；瞬时 `/user` 失败只能重试新一代，不能再次使用旧refresh token。`probe-cloud-copilot.mjs` 必须在已构建镜像/受控Azure运行环境中执行，它通过UAMI读取同一bundle、对当前secret版本执行不改token值的元数据写入并读回、核对账号并列出模型能力，但不发起推理。固定版本元数据探针不会把并发刷新前的旧token重新写成最新版本。任何输出都不得包含token或secret值。
 
 ## 6. Linux 构建、digest 部署与入口开放
 
@@ -447,10 +463,13 @@ $appParameters = @(
     "identityName=$($f.identity.id.Split('/')[-1])"
     "identityClientId=$($f.identity.clientId)"
     "registryHost=$($f.registry.loginServer)"
+    "vaultName=$($f.keyVault.name)"
     "vaultUri=$($f.keyVault.uri)"
     "exportStorageUrl=$($f.storage.blobEndpoint)"
     "loginClientId=$($login.clientId)"
-    "copilotSecretPresent=false"
+    "copilotAuthMode=disabled"
+    "copilotGitHubClientId="
+    "copilotGitHubAccountId="
     "invitedReaders=[]"
     "releaseId=$release"
 )
@@ -471,6 +490,29 @@ if ($LASTEXITCODE -ne 0) { throw '认证应用部署失败，保持流量封闭�
 ```
 
 `openToUsers=false` 仍保持 `external=true`、HTTPS-only、targetPort3000；名为 `authentication-bootstrap` 的 ingress Allow 规则只接受不可用于真实公众访问的文档保留地址 `192.0.2.1/32`，阻断真实公众流量，避免 app 与 auth 子资源创建之间的匿名窗口。这不是关闭后台 Worker。先检查 Key Vault/UAMI、私网 DNS/证书、启动迁移/角色、`/health` probes 和实际运行 digest。没有真实 SQL 成功时，不以基座 VNet 配置作为替代，也不临时打开数据库公网或降低 TLS 模式。
+
+#### 6.2.1 启用可自动轮换的GitHub App凭据
+
+只有第5节的Device Flow初始化成功、Key Vault中已存在bundle后，才把同一份私有运行参数切换为托管模式。Client ID是公开标识，可以进入部署参数；access token、refresh token和bundle JSON绝不能进入参数文件：
+
+```powershell
+$appParameters = @($appParameters | Where-Object {
+    $_ -notlike 'copilotAuthMode=*' -and
+    $_ -notlike 'copilotGitHubClientId=*' -and
+    $_ -notlike 'copilotGitHubAccountId=*'
+})
+$appParameters += 'copilotAuthMode=github-app'
+$appParameters += 'copilotGitHubClientId=<public-github-app-client-id>'
+$appParameters += 'copilotGitHubAccountId=<verified-numeric-github-account-id>'
+
+az deployment group what-if --subscription $subscription --resource-group $rg `
+    --template-file .\infra\cloud-app.bicep --parameters @appParameters openToUsers=false `
+    --mode Incremental --result-format ResourceIdOnly --no-pretty-print --only-show-errors
+if ($LASTEXITCODE -ne 0) { throw 'GitHub App cutover what-if failed.' }
+```
+
+what-if必须只包含预期的新revision配置、移除旧PAT引用及
+`copilot-github-oauth-bundle` secret范围的Secrets Officer角色；不得出现vault范围写权限。部署后先等待RBAC传播，再从容器内运行 `node scripts/probe-cloud-copilot.mjs` 或调用内部服务探测，确认 `gpt-5.6-terra`、`accountVerified=true`、`persistenceWriteVerified=true`、`credentialDurable=true` 和0次推理。这里的持久化通过必须来自当前Key Vault secret版本的真实元数据写入与读回，不能仅因“当前没有待写内容”判定，也不能通过把旧bundle写成新版本来探测。随后执行一条真实摘要并核对 `gpt-5.6-terra` / `low`。只有这些检查成功后，才撤销旧PAT并删除Key Vault中的遗留 `copilot-github-token`；回退镜像不得重新注入该PAT。
 
 ### 6.3 核对 EasyAuth，再做受控 live 验证
 
@@ -695,7 +737,7 @@ if ($LASTEXITCODE -ne 0) { throw '旧 revision 未确认停用，禁止继续新
 | 凭据 | 轮换关注点 |
 | --- | --- |
 | Microsoft登录client secret | 先在原注册创建替代凭据并安全写入`entra-client-secret`，确认回调、client ID和新凭据生效后才撤销旧凭据；不要删除`identity.json`或重跑“补缺失”脚本当作轮换 |
-| Copilot服务token | 安全更新`copilot-github-token`；验证精确模型资格，不自动增权限/换模型。重启后实际推理验收需单独授权和计费记录 |
+| Copilot GitHub App bundle | 正常情况下由Gateway在access token到期前自动刷新，并同步轮换refresh token；检查 `ready=false`、`accountVerified=false`、`durable=false`、`copilot_credential_refresh_failed` 与14天到期警告。账号固定值来自独立的 `SCOUTNEWS_COPILOT_GITHUB_ACCOUNT_ID`；只有授权撤销或refresh token完全过期才重新执行Device Flow，不回退旧PAT、不换账号/模型 |
 | proxy / CSRF / Gateway | 协调同一容器内引用与重启；API/Node/Gateway不能混用新旧值。CSRF变化后客户端需重新获取会话，不关闭CSRF校验来消除403 |
 | 数据库密码/连接 | 数据库登录凭据与Key Vault `database-url`必须一致，保持`verify-full`；只改Vault不会改变数据库密码。基座不会重置现有管理员密码或覆盖现有连接串 |
 | Insights配置 | 保留托管身份和对应监控权限，不改为匿名/local-auth ingestion来解决导出失败 |

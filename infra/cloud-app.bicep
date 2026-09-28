@@ -9,10 +9,20 @@ param environmentDomain string
 param identityName string = 'id-newsscout-preview'
 param identityClientId string
 param registryHost string
+param vaultName string
 param vaultUri string
 param exportStorageUrl string
 param loginClientId string
-param copilotSecretPresent bool = false
+@allowed([
+  'disabled'
+  'github-app'
+])
+param copilotAuthMode string = 'disabled'
+@description('Public client ID of the GitHub App used for device-flow user authorization.')
+param copilotGitHubClientId string = ''
+@description('Immutable numeric GitHub account ID authorized for the managed Copilot credential.')
+param copilotGitHubAccountId string = ''
+param copilotOAuthBundleSecretName string = 'copilot-github-oauth-bundle'
 param releaseId string
 @description('Open ingress only after the initial deployment has enabled and verified EasyAuth.')
 param openToUsers bool = false
@@ -26,8 +36,16 @@ resource environment 'Microsoft.App/managedEnvironments@2026-01-01' existing = {
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2025-01-31' existing = {
   name: identityName
 }
+resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: vaultName
+}
+resource copilotOAuthBundle 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: copilotOAuthBundleSecretName
+}
 
 var origin = 'https://${appName}.${environmentDomain}'
+var githubAppEnabled = copilotAuthMode == 'github-app'
 var secretNames = [
   'database-url'
   'csrf-secret'
@@ -36,11 +54,24 @@ var secretNames = [
   'applicationinsights-connection-string'
   'entra-client-secret'
 ]
-var credentials = concat(secretNames, copilotSecretPresent ? ['copilot-github-token'] : [])
+var credentials = secretNames
+
+resource appCopilotOAuthBundleOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (githubAppEnabled) {
+  name: guid(copilotOAuthBundle.id, identity.id, 'NewsScout Copilot OAuth bundle writer')
+  scope: copilotOAuthBundle
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
 
 resource app 'Microsoft.App/containerApps@2026-01-01' = {
   name: appName
   location: location
+  dependsOn: githubAppEnabled ? [
+    appCopilotOAuthBundleOfficer
+  ] : []
   tags: {
     product: 'NewsScout'
     environment: 'invited-preview'
@@ -92,6 +123,7 @@ resource app 'Microsoft.App/containerApps@2026-01-01' = {
           { name: 'SCOUTNEWS_CSRF_SECRET', secretRef: 'csrf-secret' }
           { name: 'SCOUTNEWS_PROXY_TOKEN', secretRef: 'proxy-token' }
           { name: 'COPILOT_GATEWAY_SHARED_SECRET', secretRef: 'gateway-shared-secret' }
+          { name: 'SCOUTNEWS_COPILOT_AUTH_MODE', value: copilotAuthMode }
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', secretRef: 'applicationinsights-connection-string' }
           { name: 'WEB_ORIGIN', value: origin }
           { name: 'AZURE_CLIENT_ID', value: identityClientId }
@@ -101,7 +133,11 @@ resource app 'Microsoft.App/containerApps@2026-01-01' = {
           { name: 'SCOUTNEWS_PUBLIC_ONLY', value: 'false' }
           { name: 'SCOUTNEWS_BROWSER_ARTICLE_HOSTS', value: '' }
           { name: 'RUST_LOG', value: 'scoutnews_api=info,tower_http=warn' }
-        ], copilotSecretPresent ? [{ name: 'COPILOT_GITHUB_TOKEN', secretRef: 'copilot-github-token' }] : [])
+        ], githubAppEnabled ? [
+          { name: 'SCOUTNEWS_COPILOT_GITHUB_CLIENT_ID', value: copilotGitHubClientId }
+          { name: 'SCOUTNEWS_COPILOT_GITHUB_ACCOUNT_ID', value: copilotGitHubAccountId }
+          { name: 'SCOUTNEWS_COPILOT_OAUTH_BUNDLE_SECRET_URL', value: '${vaultUri}secrets/${copilotOAuthBundleSecretName}' }
+        ] : [])
         probes: [
           { type: 'Startup', httpGet: { path: '/health', port: 3000 }, periodSeconds: 5, timeoutSeconds: 6, failureThreshold: 36 }
           { type: 'Readiness', httpGet: { path: '/health', port: 3000 }, periodSeconds: 10, timeoutSeconds: 6, failureThreshold: 3 }

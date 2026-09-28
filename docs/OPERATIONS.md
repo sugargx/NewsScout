@@ -273,9 +273,9 @@ pwsh -NoProfile -File .\services\api\tests\run-owner-upgrade.ps1 `
 | 目标与费用 | 仅用户指定的 Visual Studio/MSDN 订阅/租户；显式 `--subscription`，不改变全局 CLI context、spending cap 或自动升级规格；非生产、无生产 SLA |
 | 基座 what-if/验证 | `azure-infra*.ps1`；基础设施与应用运行时分开。基座 verifier 包含“无运行时应用”检查，应用上线后不能将其当作全站健康检查 |
 | 构建/部署 | `Dockerfile.azure` → 私有 ACR → digest；`cloud-app.bicep` 先阻断公众流量、配置/核对 EasyAuth，再受控开启现场验收 |
-| 凭据与模型 | Key Vault独立服务凭据、不读取本机keyring；精确Terra。新库默认滚动24小时20次，当前云端已保存5000，失败计入；不静默换模型，后续额度变更须另行授权 |
+| 凭据与模型 | Azure通过GitHub App Device Flow初始化、Key Vault保存并由UAMI自动轮换 `ghu_`/`ghr_` bundle；不读取本机keyring、不接受旧PAT；精确Terra。新库默认滚动24小时20次，当前云端已保存5000，失败计入；不静默换模型，后续额度变更须另行授权 |
 | 日常诊断 | 区分进程/数据库健康、Microsoft 登录、Origin/CSRF、RLS/所有权、采集/摘要和 Blob 权限；只保留去敏错误、有限路由、时间与 trace ID |
 | 恢复与回退 | 云端 PITR 恢复到新私网服务器；镜像回退用已确认 digest 并核对 schema 兼容，不回滚迁移文件或覆盖个人数据库 |
-| 轮换 | 已有准备脚本不会覆盖现有 secret；用受控轮换流程写新版本，再验证引用和重启/新 revision，不能用“脚本运行成功”代替新凭据已生效 |
+| 轮换 | access token到期前自动轮换并把新的refresh token写成Key Vault新版本；账号由独立数字ID固定，`ready=false`、`accountVerified=false`、`durable=false`、refresh失败或14天内到期必须告警。切换验收必须对当前Key Vault版本做不改token值的元数据写入并读回，不能把旧bundle另写为最新版本。授权撤销或refresh token完全过期时用一次性Device Flow重新初始化，不能回退PAT |
 
 采集取消、自助账号删除和完整使用分析面板仍未提供。r8预览已开放登录，`approved_accounts` 当前仅1个明确批准身份；真实OAuth/读取先于维护通道采集。新环境默认空名单，但不能用 `[]` 覆盖当前名单；每次增加/撤销仍须用户明确批准、使用本人真实申请编号，不匹配邮箱、整个tenant或CLI guest OID。按 [第6.5节](AZURE-PREVIEW.md#65-批准账号与撤销访问) 使用完整私有参数、同一运行digest、先what-if后部署和验证，回退不恢复已撤销成员。第二真实账号及私有偏好/编辑/发布/撤销/导出live覆盖仍有限，见 [第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)；文档命令不表示已执行。

@@ -50,7 +50,7 @@ export interface SourceCoverage { id: string; label: string; status: "active" | 
 export interface ProcessingSettings { enabled: boolean; model: string; dailyLimit: number }
 export interface ProcessingJob { eventId: string; title: string; status: SummaryStatus; model: string | null; attempts: number; lastError: string | null; nextAttemptAt: string | null }
 export interface Processing { settings: ProcessingSettings; counts: { pending: number; running: number; failed: number; completed: number }; usage: { used: number; limit: number; resetsAt: string | null }; blockedReason: "disabled" | "demo" | "isolated" | "account" | "model" | "quota" | null; feedCount: number; aiCount: number; jobs: ProcessingJob[] }
-export interface Provider { provider: string; connected: boolean; eligible: boolean; model: string | null; message: string; models: string[]; verifiedAt: string | null; authMode: "local" | "oauth" | null; accountLogin: string | null; preferredModel: string; oauthConfigured: boolean }
+export interface Provider { provider: string; connected: boolean; eligible: boolean; model: string | null; message: string; models: string[]; verifiedAt: string | null; authMode: "local" | "oauth" | "service" | null; accountLogin: string | null; preferredModel: string; oauthConfigured: boolean }
 export interface Runtime { mode: "demo" | "postgres"; timeZone: "Asia/Shanghai"; version: string }
 export interface ReaderSession {
   user: { id: string; displayName: string };

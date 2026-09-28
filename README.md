@@ -207,11 +207,11 @@ Radar 与新生成的当前简报仅根据**同一个精确事件引用**或上�
 
 ## GitHub Copilot 连接
 
-下面的“本机登录”和Windows Credential Manager仅用于可信本地。**Azure使用Key Vault中独立的 `copilot-github-token`，不读本机keyring或回退本机登录。** Microsoft读者身份与服务账号独立，试用者不能修改模型/额度。live探测列出17个模型并确认精确 `gpt-5.6-terra`；元数据探测本身0推理，但维护通道启动的初始采集已生成15条Terra摘要，不能继续称整次发布“0推理”。这是初始快照，后续预算与尝试记录见 [Azure手册](docs/AZURE-PREVIEW.md)。服务账号实际权限页的 **Copilot Requests为Read-only**，不要求Write或仓库写权限。
+下面的“本机登录”和Windows Credential Manager仅用于可信本地。**Azure使用一次性 Device Flow 授权的 GitHub App user token bundle，不读本机keyring、不注入 PAT，也不回退本机登录。** bundle 保存在 Key Vault `copilot-github-oauth-bundle`：8小时 access token 在到期前自动刷新，每次同时轮换6个月 refresh token。预期GitHub数字账号ID还作为独立的非秘密部署设置固定；Gateway首次使用及每代轮换后都会调用 `/user` 核对，不信任可写bundle自报的账号。GitHub返回新token对后旧refresh token已失效，因此Gateway先保留并尝试持久化新一代，再做账号核验；Key Vault写入或账号核验暂时失败时不会重用旧refresh token，而是在内存中保留新一代并持续重试。健康状态只有在账号和Key Vault写回都实际验证后才ready。Microsoft读者身份与服务账号独立，试用者不能修改账号、凭据、模型或额度。
 
 默认直接复用本机已登录的 GitHub/Copilot 账户，**不需要创建 OAuth App、复制 token 或提供 API key**。GitHub Copilot SDK 通过其受支持的本机登录机制读取现有 Copilot 登录或 GitHub CLI 登录；未登录时可在终端执行 `gh auth login`，然后在“模型与账户”页点击“连接本机 GitHub/Copilot”。普通 GitHub 登录不保证 Copilot 模型资格，页面展示的是实际探测到的账户和可用模型。
 
-数据库模式启动会恢复所选本机登录；自动摘要启用且有可用账户时，后台会按设置处理队列并消耗该账户的 Copilot 用量。连接方式保存在 PostgreSQL 的 `app_settings` 中，不含凭据；断开后重启仍保持断开。更换本机账号后请重新探测。断开本机连接只停止 ScoutNews 的 SDK client，不退出 GitHub/Copilot、不撤销全局 token，也不删除全局凭据。运行时环境中的 `GH_TOKEN`、`GITHUB_TOKEN` 和 `COPILOT_GITHUB_TOKEN` 不参与此本机账户通道，避免意外使用服务账户。
+数据库模式启动会恢复所选本机登录；自动摘要启用且有可用账户时，后台会按设置处理队列并消耗该账户的 Copilot 用量。连接方式保存在 PostgreSQL 的 `app_settings` 中，不含凭据；断开后重启仍保持断开。更换本机账号后请重新探测。断开本机连接只停止 ScoutNews 的 SDK client，不退出 GitHub/Copilot、不撤销全局 token，也不删除全局凭据。运行时环境中的 `GH_TOKEN`、`GITHUB_TOKEN` 和旧 `COPILOT_GITHUB_TOKEN` 不参与此本机账户通道；Azure host 检测到旧 PAT 注入会拒绝启动。
 
 默认摘要模型改为 `gpt-5.6-terra`。后台摘要和手动摘要的默认选择统一来自设置页保存的模型，不再自动调用 GPT-6。只有该精确 ID 在账户实际可用列表中才会选中；不可用时队列暂停，不替换成其他模型，也不提供自动选模的 `auto` 项。账户策略禁用的模型不列为可用模型。之前已经生成的摘要保留其真实模型标记，不伪装成 Terra 生成。
 

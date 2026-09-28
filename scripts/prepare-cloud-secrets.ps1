@@ -40,6 +40,12 @@ foreach ($name in $names) {
     Invoke-RestMethod -Method Put -Uri ($base + '/secrets/' + $name + '?api-version=7.4') -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
     Remove-Variable value, payload
 }
-$copilot = @($metadata | Where-Object { $_.id -eq ($base + '/secrets/copilot-github-token') -and $_.attributes.enabled })
+$copilotOAuth = @($metadata | Where-Object { $_.id -eq ($base + '/secrets/copilot-github-oauth-bundle') -and $_.attributes.enabled })
+$legacyCopilot = @($metadata | Where-Object { $_.id -eq ($base + '/secrets/copilot-github-token') -and $_.attributes.enabled })
 Remove-Variable token, tokenJson, headers
-[pscustomobject]@{ vault = $VaultName; serviceSecretNames = $names; copilotSecretPresent = $copilot.Count -gt 0 } | ConvertTo-Json
+[pscustomobject]@{
+    vault = $VaultName
+    serviceSecretNames = $names
+    copilotOAuthBundlePresent = $copilotOAuth.Count -gt 0
+    legacyCopilotTokenPresent = $legacyCopilot.Count -gt 0
+} | ConvertTo-Json

@@ -107,23 +107,24 @@ export function SettingsPage() {
         {query.isLoading ? <LoadingStatus>正在读取模型与账户…</LoadingStatus> : <>
           {query.data?.items.map(provider => {
             const copilot = provider.provider === "github-copilot", state = providerState(provider);
+            const managedService = provider.authMode === "service";
             return <div className="ns-provider" key={provider.provider}>
               <div className="ns-provider-head"><h3>{copilot ? "GitHub Copilot" : provider.provider === "azure-openai" ? "Azure OpenAI" : provider.provider}</h3><span className={`ns-status is-${state.tone}`}>{state.label}</span></div>
               <p>{copilot ? provider.message : "此版本尚不支持调用此提供方。即使服务端检测到配置，也不表示能够生成摘要。"}</p>
               {copilot && <>
                 <dl className="ns-settings-facts">
                   <div><dt>最近验证</dt><dd>{formatDate(provider.verifiedAt)}</dd></div>
-                  <div><dt>登录方式</dt><dd>{provider.authMode === "local" ? "本机 GitHub/Copilot 登录" : provider.authMode === "oauth" ? "OAuth App 授权" : "尚未连接"}{provider.accountLogin ? ` · ${provider.accountLogin}` : ""}</dd></div>
+                  <div><dt>登录方式</dt><dd>{provider.authMode === "local" ? "本机 GitHub/Copilot 登录" : provider.authMode === "oauth" ? "OAuth App 授权" : managedService ? "Azure 托管 GitHub App" : "尚未连接"}{provider.accountLogin ? ` · ${provider.accountLogin}` : ""}</dd></div>
                   <div><dt>默认模型</dt><dd>{provider.preferredModel}{provider.connected && !provider.model ? "（当前账户不可用，不会自动替换）" : ""}</dd></div>
                   <div><dt>可用模型</dt><dd>{provider.models?.length ? provider.models.join(" · ") : "暂无，请连接账户或重新探测"}</dd></div>
                 </dl>
                 <div className="ns-save-row">
-                  {(!provider.connected || provider.authMode !== "local") && <ReaderButton variant="primary" icon={<PlugConnectedRegular/>} disabled={busy || !canConnect} onClick={() => { refresh.reset(); disconnect.reset(); connectLocal.mutate(); }}>{connectLocal.isPending ? "正在连接…" : "连接本机 GitHub/Copilot"}</ReaderButton>}
+                  {!managedService && (!provider.connected || provider.authMode !== "local") && <ReaderButton variant="primary" icon={<PlugConnectedRegular/>} disabled={busy || !canConnect} onClick={() => { refresh.reset(); disconnect.reset(); connectLocal.mutate(); }}>{connectLocal.isPending ? "正在连接…" : "连接本机 GitHub/Copilot"}</ReaderButton>}
                   <ReaderButton icon={<ArrowSyncRegular/>} disabled={busy || !canConnect || !provider.authMode} onClick={() => { connectLocal.reset(); disconnect.reset(); refresh.mutate(); }}>{refresh.isPending ? "正在探测…" : "重新探测"}</ReaderButton>
-                  {provider.authMode && <ReaderButton disabled={busy || !canConnect} onClick={() => { connectLocal.reset(); refresh.reset(); disconnect.mutate(); }}>{disconnect.isPending ? "正在断开…" : "断开"}</ReaderButton>}
-                  {provider.oauthConfigured && <ReaderButton disabled={busy || !canConnect} onClick={() => { location.href = "/api/v1/auth/github/start"; }}>改用 OAuth App 授权</ReaderButton>}
+                  {provider.authMode && !managedService && <ReaderButton disabled={busy || !canConnect} onClick={() => { connectLocal.reset(); refresh.reset(); disconnect.mutate(); }}>{disconnect.isPending ? "正在断开…" : "断开"}</ReaderButton>}
+                  {provider.oauthConfigured && !managedService && <ReaderButton disabled={busy || !canConnect} onClick={() => { location.href = "/api/v1/auth/github/start"; }}>改用 OAuth App 授权</ReaderButton>}
                 </div>
-                <p className="ns-settings-note">直接复用本机登录，无需复制 token。更换本机账号后请重新探测；断开不会退出全局登录。</p>
+                <p className="ns-settings-note">{managedService ? "云端服务账号由 GitHub App 与 Azure Key Vault 托管轮换；试用用户不能替换账号、凭据或模型。" : "直接复用本机登录，无需复制 token。更换本机账号后请重新探测；断开不会退出全局登录。"}</p>
               </>}
             </div>;
           })}

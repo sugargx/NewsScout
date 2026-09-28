@@ -1,6 +1,6 @@
 # UI 设计与独立评审
 
-适用版本：0.2 阅读端改版，r10 按 CoDesign 最终保存版 1:1 重构，r11 固定精选期次并重建每日分享；维护日期：2026-09-24。当前基准为用户确认的 CoDesign 保存版，版本、页面对应关系、r10 有意差异和实施状态见 [工程映射](design/CODESIGN-MAPPING.md)，未覆盖页面见 [补设计 prompt](design/CODESIGN-SUPPLEMENT-PROMPT.md)。重点是可阅读、可返回、可解释的界面，不是替换组件库。源码集中在 `apps\web\src`；组件文件位于其 `components` 子目录。
+适用版本：0.2 阅读端改版，r10 按 CoDesign 最终保存版 1:1 重构，r11 固定精选期次并重建每日分享；维护日期：2026-09-28。当前基准为用户确认的 CoDesign 保存版，版本、页面对应关系、r10 有意差异和实施状态见 [工程映射](design/CODESIGN-MAPPING.md)，未覆盖页面见 [补设计 prompt](design/CODESIGN-SUPPLEMENT-PROMPT.md)。重点是可阅读、可返回、可解释的界面，不是替换组件库。源码集中在 `apps\web\src`；组件文件位于其 `components` 子目录。
 
 ## 1. 设计目标与组件选择
 
@@ -53,6 +53,8 @@ r12 起，焦点环统一使用 `--cp-focus-ring`（3px 不透明实线，颜色
 普通标题、按钮、链接和 disclosure summary 仍有键盘焦点；不得全局使用 `outline: none`。选择器/输入框在鼠标点击后也可能匹配原生 `:focus-visible`，不能把这个选择器直接当作“仅键盘”证明。
 
 规则调整还要保留特异性：目前通过 `:not(:where(...))` 排除 Fluent 子控件，避免新的选择器权重盖过标题已有的 4px outline offset。验证鼠标、Tab/Shift+Tab、方向键实际选择、明暗主题及 forced-colors，不仅比较一张点击截图。
+
+云端已验证页面在窗口 hidden/blur 后继续保留，不因切到其他软件而换成全屏骨架；同时所有新的私有 API 请求立即进入会话闸门，返回 visible/focus 后静默确认账号。只有首次尚无已接受会话时显示公开几何骨架；确认持续超过 8 秒或临时失败时，才在保留页面上显示恢复对话框。恢复对话框、移动 Drawer 和其内隐私弹窗统一使用 Fluent/Tabster 模态栈，关闭后把焦点还给原控件。账号 ID 改变、401 或邀请撤销仍清空缓存并整页重载，不能为了避免视觉切换而放松跨账号隔离。
 
 ## 5. 响应式与阅读上下文
 

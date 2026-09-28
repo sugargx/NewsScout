@@ -15,8 +15,8 @@
 .ns-auth-retry { width: 100%; min-height: 48px; margin-block: 12px 20px; }
 .ns-auth-links { display: flex; flex-wrap: wrap; gap: 12px 24px; font-size: 13px; }
 .ns-auth-links a { color: var(--cp-accent); }
-html[data-session-validation="pending"] .ns-session-private,
-html[data-session-validation="pending"] .ns-session-private * { visibility: hidden !important; }
+.ns-session-private[aria-hidden="true"],
+.ns-session-private[aria-hidden="true"] * { visibility: hidden !important; }
 .ns-session-shield { position: fixed; inset: 0; z-index: 100; overflow: hidden; background: var(--cp-bg); color: var(--cp-text); font-family: var(--cp-font-body); }
 .ns-session-shield[hidden] { display: none; }
 .ns-session-shield *, .ns-session-shield *::before { box-sizing: border-box; }
@@ -35,7 +35,7 @@ html[data-session-validation="pending"] .ns-session-private * { visibility: hidd
 .ns-session-placeholders span { width: min(520px, 72%); height: 12px; border-radius: 3px; background: var(--cp-border); opacity: .45; }
 .ns-session-placeholders span+span { width: min(320px, 45%); height: 8px; }
 .ns-session-confirmation.ns-reader-shell { box-sizing: border-box; width: min(480px, calc(100vw - 32px)); min-height: 0; max-height: calc(100dvh - 32px); margin: auto; padding: 28px; overflow: auto; border: 1px solid var(--cp-border-strong); border-radius: 10px; background: var(--cp-surface); color: var(--cp-text); font-family: var(--cp-font-body); line-height: 1.8; overflow-wrap: anywhere; }
-.ns-session-confirmation::backdrop { background: color-mix(in srgb, var(--cp-bg) 65%, transparent); }
+.ns-session-confirmation-backdrop { background: color-mix(in srgb, var(--cp-bg) 65%, transparent); }
 .ns-session-confirmation h2 { margin: 0 0 20px; font: 600 24px/1.5 var(--cp-font-display); }
 .ns-session-confirmation h2:focus-visible { outline: 3px solid var(--cp-focus); outline-offset: 4px; border-radius: 2px; }
 .ns-session-confirmation.ns-reader-shell .ns-reader-button { min-height: 44px; border-width: 1px; border-style: solid; }

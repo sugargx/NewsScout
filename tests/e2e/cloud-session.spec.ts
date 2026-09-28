@@ -16,14 +16,29 @@ async function markCloud(page: Page) {
 }
 async function trackRecoveryUi(page: Page) {
   await page.addInitScript(() => {
-    const showModal = HTMLDialogElement.prototype.showModal;
-    HTMLDialogElement.prototype.showModal = function () {
-      if (this.classList.contains("ns-session-confirmation")) document.documentElement.dataset.testRecoveryOpened = "true";
-      return showModal.call(this);
+    const track = () => {
+      if (document.querySelector(".ns-session-confirmation")) document.documentElement.dataset.testRecoveryOpened = "true";
     };
+    const observer = new MutationObserver(track);
+    observer.observe(document, { childList: true, subtree: true });
+    track();
     document.addEventListener("focusin", event => {
       if (event.target instanceof Element && event.target.closest(".ns-session-confirmation")) document.documentElement.dataset.testRecoveryFocused = "true";
     });
+  });
+}
+async function moveWindowAway(page: Page) {
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new FocusEvent("blur"));
+  });
+}
+async function returnToWindow(page: Page) {
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new FocusEvent("focus"));
   });
 }
 
@@ -107,7 +122,8 @@ for (const revokeOn of ["focus", "private-write"] as const) test(`withdrawn appr
   await page.getByRole("button", { name: "隐私与使用统计", exact: true }).click();
   await page.route("**/api/v1/session", route => route.fulfill({ status: 403, json: invitation }));
   if (revokeOn === "focus") {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await moveWindowAway(page);
+    await returnToWindow(page);
   } else {
     await page.route("**/api/v1/me/telemetry-consent", route => route.fulfill({ status: 403, json: invitation }));
     await page.getByRole("switch", { name: "允许可选的使用统计", exact: true }).click();
@@ -199,7 +215,7 @@ for (const width of [768, 390]) test(`mobile privacy controls stay open and rest
   await expect(page.locator("#root")).not.toHaveAttribute("aria-hidden", "true");
 });
 
-for (const width of [1440, 1024, 390]) test(`focus revalidates a fresh session and preserves private dialog state at ${width}px`, async ({ page }, info) => {
+for (const width of [1440, 1024, 390]) test(`focus revalidates a fresh session without replacing the workbench at ${width}px`, async ({ page }, info) => {
   await markCloud(page);
   const { requests, holdSession } = await mockSession(page);
   await page.setViewportSize({ width, height: 900 });
@@ -209,16 +225,18 @@ for (const width of [1440, 1024, 390]) test(`focus revalidates a fresh session a
   await page.getByRole("button", { name: "隐私与使用统计", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "隐私与使用统计", exact: true })).toBeVisible();
   await page.getByRole("switch", { name: "允许可选的使用统计", exact: true }).focus();
+  await moveWindowAway(page);
   const release = holdSession();
   const before = requests.filter(request => request.path === "/api/v1/session").length;
   try {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await returnToWindow(page);
     await expect.poll(() => requests.filter(request => request.path === "/api/v1/session").length).toBeGreaterThan(before);
-    await expect(page.locator(".ns-session-shield")).toBeVisible();
+    await expect(page.locator(".ns-session-shield")).not.toBeVisible();
     await expect(page.locator(".ns-session-confirmation")).not.toBeVisible();
-    await expect(navigation.getByText("受控试用账号", { exact: true })).toBeHidden();
-    await expect(page.getByRole("dialog", { name: "隐私与使用统计", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "今日分享", exact: true })).toHaveCount(0);
+    await expect(navigation.getByText("受控试用账号", { exact: true })).toBeAttached();
+    await expect(page.getByRole("dialog", { name: "隐私与使用统计", exact: true })).toBeVisible();
+    await expect(page.locator(".ns-session-private h1").filter({ hasText: /^今日分享$/ })).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-session-validation", "pending");
     await page.screenshot({ path: info.outputPath(`cloud-verifying-session-${width}.png`) });
   } finally { release(); }
   await expect(page.locator(".ns-session-shield")).not.toBeVisible();
@@ -232,14 +250,15 @@ test("a successful account switch discards the previous document before acceptin
   const { session, holdSession } = await mockSession(page);
   await page.goto("/share");
   await page.getByRole("button", { name: "隐私与使用统计", exact: true }).click();
+  await moveWindowAway(page);
   session.user = { id: "228f163e-0903-4ddc-98cf-3f4b4e15172e", displayName: "另一位试用账号" };
   session.csrfToken = "second-reader-csrf";
   const release = holdSession();
   try {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await expect(page.locator(".ns-session-shield")).toBeVisible();
+    await returnToWindow(page);
+    await expect(page.locator(".ns-session-shield")).not.toBeVisible();
     await expect(page.locator(".ns-session-confirmation")).not.toBeVisible();
-    await expect(page.getByText("受控试用账号", { exact: true })).toBeHidden();
+    await expect(page.getByText("受控试用账号", { exact: true })).toBeVisible();
   } finally { release(); }
   await expect(page.getByText("另一位试用账号", { exact: true })).toBeVisible();
   await expect(page.getByText("受控试用账号", { exact: true })).toHaveCount(0);
@@ -258,9 +277,10 @@ test("a paused mutation from the previous account cannot resume into the new acc
     await page.getByRole("switch", { name: "允许可选的使用统计", exact: true }).click();
     await expect(page.getByRole("switch", { name: "允许可选的使用统计", exact: true })).toBeDisabled();
     expect(requests.filter(request => request.path === "/api/v1/me/telemetry-consent")).toHaveLength(0);
+    await moveWindowAway(page);
     session.user = { id: "228f163e-0903-4ddc-98cf-3f4b4e15172e", displayName: "另一位试用账号" };
     session.csrfToken = "second-reader-csrf";
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await returnToWindow(page);
     await expect(page.getByText("另一位试用账号", { exact: true })).toBeVisible();
   } finally { await page.evaluate(() => window.dispatchEvent(new Event("online"))); }
   await expect(page.getByRole("heading", { name: "今日分享", exact: true })).toBeVisible();
@@ -269,7 +289,7 @@ test("a paused mutation from the previous account cannot resume into the new acc
   await expect(page.getByRole("switch", { name: "允许可选的使用统计", exact: true })).not.toBeChecked();
 });
 
-for (const width of [1440, 390]) test(`failed identity verification conceals private content until retry at ${width}px`, async ({ page }, info) => {
+for (const width of [1440, 390]) test(`failed background verification preserves private content behind recovery at ${width}px`, async ({ page }, info) => {
   await markCloud(page);
   await mockSession(page);
   await page.setViewportSize({ width, height: 900 });
@@ -278,13 +298,17 @@ for (const width of [1440, 390]) test(`failed identity verification conceals pri
   const navigation = page.locator(width <= 768 ? ".ns-reader-mobile-nav" : ".ns-reader-sidebar");
   await page.getByRole("button", { name: "隐私与使用统计", exact: true }).click();
   await page.getByRole("switch", { name: "允许可选的使用统计", exact: true }).focus();
+  await moveWindowAway(page);
   await page.route("**/api/v1/session", route => route.fulfill({ status: 503, json: { error: "session_temporarily_unavailable" } }));
-  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  const confirmation = page.getByRole("dialog", { name: "阅读空间暂时无法连接", exact: true });
-  await expect(confirmation.getByRole("alert")).toBeVisible();
+  await returnToWindow(page);
+  const confirmation = page.locator(".ns-session-confirmation");
+  await expect(confirmation.locator('[role="alert"]')).toBeVisible();
   await expect(confirmation.getByRole("button", { name: "重试", exact: true })).toHaveCSS("border-top-style", "solid");
-  await expect(navigation.getByText("受控试用账号", { exact: true })).toBeHidden();
-  await expect(page.getByRole("dialog", { name: "隐私与使用统计", exact: true })).toHaveCount(0);
+  await expect(confirmation).toContainText("当前页面会保留");
+  await expect(navigation.getByText("受控试用账号", { exact: true })).toBeAttached();
+  await expect(page.getByRole("dialog", { name: "隐私与使用统计", exact: true, includeHidden: true })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "今日分享", exact: true, includeHidden: true })).toHaveCount(1);
+  await expect(page.locator(".ns-session-shield")).not.toBeVisible();
   expect(await confirmation.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`cloud-verification-error-${width}.png`) });
   await page.unroute("**/api/v1/session");
@@ -329,16 +353,23 @@ for (const width of [1440, 390]) test(`fast focus visibility and reconnect check
   });
   await expect(page.locator("html")).not.toHaveAttribute("data-session-validation", "pending");
   expect(sessionRequests()).toBe(beforeChildFocus);
-  for (const event of ["focus", "visibilitychange", "online"]) {
+  for (const event of ["activation", "online"]) {
     const before = sessionRequests();
-    const gated = await page.evaluate(type => {
-      if (type === "visibilitychange") document.dispatchEvent(new Event(type));
-      else window.dispatchEvent(type === "focus" ? new FocusEvent(type) : new Event(type));
+    const gatedWithoutReplacement = await page.evaluate(type => {
+      if (type === "activation") {
+        Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new FocusEvent("blur"));
+        Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new FocusEvent("focus"));
+      } else window.dispatchEvent(new Event(type));
       return document.documentElement.dataset.sessionValidation === "pending" &&
-        getComputedStyle(document.querySelector(".ns-session-private")!).visibility === "hidden";
+        getComputedStyle(document.querySelector(".ns-session-private")!).visibility !== "hidden";
     }, event);
-    expect(gated).toBe(true);
+    expect(gatedWithoutReplacement).toBe(true);
     await expect.poll(sessionRequests).toBe(before + 1);
+    await expect(page.locator(".ns-session-shield")).not.toBeVisible();
     await expect(editor).toBeVisible();
     await expect(editor).toHaveValue("尚未保存的私人主题");
     await expect(editor).toBeFocused();
@@ -375,7 +406,7 @@ for (const width of [1440, 390]) test(`initial verification shows only public ge
     const recovery = page.getByRole("dialog", { name: "连接时间有些久", exact: true });
     await expect(recovery).toBeVisible();
     await expect(recovery.getByRole("heading", { name: "连接时间有些久", exact: true })).toBeFocused();
-    expect((await recovery.getByRole("button", { name: "重新连接", exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await expect.poll(async () => (await recovery.getByRole("button", { name: "重新连接", exact: true }).boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
     expect(await recovery.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`cloud-initial-slow-${width}.png`) });
@@ -423,7 +454,9 @@ test("activation bursts share one verification and time away never opens slow re
     await page.clock.runFor(60_000);
     await expect(page.locator(".ns-session-confirmation")).not.toBeVisible();
     await expect(page.locator(".ns-session-status")).toBeEmpty();
-    await expect(editor).toBeHidden();
+    await expect(editor).toBeVisible();
+    await expect(editor).toHaveValue("保留未保存的输入");
+    await expect(page.locator(".ns-session-shield")).not.toBeVisible();
     await page.evaluate(() => {
       Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
       document.dispatchEvent(new Event("visibilitychange"));
@@ -443,7 +476,8 @@ test("activation bursts share one verification and time away never opens slow re
     await page.clock.runFor(499);
     await expect(page.locator(".ns-session-status")).toBeEmpty();
     await page.clock.runFor(1);
-    await expect(page.locator(".ns-session-status")).toHaveText("正在恢复阅读空间…");
+    await expect(editor).toBeVisible();
+    await expect(page.locator(".ns-session-shield")).not.toBeVisible();
     expect(requests.filter(request => request.path === "/api/v1/session")).toHaveLength(before + 1);
     await expect(page.locator("html")).not.toHaveAttribute("data-test-recovery-opened", "true");
   } finally {
@@ -477,29 +511,35 @@ test("slow background verification restores nested private dialogs and unsaved e
   await page.setViewportSize({ width: 390, height: 900 });
   await page.clock.install({ time: new Date("2026-09-22T00:00:00Z") });
   await page.goto("/topics");
-  const editor = page.getByRole("textbox", { name: "新主题名称", exact: true });
+  const editor = page.locator(".ns-add-topic input").first();
   await editor.fill("慢连接也不能丢失的草稿");
   await page.getByRole("button", { name: "打开导航", exact: true }).click();
   await page.getByRole("button", { name: "隐私与使用统计", exact: true }).click();
   const consent = page.getByRole("switch", { name: "允许可选的使用统计", exact: true });
   await consent.focus();
   await page.clock.pauseAt(new Date("2026-09-22T00:01:00Z"));
+  await moveWindowAway(page);
   const before = requests.filter(request => request.path === "/api/v1/session").length;
   const release = holdSession();
   try {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await returnToWindow(page);
     await page.clock.runFor(50);
     await expect.poll(() => requests.filter(request => request.path === "/api/v1/session").length).toBe(before + 1);
     await page.clock.runFor(500);
-    await expect(page.locator(".ns-session-status")).toHaveText("正在恢复阅读空间…");
+    await expect(page.locator(".ns-session-shield")).not.toBeVisible();
+    await expect(editor).toBeVisible();
+    await expect(editor).toHaveValue("慢连接也不能丢失的草稿");
     await expect(page.locator(".ns-session-confirmation")).not.toBeVisible();
     await page.clock.runFor(7_500);
     const recovery = page.getByRole("dialog", { name: "连接时间有些久", exact: true });
     await expect(recovery).toBeVisible();
-    await expect(page.getByRole("dialog", { name: "隐私与使用统计", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "隐私与使用统计", exact: true, includeHidden: true })).toHaveCount(1);
     const accounts = page.getByText("受控试用账号", { exact: true });
     await expect(accounts).toHaveCount(2);
-    for (const account of await accounts.all()) await expect(account).toBeHidden();
+    expect(await accounts.evaluateAll(elements => elements.filter(element => {
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden";
+    }).length)).toBe(1);
     await page.screenshot({ path: info.outputPath("cloud-background-slow-390.png") });
   } finally {
     release();
@@ -509,6 +549,6 @@ test("slow background verification restores nested private dialogs and unsaved e
   await expect(consent).toBeFocused();
   await expect(consent).not.toBeChecked();
   await page.getByRole("button", { name: "完成", exact: true }).click();
-  await page.getByRole("button", { name: "关闭导航", exact: true }).click();
+  await page.locator('.ns-reader-mobile-nav button[aria-label="关闭导航"]').click();
   await expect(editor).toHaveValue("慢连接也不能丢失的草稿");
 });

@@ -17,6 +17,45 @@ export const useReaderSession = () => useContext(SessionContext);
 const verificationNoticeDelay = 500;
 const verificationRecoveryDelay = 8_000;
 const activationBatchDelay = 50;
+const modalFocusRestoreDelay = 250;
+
+function restoreFocusAfterTransition(resolve: () => HTMLElement | null, delay: number, settled?: () => void) {
+  let frame = 0;
+  let cancelled = false;
+  const timer = window.setTimeout(() => {
+    let attempts = 0;
+    let stableFrames = 0;
+    let lastTarget: HTMLElement | null = null;
+    const restore = () => {
+      if (cancelled) return;
+      const target = resolve();
+      if (target !== lastTarget) {
+        lastTarget = target;
+        stableFrames = 0;
+      }
+      if (target?.isConnected) {
+        if (document.activeElement !== target) {
+          target.focus({ preventScroll: true });
+          stableFrames = 0;
+        } else {
+          stableFrames++;
+        }
+      }
+      attempts++;
+      if (stableFrames >= 10 || attempts >= 40) {
+        settled?.();
+        return;
+      }
+      frame = requestAnimationFrame(restore);
+    };
+    restore();
+  }, delay);
+  return () => {
+    cancelled = true;
+    window.clearTimeout(timer);
+    if (frame) cancelAnimationFrame(frame);
+  };
+}
 
 function SessionShield({ visible, showStatus, returning }: { visible: boolean; showStatus: boolean; returning: boolean }) {
   const brand = <div className="ns-session-brand"><span aria-hidden="true">𝒩</span><strong>NewsScout</strong></div>;
@@ -89,17 +128,24 @@ function CloudSession({ children }: { children: ReactNode }) {
   const client = useQueryClient();
   const [expired, setExpired] = useState(false);
   const [validated, setValidated] = useState(false);
+  const [verificationPending, setVerificationPending] = useState(false);
   const [verificationStartedAt, setVerificationStartedAt] = useState<number | null>(null);
   const [progress, setProgress] = useState<"quiet" | "waiting" | "slow">("quiet");
   const accepted = useRef<ReaderSession | null>(null);
   const activeVerification = useRef<AbortSignal | null>(null);
   const scheduledVerification = useRef<number | null>(null);
+  const activationVerificationRequired = useRef(false);
   const restarting = useRef(false);
-  const verificationDialog = useRef<HTMLDialogElement | null>(null);
+  const verificationDialog = useRef<HTMLDivElement | null>(null);
+  const recoveryPresented = useRef(false);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const previousFocusId = useRef<string | null>(null);
   const rememberFocus = useCallback(() => {
     const element = document.activeElement;
-    if (element instanceof HTMLElement && element.closest(".ns-session-private")) previousFocus.current = element;
+    if (element instanceof HTMLElement && element.closest(".ns-session-private")) {
+      previousFocus.current = element;
+      previousFocusId.current = element.id || null;
+    }
   }, []);
   const restartSession = useCallback(() => {
     if (restarting.current) return;
@@ -117,7 +163,7 @@ function CloudSession({ children }: { children: ReactNode }) {
       activeVerification.current = signal;
       rememberFocus();
       suspendSessionRequests();
-      setValidated(false);
+      setVerificationPending(true);
       setProgress("quiet");
       setVerificationStartedAt(performance.now());
       try {
@@ -130,6 +176,7 @@ function CloudSession({ children }: { children: ReactNode }) {
         setSessionCsrfToken(value.csrfToken, value.user.id);
         accepted.current = value;
         setValidated(true);
+        setVerificationPending(false);
         return value;
       } catch (error) {
         if (error instanceof SessionChangedError || error instanceof ApiError && (error.status === 401 || isInvitationRequired(error)) && getDocumentReaderId()) {
@@ -154,35 +201,49 @@ function CloudSession({ children }: { children: ReactNode }) {
     refetchOnReconnect: false,
   });
   useEffect(() => {
-    if (validated || expired || !session.isFetching || verificationStartedAt === null) return;
+    if (!verificationPending || expired || !session.isFetching || verificationStartedAt === null) return;
     const elapsed = performance.now() - verificationStartedAt;
     const notice = window.setTimeout(() => setProgress("waiting"), Math.max(0, verificationNoticeDelay - elapsed));
     const recovery = window.setTimeout(() => setProgress("slow"), Math.max(0, verificationRecoveryDelay - elapsed));
     return () => { window.clearTimeout(notice); window.clearTimeout(recovery); };
-  }, [validated, expired, session.isFetching, verificationStartedAt]);
-  const showRecovery = !validated && !expired && verificationStartedAt !== null &&
+  }, [verificationPending, expired, session.isFetching, verificationStartedAt]);
+  const showRecovery = verificationPending && !expired && verificationStartedAt !== null &&
     (progress === "slow" || !!session.error && !session.isFetching);
   useLayoutEffect(() => {
-    const dialog = verificationDialog.current;
-    if (!dialog) return;
-    if (showRecovery && !dialog.open) {
-      dialog.showModal();
-      dialog.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
-    }
-    else if (!showRecovery && dialog.open) dialog.close();
+    if (!showRecovery) return;
+    recoveryPresented.current = true;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) verificationDialog.current?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    });
+    return () => { cancelled = true; };
   }, [showRecovery]);
   useEffect(() => {
-    if (!validated || !previousFocus.current?.isConnected) return;
-    if (document.activeElement !== previousFocus.current) previousFocus.current.focus({ preventScroll: true });
-    previousFocus.current = null;
-  }, [validated]);
+    if (!validated || verificationPending || showRecovery) return;
+    const delay = recoveryPresented.current ? modalFocusRestoreDelay : 0;
+    return restoreFocusAfterTransition(
+      () => previousFocus.current?.isConnected
+        ? previousFocus.current
+        : previousFocusId.current
+          ? document.getElementById(previousFocusId.current)
+          : null,
+      delay,
+      () => {
+        previousFocus.current = null;
+        previousFocusId.current = null;
+        recoveryPresented.current = false;
+      },
+    );
+  }, [validated, verificationPending, showRecovery]);
   useEffect(() => {
-    const verify = () => {
+    const verify = (force = false) => {
       if (expired || restarting.current) return;
+      if (!force && accepted.current && !activationVerificationRequired.current) return;
+      activationVerificationRequired.current = false;
       rememberFocus();
       suspendSessionRequests();
+      setVerificationPending(true);
       if (activeVerification.current && !activeVerification.current.aborted) return;
-      setValidated(false);
       setProgress("quiet");
       setVerificationStartedAt(null);
       // Visibility, focus and online often describe one activation. Batch the request, never the gate.
@@ -192,26 +253,28 @@ function CloudSession({ children }: { children: ReactNode }) {
         if (!restarting.current) void session.refetch({ cancelRefetch: false });
       }, activationBatchDelay);
     };
-    const conceal = () => {
+    const deactivate = () => {
       if (!accepted.current || restarting.current) return;
+      activationVerificationRequired.current = true;
       rememberFocus();
       suspendSessionRequests();
-      setValidated(false);
+      setVerificationPending(true);
       setProgress("quiet");
       setVerificationStartedAt(null);
       if (scheduledVerification.current !== null) window.clearTimeout(scheduledVerification.current);
       scheduledVerification.current = null;
       void client.cancelQueries({ queryKey: ["session"], exact: true });
     };
-    const visibility = () => document.visibilityState === "visible" ? verify() : conceal();
+    const visibility = () => document.visibilityState === "visible" ? verify() : deactivate();
     const focus = (event: FocusEvent) => { if (event.target === window) verify(); };
-    const blur = (event: FocusEvent) => { if (event.target === window) conceal(); };
-    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) verify(); };
+    const blur = (event: FocusEvent) => { if (event.target === window) deactivate(); };
+    const online = () => verify(true);
+    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) verify(true); };
     window.addEventListener("newsscout-session-expired", restartSession);
     window.addEventListener("visibilitychange", visibility, true);
     window.addEventListener("focus", focus, true);
     window.addEventListener("blur", blur, true);
-    window.addEventListener("online", verify, true);
+    window.addEventListener("online", online, true);
     window.addEventListener("pageshow", pageShow, true);
     return () => {
       if (scheduledVerification.current !== null) window.clearTimeout(scheduledVerification.current);
@@ -220,14 +283,16 @@ function CloudSession({ children }: { children: ReactNode }) {
       window.removeEventListener("visibilitychange", visibility, true);
       window.removeEventListener("focus", focus, true);
       window.removeEventListener("blur", blur, true);
-      window.removeEventListener("online", verify, true);
+      window.removeEventListener("online", online, true);
       window.removeEventListener("pageshow", pageShow, true);
     };
   }, [client, expired, rememberFocus, restartSession, session.refetch]);
   const retryVerification = async () => {
     rememberFocus();
     suspendSessionRequests();
-    setValidated(false);
+    setVerificationPending(true);
+    setProgress("quiet");
+    setVerificationStartedAt(null);
     if (scheduledVerification.current !== null) window.clearTimeout(scheduledVerification.current);
     scheduledVerification.current = null;
     await client.cancelQueries({ queryKey: ["session"], exact: true });
@@ -239,18 +304,19 @@ function CloudSession({ children }: { children: ReactNode }) {
     {accepted.current && <FluentProvider className="ns-session-private" inert={!validated} aria-hidden={!validated || undefined}>
       <SessionContext.Provider value={{ ...(session.data ?? accepted.current), identityVerified: validated }}><UsageTelemetry />{children}</SessionContext.Provider>
     </FluentProvider>}
-    {createPortal(<>
-      <SessionShield visible={!validated} showStatus={progress !== "quiet"} returning={!!accepted.current} />
-      <dialog ref={verificationDialog} className="ns-reader-shell ns-session-confirmation" inert={!showRecovery} aria-hidden={!showRecovery || undefined} aria-labelledby="session-confirmation-title" onCancel={event => event.preventDefault()}>
+    {createPortal(<SessionShield visible={!validated} showStatus={progress !== "quiet"} returning={!!accepted.current} />, document.body)}
+    <Dialog open={showRecovery} surfaceMotion={null} onOpenChange={(event, data) => { if (!data.open) event.preventDefault(); }}>
+      <DialogSurface ref={verificationDialog} className="ns-reader-shell ns-session-confirmation" backdrop={{ className: "ns-session-confirmation-backdrop" }} aria-labelledby="session-confirmation-title">
         <h2 id="session-confirmation-title" tabIndex={-1}>{session.error ? "阅读空间暂时无法连接" : "连接时间有些久"}</h2>
+        {accepted.current && <p>当前页面会保留；在账号重新确认前，新的同步和保存会暂时等待。</p>}
         {session.error
           ? <ErrorNotice title="暂时无法确认你的账号" error={session.error} retry={() => void retryVerification()} busy={session.isFetching} />
-          : <><p role="status">仍在等待账号确认，阅读内容暂不可见。你可以继续等待，或重新连接。</p>
+          : <><p role="status">{accepted.current ? "仍在确认账号。你可以继续等待，或重新连接。" : "仍在等待账号确认，阅读内容暂不可见。你可以继续等待，或重新连接。"}</p>
             <ReaderButton variant="primary" onClick={() => void retryVerification()}>重新连接</ReaderButton></>}
         <p className="ns-auth-detail">同一账号确认完成后，会回到刚才的位置。</p>
         <p><a href="/.auth/logout?post_logout_redirect_uri=/">退出并重新登录</a></p>
-      </dialog>
-    </>, document.body)}
+      </DialogSurface>
+    </Dialog>
   </>;
 }
 
@@ -267,6 +333,19 @@ export function AccountControls() {
   const session = useReaderSession();
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const cancelTriggerRestore = useRef<(() => void) | null>(null);
+  const setDialogOpen = useCallback((next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      cancelTriggerRestore.current?.();
+      cancelTriggerRestore.current = restoreFocusAfterTransition(() => {
+        const visibleTrigger = [...document.querySelectorAll<HTMLButtonElement>('.ns-account-controls button[aria-haspopup="dialog"]')]
+          .find(element => element.getClientRects().length > 0 && !element.closest("[inert]"));
+        return visibleTrigger ?? trigger.current;
+      }, modalFocusRestoreDelay, () => { cancelTriggerRestore.current = null; });
+    }
+  }, []);
   const consent = useMutation({
     mutationFn: api.telemetryConsent,
     onSuccess: value => client.setQueryData<ReaderSession>(["session"], previous => previous ? { ...previous, telemetryConsent: value.enabled } : previous),
@@ -285,13 +364,13 @@ export function AccountControls() {
   if (!session.user) return null;
   return <div className="ns-account-controls">
     <div className="ns-account-name"><PersonRegular aria-hidden="true" /><span title={session.user.displayName}>{session.user.displayName}</span></div>
-    <Dialog open={open} modalType={session.identityVerified ? "modal" : "non-modal"} onOpenChange={(_, data) => setOpen(data.open)}>
-      <DialogTrigger disableButtonEnhancement><button type="button" className="ns-reader-nav-item" aria-haspopup="dialog"><span className="ns-reader-nav-icon" aria-hidden="true"><ShieldCheckmarkRegular /></span><span>隐私与使用统计</span></button></DialogTrigger>
-      <DialogSurface><DialogBody>
+    <Dialog open={open} onOpenChange={(_, data) => setDialogOpen(data.open)}>
+      <DialogTrigger disableButtonEnhancement><button ref={trigger} type="button" className="ns-reader-nav-item" aria-haspopup="dialog"><span className="ns-reader-nav-icon" aria-hidden="true"><ShieldCheckmarkRegular /></span><span>隐私与使用统计</span></button></DialogTrigger>
+      <DialogSurface className="ns-account-dialog"><DialogBody>
         <DialogTitle>隐私与使用统计</DialogTitle>
         <DialogContent>
           <p>可选择提供去标识化的页面访问和操作类别，帮助改进产品。不会记录搜索词、新闻正文、邮箱、密码或登录令牌。</p>
-          <Switch label="允许可选的使用统计" checked={session.telemetryConsent} disabled={consent.isPending} onChange={(_, data) => consent.mutate(data.checked)} />
+          <Switch id="ns-telemetry-consent" label="允许可选的使用统计" checked={session.telemetryConsent} disabled={consent.isPending} onChange={(_, data) => consent.mutate(data.checked)} />
           <p>关闭后仍会保留运行和安全日志，以及实现收藏、兴趣和阅读记录所需的账号数据。</p>
           <a href="/privacy">查看数据说明</a>
           {consent.error && <ErrorNotice title="隐私偏好未保存" error={consent.error} retry={() => consent.variables !== undefined && consent.mutate(consent.variables)} />}
@@ -299,7 +378,7 @@ export function AccountControls() {
           {download.isSuccess && <p role="status">已生成导出文件。</p>}
           {download.error && <ErrorNotice title="数据导出失败" error={download.error} retry={() => download.mutate()} />}
         </DialogContent>
-        <DialogActions><ReaderButton onClick={() => setOpen(false)}>完成</ReaderButton></DialogActions>
+        <DialogActions><ReaderButton onClick={() => setDialogOpen(false)}>完成</ReaderButton></DialogActions>
       </DialogBody></DialogSurface>
     </Dialog>
     <a className="ns-reader-nav-item" href="/.auth/logout?post_logout_redirect_uri=/"><span className="ns-reader-nav-icon" aria-hidden="true"><SignOutRegular /></span><span>退出登录</span></a>

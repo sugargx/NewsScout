@@ -10,6 +10,17 @@ const timestamp = "2026-09-21T03:00:00.000Z";
 const privateTitle = "PRIVATE_UNSELECTED_STORY_NOT_FOR_PUBLICATION";
 const privateSummary = "PRIVATE_UNSELECTED_SUMMARY_DO_NOT_DISCLOSE";
 
+async function reactivateWindow(page: Page) {
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new FocusEvent("blur"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new FocusEvent("focus"));
+  });
+}
+
 function readerSession(account: "A" | "B" = "A"): ReaderSession {
   return {
     user: {
@@ -573,7 +584,7 @@ for (const status of [200, 401]) {
       const initialNavigations = documentNavigations;
       mock.session = readerSession("B");
       await page.clock.fastForward(30_001);
-      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange", { bubbles: true })));
+      await reactivateWindow(page);
       await expect.poll(() => documentNavigations).toBe(initialNavigations + 1);
       await expect(page.getByText(readerSession("B").user.displayName, { exact: true })).toBeVisible();
       await expect(page.getByRole("heading", { name: newSource.name, exact: true })).toBeVisible();
@@ -615,7 +626,7 @@ for (const width of [1440, 390]) {
     mock.session = readerSession("B");
     mock.sources = [newSource];
     await page.clock.fastForward(30_001);
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange", { bubbles: true })));
+    await reactivateWindow(page);
     await expect.poll(() => mock.requests.filter(request => request.path === "/api/v1/session").length).toBeGreaterThanOrEqual(2);
     await expect(dialog).toHaveCount(0);
     await expect(page.getByText(newSource.name, { exact: true })).toBeVisible();

@@ -1,6 +1,6 @@
 # 测试与证据指南
 
-适用版本：0.2；维护日期：2026-09-23。只使用项目已有 TypeScript、Vite、Rust 和 Playwright 工具。文档修改不需要构建应用或运行真实采集；代码变更选择覆盖该行为的最小范围。
+适用版本：0.2；维护日期：2026-09-28。只使用项目已有 TypeScript、Vite、Rust 和 Playwright 工具。文档修改不需要构建应用或运行真实采集；代码变更选择覆盖该行为的最小范围。
 
 ## 1. 选择正确的证据
 
@@ -65,6 +65,21 @@ npm.cmd run test:e2e -- editorial-reader.spec.ts --grep 'reading text uses the a
 
 验证后停止自己启动的 preview，并在测试终端执行 `Remove-Item -LiteralPath Env:\SCOUTNEWS_E2E_MOCK_ONLY -ErrorAction SilentlyContinue` 清除本次模式标记。preview 与真实 E2E 共用 15173，不能同时运行；不要按 `node` 名称批量杀进程。
 
+云端会话激活先在 15173 的生产构建上运行 `cloud-session.spec.ts`。真实离开/返回必须依次模拟 `hidden`、`visibilitychange`、window `blur`、`visible`、`visibilitychange`、window `focus`；只在仍为 visible 时派发一个 `visibilitychange` 不代表用户切换了窗口。断言既要检查已验证页面、草稿和打开的弹窗没有被替换，也要检查 `data-session-validation="pending"` 已阻止新的私有请求；账号改变、401 和邀请撤销则必须重载并清除旧账号内容。
+
+`cloud-workflows.spec.ts` 另有写入防护，固定使用 15175 和 mock-only：
+
+```powershell
+# 另一个终端从 apps\web 启动构建产物
+npm.cmd exec -- vite preview --host 127.0.0.1 --port 15175 --strictPort
+
+$env:SCOUTNEWS_E2E_BASE_URL = 'http://127.0.0.1:15175'
+$env:SCOUTNEWS_E2E_MOCK_ONLY = 'true'
+npm.cmd run test:e2e -- cloud-workflows.spec.ts --reporter=dot
+```
+
+该文件拒绝其他 base URL 或未设置 mock-only 的运行；不要删掉这一护栏来复用 15173。
+
 ## 4. 公开网关 API 契约
 
 ```powershell
@@ -112,6 +127,7 @@ npm.cmd run test:e2e:live
 | 范围 | 主要现有用例 |
 | --- | --- |
 | 阅读布局、层级、Radar 视图、焦点、长文字 | `editorial-reader.spec.ts` |
+| 云端初载、窗口激活、请求闸门、账号切换和恢复焦点 | `cloud-session.spec.ts`；写工作流与旧账号在途响应使用 mock-only 的 `cloud-workflows.spec.ts` |
 | 真实截止窗口、来源日期精度、固定批次与手动更新 | `editorial-reader.spec.ts`；Rust的 `reader::tests` |
 | 延迟确认、跨控件防重、失败重试和撤销提示 | `feedback-performance.spec.ts`，必须显式mock-only |
 | 受限数据库批量读取、候选范围、首读和隔离 | `services\api\tests\cloud_contract\reader_performance_regressions.rs`，通过 `run-cloud-isolation.ps1` |
@@ -385,3 +401,27 @@ ACR `cka` 与Ready `newsscout--0000006` 的实际发布记录见Azure手册。17
 - 没有截图或验证：深色主题下的旧期、条数上限和复制失败状态；“已复制”确认和系统分享成功提示；强制颜色（Windows 高对比度）模式；手机按钮网格在200%文字缩放下的表现；雷达的两个分段控件、公开阅读页按钮和对话框内 Fluent 按钮的焦点。
 - 忙碌时焦点留在“下载分享图”上，只由用例断言，没有截图。
 - 焦点环对比度按主题色值和用例读取的计算样式得出，没有在真实屏幕上测色。
+
+## 17. 云端窗口激活保留页面（2026-09-28）
+
+本轮只修改 Web 会话激活、恢复模态与相应用例，已作为r13部署到Azure；没有修改 API、数据库、迁移、采集或数据。测试目标是同时证明两个不变量：已接受页面在窗口离开期间继续挂载，新的私有请求仍立即被闸门暂停。
+
+| 证据 | 范围与结论 |
+| --- | --- |
+| Web 类型检查与生产构建 | 最终代码通过；恢复层使用同一 Fluent/Tabster 模态栈，并关闭 surface motion，避免底层弹窗在入场帧透出 |
+| `cloud-session.spec.ts` | 最终构建 31/31 通过：首次连接、邀请、撤销、后台 hidden/blur 与 visible/focus、私有请求闸门、账号替换、在途写入、快速/慢速/失败恢复、移动 Drawer、嵌套隐私弹窗、草稿及焦点恢复 |
+| `cloud-workflows.spec.ts` | 15175 mock-only 最终构建 16/16 通过；其中账号替换用完整窗口生命周期触发，旧账号 200/401 在途响应均不能覆盖新文档，1440/390 打开的隐私弹窗在换账号后释放 |
+| 最终响应式证据 | `tmp\focus-session-final-r2` 的 10项通过，覆盖 1440/1024/768/390 的页面保留、移动隐私弹窗、静默确认、失败恢复、首次慢恢复及390嵌套慢恢复；目录为本机证据，不随仓库分发 |
+| 独立 UI Critic | 首轮指出恢复层入场透明帧会让底层隐私文字透出（FS-01，P1）；关闭恢复 surface motion 后复查标记 FS-01 已解决，限定范围 Ready for visual acceptance，无新 P0/P1/P2 |
+| r13 ACR与滚动 | ACR `cke` 成功；镜像digest为 `sha256:2a990ebb…f3e5`；旧revision归零后约63秒新revision Ready，最终 `newsscout--0000010`、Single/min=max=1。168项构建输入只变更 `auth.tsx` / `auth.css`，无后端或迁移变化 |
+| 前门与配置一致性 | 健康、登录页、`/share` 为200，匿名私有session和匿名 `latest` 为401；入口JS/CSS的字节数与SHA-256和本地最终构建一致。AuthConfig、身份、registry、资源、扩缩、16项环境变量名、7项secret引用、1位受邀读者与0条IP规则保持 |
+| 已部署前端mock E2E | 直接打开真实Azure HTML/JS/CSS并拦截私有API，最终8/8通过：移动隐私焦点2项、静默激活3项、失败恢复2项、390px嵌套慢恢复/草稿1项。第一次复跑为7/8：外层移动Drawer在内层隐私模态活动时被Fluent正确设为后台，旧断言错误要求其中账号文字可见；改为断言外层DOM仍 attached，同时继续要求内层弹窗、页面和pending状态存在后，最终8/8 |
+| 云端运行观察 | 启动日志显示API监听，0个启动错误、调度失败或晨报重选失败；App Insights从滚动开始只有一次预期匿名401，0个5xx、0个异常 |
+
+### 证据边界
+
+- 窗口离开/返回由 Playwright 合成完整事件序列，不是真实 Windows 应用切换。自动化浏览器没有Microsoft登录态，点击登录只到账号提示页，没有选择或输入凭据；获邀用户仍应在登录后的Azure浏览器中手工切换应用复查。
+- 本地用例中的新闻、账号和失败均为明确mock；部署前端8项只使用真实Azure静态资源，私有API仍被拦截。这些结果证明发布bundle与前端隔离/交互契约，不证明真实Microsoft登录、私有后端网络或云端延迟。
+- 直接嵌套恢复截图覆盖 1440 和 390；1024 仅覆盖静默确认，768 仅覆盖隐私弹窗。深色与 forced-colors 的恢复证据只覆盖 390 首次连接，不扩大为完整主题认证。
+- 私有请求闸门和账号隔离由请求记录及源码/用例断言证明；最终截图目录没有独立网络 manifest。
+- App Insights窗口内只有发布探测流量，不能据此推断登录用户切换应用时的实际网络耗时。

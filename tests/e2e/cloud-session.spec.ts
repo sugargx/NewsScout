@@ -84,51 +84,31 @@ test("cloud requires login before loading private pages and keeps privacy availa
   await markCloud(page);
   const { requests } = await mockSession(page, false);
   await page.goto("/sources");
-  const login = page.getByRole("link", { name: "使用 Microsoft 账户登录", exact: true });
-  await expect(login).toBeVisible();
-  await expect(login).toHaveAttribute("href", "/.auth/login/aad?post_login_redirect_uri=%2Fsources");
+  const microsoft = page.getByRole("link", { name: "使用 Microsoft 账户登录", exact: true });
+  const customer = page.getByRole("link", { name: "使用邮箱注册或登录", exact: true });
+  await expect(microsoft).toHaveAttribute("href", "/.auth/login/aad?post_login_redirect_uri=%2Fsources");
+  await expect(customer).toHaveAttribute("href", "/.auth/login/newsscout-account?post_login_redirect_uri=%2Fsources");
+  await expect(page.getByText("无需再提交申请或等待人工批准", { exact: false })).toBeVisible();
   expect(requests.every(request => request.path === "/api/v1/session")).toBe(true);
   await page.screenshot({ path: info.outputPath("cloud-sign-in.png") });
   await page.getByRole("link", { name: "数据与隐私说明", exact: true }).click();
   await expect(page.getByRole("heading", { name: "数据与隐私", exact: true })).toBeVisible();
 });
 
-const invitation = {
-  error: "invitation_required",
-  message: "This Microsoft account has not been approved for the preview.",
-  invitationKey: "9188040d-6c67-4c5b-b112-36a304b66dad:2b5961f6-b841-4559-9a07-a08a9e27efef",
-};
-for (const width of [1440, 1024, 390]) test(`unapproved accounts see only their request code and can enter after approval at ${width}px`, async ({ page }, info) => {
-  await markCloud(page);
-  const { requests } = await mockSession(page);
-  await page.route("**/api/v1/session", route => route.fulfill({ status: 403, json: invitation }));
-  await page.setViewportSize({ width, height: 900 });
-  await page.goto("/share");
-  await expect(page.getByRole("heading", { name: "这个账号还未获邀。", exact: true })).toBeFocused();
-  await expect(page.getByRole("textbox", { name: "申请编号", exact: true })).toHaveValue(invitation.invitationKey);
-  await expect(page.getByText("受控试用账号", { exact: true })).toHaveCount(0);
-  expect(requests.every(request => request.path === "/api/v1/session")).toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: info.outputPath(`cloud-invitation-${width}.png`) });
-  await page.unroute("**/api/v1/session");
-  await page.getByRole("button", { name: "已获批准，重新进入", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "今日分享", exact: true })).toBeVisible();
-});
-
-for (const revokeOn of ["focus", "private-write"] as const) test(`withdrawn approval discards private data on ${revokeOn}`, async ({ page }) => {
+for (const revokeOn of ["focus", "private-write"] as const) test(`expired authentication discards private data on ${revokeOn}`, async ({ page }) => {
   await markCloud(page);
   await mockSession(page);
   await page.goto("/share");
   await page.getByRole("button", { name: "隐私与使用统计", exact: true }).click();
-  await page.route("**/api/v1/session", route => route.fulfill({ status: 403, json: invitation }));
+  await page.route("**/api/v1/session", route => route.fulfill({ status: 401, json: { error: "sign_in_required" } }));
   if (revokeOn === "focus") {
     await moveWindowAway(page);
     await returnToWindow(page);
   } else {
-    await page.route("**/api/v1/me/telemetry-consent", route => route.fulfill({ status: 403, json: invitation }));
+    await page.route("**/api/v1/me/telemetry-consent", route => route.fulfill({ status: 401, json: { error: "sign_in_required" } }));
     await page.getByRole("switch", { name: "允许可选的使用统计", exact: true }).click();
   }
-  await expect(page.getByRole("heading", { name: "这个账号还未获邀。", exact: true })).toBeFocused();
+  await expect(page.getByRole("heading", { name: "把值得读的新闻，留在你的阅读空间。", exact: true })).toBeFocused();
   await expect(page.getByRole("dialog", { name: "隐私与使用统计", exact: true })).toHaveCount(0);
   await expect(page.getByText("受控试用账号", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "今日分享", exact: true })).toHaveCount(0);

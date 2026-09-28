@@ -1,6 +1,6 @@
 use crate::{
     app::{self, AppState},
-    auth::{Auth, AuthMode},
+    auth::{Auth, AuthMode, CustomerOidc},
     scoped_db::ScopedDb,
     store::Store,
 };
@@ -22,13 +22,24 @@ const PROXY: &str = "isolated-test-proxy-secret-32-bytes-minimum";
 const CSRF: &str = "isolated-test-csrf-secret-32-bytes-minimum";
 
 mod ingestion_regressions;
-mod invitation_regressions;
 mod reader_performance_regressions;
+mod self_service_regressions;
 
+const CUSTOMER_PROVIDER: &str = "newsscout-account";
+const CUSTOMER_ISSUER: &str = "https://newsscoutusers.example/tenant/v2.0/";
 fn principal(tenant: Uuid, object: Uuid, name: &str) -> String {
     STANDARD.encode(
         serde_json::to_vec(&json!({"auth_typ":"aad","claims":[
             {"typ":"tid","val":tenant},{"typ":"oid","val":object},{"typ":"name","val":name}
+        ]}))
+        .unwrap(),
+    )
+}
+
+fn customer_principal(subject: &str, name: &str) -> String {
+    STANDARD.encode(
+        serde_json::to_vec(&json!({"auth_typ":CUSTOMER_PROVIDER,"claims":[
+            {"typ":"iss","val":CUSTOMER_ISSUER},{"typ":"sub","val":subject},{"typ":"name","val":name}
         ]}))
         .unwrap(),
     )
@@ -156,16 +167,16 @@ async fn fixture(pool: &PgPool, owner: Option<String>, name: &str) -> anyhow::Re
     Ok((source, event))
 }
 
-fn root(pool: PgPool, invitations: &[(Uuid, Uuid)]) -> AppState {
+fn root(pool: PgPool) -> AppState {
     let auth = Arc::new(Auth {
         mode: AuthMode::Azure {
             origin: ORIGIN.into(),
             proxy_secret: PROXY.into(),
             csrf_secret: CSRF.into(),
-            invited_readers: invitations
-                .iter()
-                .map(|(tenant, object)| format!("{tenant}:{object}"))
-                .collect(),
+            customer_oidc: Some(CustomerOidc {
+                provider_name: CUSTOMER_PROVIDER.into(),
+                issuer: CUSTOMER_ISSUER.into(),
+            }),
         },
         pool: Some(pool.clone()),
     });
@@ -263,14 +274,13 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
         .execute(&pool).await?;
     let tenant = Uuid::new_v4();
     let identities = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
-    let invitations = identities.map(|object| (tenant, object));
-    let state = root(pool.clone(), &invitations);
+    let state = root(pool.clone());
     let app = app::router(state.clone());
     let a = Reader::new(&app, principal(tenant, identities[0], "Same display name")).await;
     let b = Reader::new(&app, principal(tenant, identities[1], "Same display name")).await;
     assert_ne!(a.id, b.id);
     assert_ne!(a.csrf, b.csrf);
-    invitation_regressions::verify_admission(&pool, &app, &a, tenant, identities[0]).await?;
+    self_service_regressions::verify_admission(&pool, &app, &a).await?;
     let (shared_source, shared) = fixture(&pool, None, "PUBLIC_FIXTURE").await?;
     let (a_source, a_event) = fixture(&pool, Some(a.id.to_string()), "PRIVATE_ALPHA").await?;
     let (b_source, b_event) = fixture(&pool, Some(b.id.to_string()), "PRIVATE_BETA").await?;
@@ -790,7 +800,7 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     // A fresh worker state resumes persisted pending jobs. The fixture disables
     // its source after submit, exercising a real terminal failure without any
     // outbound network or fake success response.
-    crate::ingestion_jobs::tick(&root(pool.clone(), &invitations)).await?;
+    crate::ingestion_jobs::tick(&root(pool.clone())).await?;
     let completed = b
         .ok(
             "GET",

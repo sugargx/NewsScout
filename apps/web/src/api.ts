@@ -32,11 +32,8 @@ export function setSessionCsrfToken(value: string | null, userId: string | null 
 }
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number, public code?: string, public invitationKey?: string) { super(message); }
+  constructor(message: string, public status: number, public code?: string) { super(message); }
 }
-
-export const isInvitationRequired = (error: unknown): error is ApiError =>
-  error instanceof ApiError && error.status === 403 && error.code === "invitation_required";
 
 async function confirmRequestSession(epoch: number, signal?: AbortSignal | null) {
   while (sessionValidation) await sessionValidation;
@@ -61,12 +58,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (protectedRequest) await confirmRequestSession(requestEpoch, init?.signal);
   if (path !== "/api/v1/session" && requestEpoch !== sessionEpoch) throw new DOMException("账号会话已切换。", "AbortError");
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { error?: unknown; message?: unknown; invitationKey?: unknown } | null;
+    const body = await response.json().catch(() => null) as { error?: unknown; message?: unknown } | null;
     const code = typeof body?.error === "string" ? body.error : undefined;
     const message = typeof body?.message === "string" ? body.message : code ?? "请求失败";
-    const invitationKey = typeof body?.invitationKey === "string" ? body.invitationKey : undefined;
-    const error = new ApiError(`${message}（HTTP ${response.status}）`, response.status, code, invitationKey);
-    if (protectedRequest && (response.status === 401 || isInvitationRequired(error))) {
+    const error = new ApiError(`${message}（HTTP ${response.status}）`, response.status, code);
+    if (protectedRequest && response.status === 401) {
       window.dispatchEvent(new globalThis.Event("newsscout-session-expired"));
     }
     throw error;

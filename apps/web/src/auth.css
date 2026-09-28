@@ -6,13 +6,10 @@
 /* Focused on load only so screen readers announce the page; it is not a control. */
 .ns-auth-card h1:focus { outline: none; }
 .ns-auth-detail { color: var(--cp-text-muted); font-size: 13px; }
-.ns-auth-login { display: flex; align-items: center; justify-content: center; min-height: 48px; margin: 28px 0 12px; padding: 8px 16px; border-radius: 8px; background: var(--cp-accent); color: var(--cp-accent-fg); text-decoration: none; font-weight: 600; }
+.ns-auth-actions { display: grid; gap: 12px; margin: 28px 0 12px; }
+.ns-auth-login { display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 8px 16px; border: 1px solid var(--cp-accent); border-radius: 8px; background: var(--cp-accent); color: var(--cp-accent-fg); text-decoration: none; font-weight: 600; }
+.ns-auth-login-secondary { background: transparent; color: var(--cp-accent); }
 .ns-auth-login:focus-visible { outline: 3px solid var(--cp-focus); outline-offset: 3px; }
-.ns-auth-invitation { margin-top: 24px; }
-.ns-auth-invitation label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; }
-.ns-auth-invitation textarea { box-sizing: border-box; display: block; width: 100%; resize: none; padding: 12px; border: 1px solid var(--cp-border); border-radius: 8px; background: var(--cp-bg); color: var(--cp-text); font: 13px/1.8 ui-monospace, monospace; overflow-wrap: anywhere; }
-.ns-auth-invitation textarea:focus-visible { outline: 3px solid var(--cp-focus); outline-offset: 3px; }
-.ns-auth-retry { width: 100%; min-height: 48px; margin-block: 12px 20px; }
 .ns-auth-links { display: flex; flex-wrap: wrap; gap: 12px 24px; font-size: 13px; }
 .ns-auth-links a { color: var(--cp-accent); }
 .ns-session-private[aria-hidden="true"],

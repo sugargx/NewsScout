@@ -10,7 +10,7 @@ resource preview 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   location: location
   tags: {
     product: 'NewsScout'
-    environment: 'invited-preview'
+    environment: 'customer-preview'
     managedBy: 'Bicep'
   }
 }

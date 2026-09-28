@@ -1,4 +1,4 @@
-use std::{collections::HashSet, env, sync::Arc};
+use std::{env, sync::Arc};
 
 use anyhow::Context;
 use axum::{
@@ -29,8 +29,14 @@ pub enum AuthMode {
         origin: String,
         proxy_secret: String,
         csrf_secret: String,
-        invited_readers: HashSet<String>,
+        customer_oidc: Option<CustomerOidc>,
     },
+}
+
+#[derive(Clone)]
+pub struct CustomerOidc {
+    pub provider_name: String,
+    pub issuer: String,
 }
 
 #[derive(Clone, Default)]
@@ -118,16 +124,51 @@ impl Auth {
             proxy_secret.len() >= 32 && csrf_secret.len() >= 32,
             "cloud proxy and CSRF secrets require at least 32 bytes"
         );
-        let invited_readers = parse_invitations(
-            &get("SCOUTNEWS_INVITED_READERS")
-                .ok_or_else(|| anyhow::anyhow!("SCOUTNEWS_INVITED_READERS is required"))?,
-        )?;
+        let customer_oidc = match (
+            get("SCOUTNEWS_CUSTOM_OIDC_PROVIDER_NAME"),
+            get("SCOUTNEWS_CUSTOM_OIDC_ISSUER"),
+        ) {
+            (None, None) => None,
+            (Some(provider_name), Some(issuer)) => {
+                anyhow::ensure!(
+                    !provider_name.is_empty()
+                        && provider_name.len() <= 64
+                        && provider_name != "aad"
+                        && provider_name
+                            .chars()
+                            .enumerate()
+                            .all(|(index, c)| c.is_ascii_lowercase()
+                                || c.is_ascii_digit()
+                                || index > 0 && c == '-'),
+                    "SCOUTNEWS_CUSTOM_OIDC_PROVIDER_NAME must be a lowercase provider alias"
+                );
+                let url = url::Url::parse(&issuer)
+                    .context("SCOUTNEWS_CUSTOM_OIDC_ISSUER must be a valid URL")?;
+                anyhow::ensure!(
+                    issuer.len() <= 2048
+                        && url.scheme() == "https"
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.query().is_none()
+                        && url.fragment().is_none(),
+                    "SCOUTNEWS_CUSTOM_OIDC_ISSUER must be an exact HTTPS issuer"
+                );
+                Some(CustomerOidc {
+                    provider_name,
+                    issuer,
+                })
+            }
+            _ => anyhow::bail!(
+                "SCOUTNEWS_CUSTOM_OIDC_PROVIDER_NAME and SCOUTNEWS_CUSTOM_OIDC_ISSUER must be configured together"
+            ),
+        };
         Ok(Self {
             mode: AuthMode::Azure {
                 origin,
                 proxy_secret,
                 csrf_secret,
-                invited_readers,
+                customer_oidc,
             },
             pool: None,
         })
@@ -158,31 +199,6 @@ impl Auth {
     }
 }
 
-fn parse_invitations(value: &str) -> anyhow::Result<HashSet<String>> {
-    let entries: Vec<String> = serde_json::from_str(value)
-        .context("SCOUTNEWS_INVITED_READERS must be a JSON array of tenant-ID:object-ID pairs")?;
-    anyhow::ensure!(
-        entries.len() <= 100,
-        "at most 100 preview accounts may be approved"
-    );
-    entries
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            let invalid = || {
-                anyhow::anyhow!(
-                    "invalid approved account at index {index}: two nonzero UUIDs are required"
-                )
-            };
-            let (tenant, object) = entry.split_once(':').ok_or_else(invalid)?;
-            let tenant = Uuid::parse_str(tenant).map_err(|_| invalid())?;
-            let object = Uuid::parse_str(object).map_err(|_| invalid())?;
-            anyhow::ensure!(!tenant.is_nil() && !object.is_nil(), "{}", invalid());
-            Ok(format!("{tenant}:{object}"))
-        })
-        .collect()
-}
-
 #[derive(Deserialize)]
 struct Principal {
     auth_typ: String,
@@ -198,18 +214,19 @@ struct PlatformIdentity {
     issuer: String,
     subject: String,
     display_name: String,
-    invitation_key: String,
 }
 
-fn principal(value: &str) -> Result<PlatformIdentity, ApiError> {
+fn principal(
+    value: &str,
+    customer_oidc: Option<&CustomerOidc>,
+) -> Result<PlatformIdentity, ApiError> {
     let invalid = || ApiError::Unauthorized("Invalid platform identity".into());
     if value.len() > 16384 {
         return Err(invalid());
     }
     let bytes = STANDARD.decode(value).map_err(|_| invalid())?;
     let principal: Principal = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    if principal.auth_typ != "aad"
-        || principal.claims.len() > 100
+    if principal.claims.len() > 100
         || principal
             .claims
             .iter()
@@ -228,50 +245,73 @@ fn principal(value: &str) -> Result<PlatformIdentity, ApiError> {
         }
         Ok(first)
     };
-    let tenant = Uuid::parse_str(
-        claim(&[
-            "tid",
-            "http://schemas.microsoft.com/identity/claims/tenantid",
-        ])?
-        .ok_or_else(invalid)?,
-    )
-    .map_err(|_| invalid())?;
-    let object = Uuid::parse_str(
-        claim(&[
-            "oid",
-            "http://schemas.microsoft.com/identity/claims/objectidentifier",
-        ])?
-        .ok_or_else(invalid)?,
-    )
-    .map_err(|_| invalid())?;
-    if tenant.is_nil() || object.is_nil() {
-        return Err(invalid());
-    }
-    let issuer = format!("https://login.microsoftonline.com/{tenant}/v2.0");
-    if let Some(iss) = claim(&["iss"])?
-        && iss != issuer
-        && iss != format!("https://sts.windows.net/{tenant}/")
-    {
-        return Err(invalid());
-    }
     let name = claim(&[
         "name",
         "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
     ])?
+    .or(claim(&["preferred_username"])?)
+    .or(claim(&["email"])?)
     .unwrap_or("Reader")
     .chars()
     .filter(|c| !c.is_control())
     .take(80)
     .collect::<String>();
+    let display_name = if name.trim().is_empty() {
+        "Reader".into()
+    } else {
+        name
+    };
+    if principal.auth_typ == "aad" {
+        let tenant = Uuid::parse_str(
+            claim(&[
+                "tid",
+                "http://schemas.microsoft.com/identity/claims/tenantid",
+            ])?
+            .ok_or_else(invalid)?,
+        )
+        .map_err(|_| invalid())?;
+        let object = Uuid::parse_str(
+            claim(&[
+                "oid",
+                "http://schemas.microsoft.com/identity/claims/objectidentifier",
+            ])?
+            .ok_or_else(invalid)?,
+        )
+        .map_err(|_| invalid())?;
+        if tenant.is_nil() || object.is_nil() {
+            return Err(invalid());
+        }
+        let issuer = format!("https://login.microsoftonline.com/{tenant}/v2.0");
+        if let Some(iss) = claim(&["iss"])?
+            && iss != issuer
+            && iss != format!("https://sts.windows.net/{tenant}/")
+        {
+            return Err(invalid());
+        }
+        return Ok(PlatformIdentity {
+            issuer,
+            subject: object.to_string(),
+            display_name,
+        });
+    }
+    let oidc = customer_oidc
+        .filter(|provider| principal.auth_typ == provider.provider_name)
+        .ok_or_else(invalid)?;
+    if claim(&["iss"])?.ok_or_else(invalid)? != oidc.issuer {
+        return Err(invalid());
+    }
+    let subject = claim(&["sub"])?
+        .or(claim(&[
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier",
+        ])?)
+        .ok_or_else(invalid)?;
+    if subject.is_empty() || subject.len() > 512 || subject.chars().any(char::is_control) {
+        return Err(invalid());
+    }
     Ok(PlatformIdentity {
-        issuer,
-        subject: object.to_string(),
-        display_name: if name.trim().is_empty() {
-            "Reader".into()
-        } else {
-            name
-        },
-        invitation_key: format!("{tenant}:{object}"),
+        issuer: oidc.issuer.clone(),
+        subject: subject.to_owned(),
+        display_name,
     })
 }
 
@@ -296,7 +336,7 @@ pub async fn middleware(
     let AuthMode::Azure {
         origin,
         proxy_secret,
-        invited_readers,
+        customer_oidc,
         ..
     } = &root.auth.mode
     else {
@@ -338,24 +378,11 @@ pub async fn middleware(
         .get("x-ms-client-principal")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| ApiError::Unauthorized("Sign in required".into()))
-        .and_then(principal);
+        .and_then(|value| principal(value, customer_oidc.as_ref()));
     let identity = match identity {
         Ok(identity) => identity,
         Err(error) => return error.into_response(),
     };
-    // Admission precedes account creation and every private read or write.
-    if !invited_readers.contains(&identity.invitation_key) {
-        return (
-            StatusCode::FORBIDDEN,
-            [("cache-control", "no-store, private")],
-            Json(serde_json::json!({
-                "error":"invitation_required",
-                "message":"This Microsoft account has not been approved for the preview.",
-                "invitationKey":identity.invitation_key
-            })),
-        )
-            .into_response();
-    }
     let result = async {
         if method == Method::OPTIONS {
             if !matches_secret(headers.get("origin"), origin) {
@@ -511,16 +538,36 @@ mod tests {
             "auth_typ":"aad","claims":[{"typ":"tid","val":tid},{"typ":"oid","val":oid},
                 {"typ":"email","val":"not-an-authority@example.test"},{"typ":"name","val":"Reader"}]
         })).unwrap());
-        let identity = principal(&encoded).unwrap();
+        let identity = principal(&encoded, None).unwrap();
         assert_eq!(identity.subject, oid.to_string());
-        assert_eq!(identity.invitation_key, format!("{tid}:{oid}"));
         assert!(
             principal(
-                &STANDARD.encode(br#"{"auth_typ":"aad","claims":[{"typ":"email","val":"admin"}]}"#)
+                &STANDARD.encode(br#"{"auth_typ":"aad","claims":[{"typ":"email","val":"admin"}]}"#),
+                None
             )
             .is_err()
         );
-        assert!(principal("malformed").is_err());
+        assert!(principal("malformed", None).is_err());
+        let oidc = CustomerOidc {
+            provider_name: "newsscout-account".into(),
+            issuer: "https://newsscoutusers.example/tenant/v2.0/".into(),
+        };
+        let encoded = STANDARD.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "auth_typ":"newsscout-account",
+                "claims":[
+                    {"typ":"iss","val":oidc.issuer},
+                    {"typ":"sub","val":"customer-subject"},
+                    {"typ":"name","val":"Customer"}
+                ]
+            }))
+            .unwrap(),
+        );
+        let identity = principal(&encoded, Some(&oidc)).unwrap();
+        assert_eq!(identity.issuer, oidc.issuer);
+        assert_eq!(identity.subject, "customer-subject");
+        assert_eq!(identity.display_name, "Customer");
+        assert!(principal(&encoded, None).is_err());
     }
     #[test]
     fn owner_controls_do_not_include_collection() {
@@ -535,7 +582,7 @@ mod tests {
                 origin: "https://test.example".into(),
                 proxy_secret: "p".repeat(32),
                 csrf_secret: "c".repeat(32),
-                invited_readers: HashSet::new(),
+                customer_oidc: None,
             },
             pool: None,
         };
@@ -549,7 +596,6 @@ mod tests {
             ("WEB_ORIGIN", "https://example.com".into()),
             ("SCOUTNEWS_PROXY_TOKEN", "p".repeat(32)),
             ("SCOUTNEWS_CSRF_SECRET", "c".repeat(32)),
-            ("SCOUTNEWS_INVITED_READERS", "[]".into()),
         ]);
         assert!(
             Auth::configure(|key| valid.get(key).cloned())
@@ -561,7 +607,6 @@ mod tests {
             "WEB_ORIGIN",
             "SCOUTNEWS_PROXY_TOKEN",
             "SCOUTNEWS_CSRF_SECRET",
-            "SCOUTNEWS_INVITED_READERS",
         ] {
             let mut values = valid.clone();
             values.remove(key);
@@ -576,10 +621,6 @@ mod tests {
             ("SCOUTNEWS_PROXY_TOKEN", "short"),
             ("SCOUTNEWS_CSRF_SECRET", "short"),
             ("SCOUTNEWS_AUTH_MODE", "unknown"),
-            ("SCOUTNEWS_INVITED_READERS", ""),
-            ("SCOUTNEWS_INVITED_READERS", "null"),
-            ("SCOUTNEWS_INVITED_READERS", r#"["reader@example.com"]"#),
-            ("SCOUTNEWS_INVITED_READERS", r#"["*:anything"]"#),
         ] {
             let mut values = valid.clone();
             values.insert(key, value.into());
@@ -592,27 +633,37 @@ mod tests {
         assert!(
             Auth::configure(|key| (key == "CONTAINER_APP_NAME").then(|| "cloud".into())).is_err()
         );
-    }
-
-    #[test]
-    fn invitation_keys_are_exact_immutable_pairs() {
-        let tenant = Uuid::new_v4();
-        let object = Uuid::new_v4();
-        let key = format!("{tenant}:{object}");
-        let values = serde_json::to_string(&vec![key.to_uppercase(), key.clone()]).unwrap();
-        let invitations = parse_invitations(&values).unwrap();
-        assert_eq!(invitations.len(), 1);
-        assert!(invitations.contains(&key));
-        assert!(!invitations.contains(&format!("{}:{object}", Uuid::new_v4())));
-        assert!(!invitations.contains(&format!("{tenant}:{}", Uuid::new_v4())));
-        assert!(parse_invitations("[]").unwrap().is_empty());
-        for invalid in [
-            format!(r#"["{}:{object}"]"#, Uuid::nil()),
-            format!(r#"["{tenant}:{}"]"#, Uuid::nil()),
-            format!(r#"["{tenant}:{object}:extra"]"#),
-            serde_json::to_string(&vec![key; 101]).unwrap(),
+        for (provider, issuer) in [
+            (Some("newsscout-account"), None),
+            (None, Some("https://issuer.example/v2.0/")),
+            (Some("Newsscout"), Some("https://issuer.example/v2.0/")),
+            (
+                Some("newsscout/account"),
+                Some("https://issuer.example/v2.0/"),
+            ),
+            (
+                Some("newsscout-account"),
+                Some("http://issuer.example/v2.0/"),
+            ),
         ] {
-            assert!(parse_invitations(&invalid).is_err());
+            let mut values = valid.clone();
+            if let Some(provider) = provider {
+                values.insert("SCOUTNEWS_CUSTOM_OIDC_PROVIDER_NAME", provider.into());
+            }
+            if let Some(issuer) = issuer {
+                values.insert("SCOUTNEWS_CUSTOM_OIDC_ISSUER", issuer.into());
+            }
+            assert!(Auth::configure(|key| values.get(key).cloned()).is_err());
         }
+        let mut values = valid;
+        values.insert(
+            "SCOUTNEWS_CUSTOM_OIDC_PROVIDER_NAME",
+            "newsscout-account".into(),
+        );
+        values.insert(
+            "SCOUTNEWS_CUSTOM_OIDC_ISSUER",
+            "https://issuer.example/v2.0/".into(),
+        );
+        assert!(Auth::configure(|key| values.get(key).cloned()).is_ok());
     }
 }

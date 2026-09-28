@@ -11,7 +11,7 @@ param tenantId string = subscription().tenantId
 
 var tags = {
   product: 'NewsScout'
-  environment: 'invited-preview'
+  environment: 'customer-preview'
   managedBy: 'Bicep'
 }
 

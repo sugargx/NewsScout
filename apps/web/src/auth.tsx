@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, FluentProvider, Switch } from "@fluentui/react-components";
 import { PersonRegular, ShieldCheckmarkRegular, SignOutRegular } from "@fluentui/react-icons";
 import { Link, useLocation } from "react-router-dom";
-import { api, ApiError, getDocumentReaderId, isInvitationRequired, SessionChangedError, setSessionCsrfToken, suspendSessionRequests } from "./api";
+import { api, ApiError, getDocumentReaderId, SessionChangedError, setSessionCsrfToken, suspendSessionRequests } from "./api";
 import { ErrorNotice } from "./components/Feedback";
 import { ReaderButton } from "./components/ReaderControls";
 import type { ReaderSession } from "./types";
@@ -89,32 +89,16 @@ function SignInPage() {
   const returnTo = location.pathname.startsWith("/.auth") ? "/" : `${location.pathname}${location.search}`;
   return <main className="ns-auth-page">
     <section className="ns-auth-card" aria-labelledby="sign-in-title">
-      <div className="ns-auth-wordmark">NewsScout <span>邀请测试版</span></div>
+      <div className="ns-auth-wordmark">NewsScout <span>开放预览</span></div>
       <h1 id="sign-in-title" ref={heading} tabIndex={-1}>把值得读的新闻，留在你的阅读空间。</h1>
-      <p>受邀账号登录后可浏览新闻、设置兴趣、管理来源与采集，也可以整理和分享阅读发现。</p>
+      <p>登录后即可创建自己的阅读空间，无需再提交申请或等待人工批准。</p>
       <p className="ns-auth-detail">收藏、兴趣主题和阅读记录随账号保存，不与其他用户混用；每日分享图只在你的浏览器中生成。</p>
-      <a className="ns-auth-login" href={`/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnTo)}`}>使用 Microsoft 账户登录</a>
-      <p className="ns-auth-detail">支持工作、学校及个人 Microsoft 账户；组织账户可能需要管理员许可。</p>
+      <div className="ns-auth-actions">
+        <a className="ns-auth-login" href={`/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnTo)}`}>使用 Microsoft 账户登录</a>
+        <a className="ns-auth-login ns-auth-login-secondary" href={`/.auth/login/newsscout-account?post_login_redirect_uri=${encodeURIComponent(returnTo)}`}>使用邮箱注册或登录</a>
+      </div>
+      <p className="ns-auth-detail">Microsoft入口支持工作、学校及个人账户；NewsScout账号使用已验证邮箱和密码。手机号当前可用于安全验证，但身份平台暂不支持把手机号作为独立的第一登录因子。</p>
       <Link to="/privacy">数据与隐私说明</Link>
-    </section>
-  </main>;
-}
-
-function InvitationPage({ invitationKey, retry, busy }: { invitationKey?: string; retry: () => void; busy: boolean }) {
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => { heading.current?.focus(); }, []);
-  return <main className="ns-auth-page">
-    <section className="ns-auth-card" aria-labelledby="invitation-title">
-      <div className="ns-auth-wordmark">NewsScout <span>邀请测试版</span></div>
-      <h1 id="invitation-title" ref={heading} tabIndex={-1}>这个账号还未获邀。</h1>
-      <p>你已完成 Microsoft 登录。将下方申请编号发给邀请你试用的维护者，获批后即可进入阅读空间。</p>
-      {invitationKey ? <div className="ns-auth-invitation">
-        <label htmlFor="invitation-key">申请编号</label>
-        <textarea id="invitation-key" readOnly rows={3} value={invitationKey} spellCheck={false} onFocus={event => event.currentTarget.select()} aria-describedby="invitation-detail" />
-        <p id="invitation-detail" className="ns-auth-detail">选中编号即可复制。这不是密码；此页面不会自动发送申请。</p>
-      </div> : <p role="alert">未能取得申请编号，请重新确认账号。</p>}
-      <ReaderButton variant="primary" className="ns-auth-retry" disabled={busy} onClick={retry}>{busy ? "正在确认…" : "已获批准，重新进入"}</ReaderButton>
-      <div className="ns-auth-links"><a href="/.auth/logout?post_logout_redirect_uri=/">换一个账号</a><Link to="/privacy">数据与隐私说明</Link></div>
     </section>
   </main>;
 }
@@ -179,9 +163,9 @@ function CloudSession({ children }: { children: ReactNode }) {
         setVerificationPending(false);
         return value;
       } catch (error) {
-        if (error instanceof SessionChangedError || error instanceof ApiError && (error.status === 401 || isInvitationRequired(error)) && getDocumentReaderId()) {
+        if (error instanceof SessionChangedError || error instanceof ApiError && error.status === 401 && getDocumentReaderId()) {
           restartSession();
-        } else if (error instanceof ApiError && (error.status === 401 || isInvitationRequired(error))) {
+        } else if (error instanceof ApiError && error.status === 401) {
           setSessionCsrfToken(null);
           client.getMutationCache().clear();
           setExpired(error.status === 401);
@@ -299,7 +283,6 @@ function CloudSession({ children }: { children: ReactNode }) {
     if (!restarting.current) void session.refetch({ cancelRefetch: false });
   };
   if (expired || session.error instanceof ApiError && session.error.status === 401) return <SignInPage />;
-  if (isInvitationRequired(session.error)) return <InvitationPage invitationKey={session.error.invitationKey} retry={() => void session.refetch()} busy={session.isFetching} />;
   return <>
     {accepted.current && <FluentProvider className="ns-session-private" inert={!validated} aria-hidden={!validated || undefined}>
       <SessionContext.Provider value={{ ...(session.data ?? accepted.current), identityVerified: validated }}><UsageTelemetry />{children}</SessionContext.Provider>
@@ -417,6 +400,6 @@ export function PrivacyPage() {
     <h2>可选择的使用统计</h2>
     <p>默认关闭。你可以在“隐私与使用统计”中决定是否提供去标识化的页面类型和操作类别，并随时关闭。这与实现阅读偏好所需的收藏、打开和曝光记录不同。</p>
     <h2>管理你的数据</h2>
-    <p>云端测试服务的账号数据在维护者的 Azure 环境中保存，本地运行的数据保存在本机配置的数据库。登录云端后可从“隐私与使用统计”导出自己的数据；导出时生成的私有临时副本在 7 天后自动清理。需要删除账号数据时，请联系邀请你试用的维护者。</p>
+    <p>云端预览服务的账号数据在维护者的 Azure 环境中保存，本地运行的数据保存在本机配置的数据库。登录云端后可从“隐私与使用统计”导出自己的数据；导出时生成的私有临时副本在 7 天后自动清理。需要删除账号数据时，请联系服务维护者。</p>
   </main>;
 }

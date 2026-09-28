@@ -24,7 +24,7 @@ export function routeName(path: string): string {
 export function createMonitor(connectionString: string, credential: TokenCredential) {
   const exporter = new AzureMonitorTraceExporter({ connectionString, credential });
   const provider = new NodeTracerProvider({
-    resource: resourceFromAttributes({ "service.name": "newsscout-web", "deployment.environment.name": "invited-preview" }),
+    resource: resourceFromAttributes({ "service.name": "newsscout-web", "deployment.environment.name": "customer-preview" }),
     spanProcessors: [new BatchSpanProcessor(exporter, { maxQueueSize: 512, maxExportBatchSize: 64, exportTimeoutMillis: 15_000 })],
   });
   return { tracer: provider.getTracer("newsscout"), shutdown: () => provider.shutdown() };

@@ -38,7 +38,7 @@ param logDailyQuotaGb string = '0.25'
 
 var tags = {
   product: 'NewsScout'
-  environment: 'invited-preview'
+  environment: 'customer-preview'
   managedBy: 'Bicep'
 }
 

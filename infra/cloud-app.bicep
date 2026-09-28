@@ -13,6 +13,15 @@ param vaultName string
 param vaultUri string
 param exportStorageUrl string
 param loginClientId string
+param customerAuthEnabled bool = false
+@description('EasyAuth alias for the customer External ID OpenID Connect provider.')
+param customerAuthProviderName string = 'newsscout-account'
+param customerAuthClientId string = ''
+@description('Exact issuer claim accepted from the customer External ID provider.')
+param customerAuthIssuer string = ''
+@description('OpenID Connect discovery endpoint for the customer External ID provider.')
+param customerAuthWellKnownConfiguration string = ''
+param customerAuthClientSecretName string = 'customer-auth-client-secret'
 @allowed([
   'disabled'
   'github-app'
@@ -26,9 +35,6 @@ param copilotOAuthBundleSecretName string = 'copilot-github-oauth-bundle'
 param releaseId string
 @description('Open ingress only after the initial deployment has enabled and verified EasyAuth.')
 param openToUsers bool = false
-@description('Approved Microsoft tenant-ID:object-ID pairs, copied from each reader after genuine login. Empty denies all private access.')
-@maxLength(100)
-param invitedReaders array = []
 
 resource environment 'Microsoft.App/managedEnvironments@2026-01-01' existing = {
   name: environmentName
@@ -46,15 +52,40 @@ resource copilotOAuthBundle 'Microsoft.KeyVault/vaults/secrets@2023-07-01' exist
 
 var origin = 'https://${appName}.${environmentDomain}'
 var githubAppEnabled = copilotAuthMode == 'github-app'
-var secretNames = [
+var secretNames = concat([
   'database-url'
   'csrf-secret'
   'proxy-token'
   'gateway-shared-secret'
   'applicationinsights-connection-string'
   'entra-client-secret'
-]
+], customerAuthEnabled ? [customerAuthClientSecretName] : [])
 var credentials = secretNames
+var customerIdentityProvider = customerAuthEnabled ? {
+  customOpenIdConnectProviders: {
+    '${customerAuthProviderName}': {
+      enabled: true
+      registration: {
+        clientId: customerAuthClientId
+        clientCredential: {
+          method: 'ClientSecretPost'
+          clientSecretSettingName: customerAuthClientSecretName
+        }
+        openIdConnectConfiguration: {
+          wellKnownOpenIdConfiguration: customerAuthWellKnownConfiguration
+        }
+      }
+      login: {
+        nameClaimType: 'name'
+        scopes: [
+          'openid'
+          'profile'
+          'email'
+        ]
+      }
+    }
+  }
+} : {}
 
 resource appCopilotOAuthBundleOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (githubAppEnabled) {
   name: guid(copilotOAuthBundle.id, identity.id, 'NewsScout Copilot OAuth bundle writer')
@@ -74,7 +105,7 @@ resource app 'Microsoft.App/containerApps@2026-01-01' = {
   ] : []
   tags: {
     product: 'NewsScout'
-    environment: 'invited-preview'
+    environment: 'customer-preview'
     release: releaseId
   }
   identity: {
@@ -118,7 +149,6 @@ resource app 'Microsoft.App/containerApps@2026-01-01' = {
         resources: { cpu: 1, memory: '2Gi' }
         env: concat([
           { name: 'SCOUTNEWS_AUTH_MODE', value: 'azure' }
-          { name: 'SCOUTNEWS_INVITED_READERS', value: string(invitedReaders) }
           { name: 'DATABASE_URL', secretRef: 'database-url' }
           { name: 'SCOUTNEWS_CSRF_SECRET', secretRef: 'csrf-secret' }
           { name: 'SCOUTNEWS_PROXY_TOKEN', secretRef: 'proxy-token' }
@@ -137,6 +167,9 @@ resource app 'Microsoft.App/containerApps@2026-01-01' = {
           { name: 'SCOUTNEWS_COPILOT_GITHUB_CLIENT_ID', value: copilotGitHubClientId }
           { name: 'SCOUTNEWS_COPILOT_GITHUB_ACCOUNT_ID', value: copilotGitHubAccountId }
           { name: 'SCOUTNEWS_COPILOT_OAUTH_BUNDLE_SECRET_URL', value: '${vaultUri}secrets/${copilotOAuthBundleSecretName}' }
+        ] : [], customerAuthEnabled ? [
+          { name: 'SCOUTNEWS_CUSTOM_OIDC_PROVIDER_NAME', value: customerAuthProviderName }
+          { name: 'SCOUTNEWS_CUSTOM_OIDC_ISSUER', value: customerAuthIssuer }
         ] : [])
         probes: [
           { type: 'Startup', httpGet: { path: '/health', port: 3000 }, periodSeconds: 5, timeoutSeconds: 6, failureThreshold: 36 }
@@ -158,7 +191,7 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2026-01-01' = {
     // EasyAuth also uses this exact origin to validate cookie-authenticated browser POSTs.
     login: { allowedExternalRedirectUrls: [origin] }
     httpSettings: { requireHttps: true }
-    identityProviders: {
+    identityProviders: union({
       azureActiveDirectory: {
         enabled: true
         registration: {
@@ -169,7 +202,7 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2026-01-01' = {
         login: { loginParameters: ['scope=openid profile email'] }
         validation: { allowedAudiences: [loginClientId] }
       }
-    }
+    }, customerIdentityProvider)
   }
 }
 

@@ -147,7 +147,7 @@ export async function createCloudServer(options: CloudHostOptions) {
     if (url.pathname === "/health") {
       if (!["GET", "HEAD"].includes(request.method ?? "")) throw new RequestError(405, "不支持该方法。");
       const health = await fetch(new URL("/health", api), { signal: AbortSignal.timeout(5000), redirect: "error" });
-      json(response, health.ok ? 200 : 503, { status: health.ok ? "ready" : "unavailable", deployment: "invited-preview" });
+      json(response, health.ok ? 200 : 503, { status: health.ok ? "ready" : "unavailable", deployment: "customer-preview" });
       return;
     }
     if (url.pathname.startsWith("/api/")) {

@@ -98,7 +98,7 @@ try {
   if (!stopping) {
     start("api", resolve(root, "bin", process.platform === "win32" ? "scoutnews-api.exe" : "scoutnews-api"), []);
     server.listen(3000, "0.0.0.0", () => {
-      console.info(JSON.stringify({ category: "host_started", port: 3000, deployment: "invited-preview" }));
+      console.info(JSON.stringify({ category: "host_started", port: 3000, deployment: "customer-preview" }));
     });
   }
 } catch (error) {

@@ -28,6 +28,24 @@ test("article-value-v1 is conservative, metadata-only, type-aware and not a sour
   expect(community.valueScore).toBeGreaterThan(question.valueScore);
   expect(community.policyVersion).toBe("article-value-v1");
   expect(community.reason).toContain("非 AI");
+  const retrospectiveBody = "A chronological keynote review compares model releases, benchmark results, security incidents and open source changes. ".repeat(12);
+  const retrospective = classify("2026 in LLMs (so far)", "blog",
+    "https://simonwillison.net/2026/Sep/27/2026-in-llms-so-far/",
+    { feedSummary: retrospectiveBody }, false, "author");
+  expect(retrospective.contentKind).toBe("analysis");
+  expect(retrospective.valueScore).toBe(70);
+  expect(retrospective.briefEligible).toBe(true);
+  expect(retrospective.reason).toContain("阶段性回顾");
+  const shortRetrospective = classify("2026 in LLMs (so far)", "blog",
+    "https://example.com/short-retrospective",
+    { feedSummary: "A short benchmark roundup." }, false, "author");
+  expect(shortRetrospective.contentKind).toBe("news");
+  expect(shortRetrospective.briefEligible).toBe(false);
+  const communityRetrospective = classify("2026 in LLMs (so far)", "blog",
+    "https://reddit.com/r/LocalLLaMA/comments/retrospective",
+    { feedSummary: retrospectiveBody }, false, "community");
+  expect(communityRetrospective.contentKind).not.toBe("analysis");
+  expect(communityRetrospective.briefEligible).toBe(false);
   const release = classify("Introducing Agent SDK v2", "release", "https://github.com/policy/project/releases/tag/v2.0.0", {}, true, "organization");
   expect(release.contentKind).toBe("release");
   expect(release.briefEligible).toBe(true);

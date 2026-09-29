@@ -2,6 +2,15 @@
 
 本文件记录 ScoutNews 的已实现变更与文档范围，不是实时运行状态。当前包版本为 `0.2.0`；以下日期不代表新增 Git tag、包版本或完成整个 V0。
 
+## 2026-09-29：长篇阶段回顾精选与 scoped npm 同批发布
+
+- 新增迁移 `0031_editorial_synthesis.sql`：非社区/论文索引、保留材料不少于600字，且标题明确为“so far / year in review / retrospective / roundup / timeline / key trends / 迄今 / 回顾 / 盘点 / 年度总结 / 时间线 / 趋势”的普通新闻，按分析内容处理并加12分。`2026 in LLMs (so far)` 的代表性材料从 `news / 58 / 不可精选` 修正为 `analysis / 70 / 可精选`；短摘录、社区帖子、宣传和仓库元数据不会因此升级。
+- 选文规则提升为 `editorial-significance-v1-ranked-v2`，部署后只对2026年9月29日当天已保存的晨报按原截止时刻重选一次；往期、原始材料、摘要、事件身份和分享快照不改写。云端三个作用域分别重选为12、15、15条。
+- 发布族新增严格的 scoped npm 身份：标题和GitHub tag必须精确对应 `@scope/package@semver`，并要求同仓库、同scope、同精确版本、不同package目标、精确来源时间和24小时总跨度。每个成员仍须有可信GitHub变更引用；同一monorepo协调发布不再要求所有包共享同一个PR/Issue。`@modelcontextprotocol/*@2.2.0` 现在显示为“`@modelcontextprotocol 2.2.0 同批发布：server / core / codemod 等4项`”，仍只计一个官方来源且不增加热度。
+- 云端r17为ACR `ckm`、Ready `newsscout--0000014`、Single/1，镜像 `sha256:297356d6…20aaa`，schema31；认证、GitHub App凭据、模型、5000共享额度和资源规格未改。维护窗先确认r16为0副本；恢复Single时控制面曾有一次短暂的双revision读数，随后收敛为仅r17，因此不宣称零重叠。
+
+Rust 177项通过/12项忽略；全新隔离库从1迁移到31、精选契约及SQL策略5/5通过；MCP同形态live E2E 1/1通过；Node生产构建和ACR Linux构建通过。公开健康、真实登录页和启动日志已验证；容器内容投影因Azure `exec` WebSocket 404未完成，不把启动日志冒充登录后的私有页面验收。
+
 ## 2026-09-28：精简自助登录说明
 
 - 登录页说明改为“登录后即可创建自己的阅读空间。”，删除“无需再提交申请或等待人工批准”。

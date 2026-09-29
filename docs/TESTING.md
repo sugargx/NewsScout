@@ -145,7 +145,7 @@ npm.cmd run test:e2e:live
 
 访客兴趣的真实链路使用 `-TestPattern 'visitor SQL|visitor retained-corpus'`，并提供实际候选 EXE 与受控备份。原评分包装器与旧 SQL 在事务内逐项比较；130 条明确标为合成的隔离材料验证分组、分页、100 条主题样本、20% 兴趣分量和站主状态隔离，结束后清理。之后的截图只使用恢复的真实材料，不把这些合成材料发布或冒充新闻。截图子过程的浏览器只有公开 GET 权限。
 
-组件发布分组使用 Rust 的 `coverage::tests` 与隔离启动器的 `-TestPattern 'component release groups'`。`release-families.spec.ts` 不再依赖实时 RSS 永远保留某几个旧版本：第一项创建明确标为合成的九条组件材料，覆盖三个分组、CLI/SDK/Provider 身份、过滤、分页、访客读取和独立隐藏/撤销，结束后清理；第二项只读恢复语料中的2026年9月18日实际版本，并采集1440/1024/768/390的列表布局（r10 已移除卡片视图，旧记录中的卡片截图不再生成）。
+组件发布分组使用 Rust 的 `coverage::tests` 与隔离启动器的 `-TestPattern 'component release groups'`。`release-families.spec.ts` 不再依赖实时 RSS 永远保留某几个旧版本：第一项创建明确标为合成的九条组件材料，覆盖三个分组、CLI/SDK/Provider 身份、过滤、分页、访客读取和独立隐藏/撤销，结束后清理；scoped npm 用例按截图形态创建四条 `@modelcontextprotocol/*@2.2.0`，让各包引用不同变更编号，断言API只返回一组、官方来源数为1、热度为0，页面展开保留server/core/codemod/client四个目标与版本；最后一项只读恢复语料中的2026年9月18日实际版本，并采集1440/1024/768/390的列表布局（r10 已移除卡片视图，旧记录中的卡片截图不再生成）。
 
 真实语料截图需要 `-DatabaseBackup`，且备份必须确实包含该批 Mem0 发布；没有对应版本应更新回放语料，而不是在线补抓或伪造为真实新闻。合成截图以 `synthetic-` 命名，真实恢复材料以 `retained-` 命名。Rust 反例覆盖非官方/fork、不同项目或改动、错误标签、同组件连续版本、日期精度、24小时跨度、无引用桥接、排序变化下批次稳定，以及旧 `v1` 快照标题不被改写。
 
@@ -460,3 +460,18 @@ ACR `cka` 与Ready `newsscout--0000006` 的实际发布记录见Azure手册。17
 | Copilot回归 | 零推理探针 `accountVerified/credentialDurable/persistenceWriteVerified=true`，16模型、精确Terra、0次推理 |
 
 证据边界：客户授权页及Create one来自真实部署，但未输入真实备用邮箱；完整邮件注册、验证、找回和首次用户操作仍需真人完成。External ID当前不支持手机号作为第一登录因子，短信只能作为可选付费MFA。
+
+## 20. r17 长篇回顾精选与 scoped npm 同批发布（2026-09-29）
+
+| 证据 | 结果 |
+| --- | --- |
+| Rust全量 | 189项发现，177通过、12忽略、0失败；新增 scoped npm 正向/反向边界，旧包、客户端、插件、快照与配额测试全部通过 |
+| 空库迁移 | 随机 `scoutnews_e2e_<32hex>` 数据库从迁移1执行到31；`daily_selection_significance_contract` 通过；最终 `_sqlx_migrations.max(version)=31` |
+| SQL编辑策略 | `editorial-policy.spec.ts` 前五项5/5：`2026 in LLMs (so far)` 的长材料为 `analysis / 70 / true`，短材料与社区反例不升级；Stratechery付费目录边界保持 |
+| MCP live E2E | `-TestPattern 'scoped npm releases'` 1/1：四条不同变更号的 `@modelcontextprotocol/*@2.2.0` 原始记录只显示一组，展开保留四个package，官方来源数1、热度0 |
+| 本地生产构建 | Web TypeScript/Vite、Copilot Gateway、cloud-host与Rust debug构建通过；完整live启动器使用全新数据库及迁移31 |
+| ACR与what-if | ACR `ckm` 成功，digest `sha256:297356d6…20aaa`；what-if与r16已接受变化形状一致，目标镜像/release ID确认，0 delete |
+| Azure切换 | 10:08:42（+08）确认r16为0副本；10:10:27 r17 `newsscout--0000014` 成为唯一Healthy Single/1；公开 `/health` 200，真实登录页两个入口与精简说明存在 |
+| 当天重选 | 启动日志记录三个作用域按 `editorial-significance-v1-ranked-v2` 各执行一次，结果12、15、15条；API在迁移后监听，据此确认schema31 |
+
+维护边界：Bicep恢复Single时控制面一次读数短暂同时列出r16/r17各一副本，随后旧revision inactive且replica列表为空，不能写成零重叠。容器 `exec` 因Azure CLI WebSocket 404失败，Azure Monitor MCP查询亦超时；因此没有把目标文章在登录后页面中的最终位置或真实MCP保留记录再次读取出来。代码、隔离SQL和同形态live E2E已验证修复，登录态内容仍需维护者本人页面复查。

@@ -1033,6 +1033,143 @@ mod tests {
         (events, cutoff)
     }
 
+    async fn scoped_package_fixtures() -> (Vec<Event>, DateTime<Utc>) {
+        let (mut events, _) = plugin_fixtures().await;
+        events.truncate(4);
+        for (index, (event, (title, tag, published, excerpt))) in events
+            .iter_mut()
+            .zip([
+                (
+                    "@modelcontextprotocol/server@2.2.0",
+                    "%40modelcontextprotocol%2Fserver%402.2.0",
+                    "2026-09-29T03:07:55Z",
+                    "Patch Changes #2885 9dd722f Thanks @claude!",
+                ),
+                (
+                    "@modelcontextprotocol/core@2.2.0",
+                    "%40modelcontextprotocol%2Fcore%402.2.0",
+                    "2026-09-29T03:07:52Z",
+                    "Minor Changes #2887 edd12e2 Thanks @maxisbey!",
+                ),
+                (
+                    "@modelcontextprotocol/codemod@2.2.0",
+                    "%40modelcontextprotocol%2Fcodemod%402.2.0",
+                    "2026-09-29T03:07:49Z",
+                    "Patch Changes #2582 f091897 Thanks @axits-lab!",
+                ),
+                (
+                    "@modelcontextprotocol/client@2.2.0",
+                    "%40modelcontextprotocol%2Fclient%402.2.0",
+                    "2026-09-29T03:07:46Z",
+                    "Minor Changes #2887 edd12e2 Thanks @maxisbey!",
+                ),
+            ])
+            .enumerate()
+        {
+            event.id = Uuid::from_u128(300 + index as u128);
+            event.title = title.into();
+            event.published_at = Some(published.parse().unwrap());
+            event.freshness_at = event.published_at;
+            let evidence = &mut event.evidence[0];
+            evidence.id = Uuid::from_u128(400 + index as u128);
+            evidence.title = title.into();
+            evidence.url = format!(
+                "https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/{tag}"
+            );
+            evidence.original_published_at = event.published_at;
+            evidence.excerpt = excerpt.into();
+        }
+        let cutoff = events[0].published_at.unwrap() + Duration::hours(1);
+        (events, cutoff)
+    }
+
+    #[tokio::test]
+    async fn coordinated_scoped_packages_group_same_repo_scope_and_version() {
+        let (events, cutoff) = scoped_package_fixtures().await;
+        let originals = events.clone();
+        let grouped = rollup_events(events, cutoff);
+        assert_eq!(grouped.len(), 1);
+        let bundle = grouped[0].coverage.as_ref().unwrap();
+        assert_eq!(
+            bundle.topic,
+            "@modelcontextprotocol 2.2.0 同批发布：server / core / codemod 等4项"
+        );
+        assert_eq!(bundle.relation, "release_family");
+        assert_eq!(bundle.method, "release-family-v2");
+        assert_eq!(bundle.window_hours, 24);
+        assert_eq!(bundle.material_count, 4);
+        assert_eq!(bundle.official_source_count, 1);
+        assert_eq!(bundle.popularity_boost, 0.0);
+        assert_eq!(
+            bundle
+                .members
+                .iter()
+                .map(|member| (
+                    member.release_target.as_deref().unwrap(),
+                    member.release_version.as_deref().unwrap()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("server", "2.2.0"),
+                ("core", "2.2.0"),
+                ("codemod", "2.2.0"),
+                ("client", "2.2.0"),
+            ]
+        );
+        for (member, original) in bundle.members.iter().zip(originals) {
+            assert_eq!(member.event_id, original.id);
+            assert_eq!(member.title, original.title);
+            assert_eq!(member.summary, original.summary);
+            assert_eq!(
+                serde_json::to_value(&member.evidence).unwrap(),
+                serde_json::to_value(&original.evidence).unwrap()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn scoped_package_batches_require_exact_identity_and_bounded_time() {
+        let (events, cutoff) = scoped_package_fixtures().await;
+        for case in 0..7 {
+            let mut pair = events[..2].to_vec();
+            let lead_published_at = pair[0].published_at.unwrap();
+            let other = &mut pair[1];
+            match case {
+                0 => {
+                    other.evidence[0].title = "@modelcontextprotocol/core@2.2.1".into();
+                    other.evidence[0].url = other.evidence[0].url.replace("2.2.0", "2.2.1");
+                }
+                1 => {
+                    other.evidence[0].title = "@another-scope/core@2.2.0".into();
+                    other.evidence[0].url = other.evidence[0]
+                        .url
+                        .replace("modelcontextprotocol%2Fcore", "another-scope%2Fcore");
+                }
+                2 => {
+                    other.evidence[0].url = other.evidence[0].url.replace(
+                        "modelcontextprotocol/typescript-sdk",
+                        "another/typescript-sdk",
+                    );
+                }
+                3 => {
+                    other.evidence[0].url = other.evidence[0].url.replace("%2F", "%252F");
+                }
+                4 => {
+                    other.evidence[0].title = "@modelcontextprotocol/server@2.2.0".into();
+                    other.evidence[0].url = other.evidence[0].url.replace("core", "server");
+                }
+                5 => {
+                    let old = lead_published_at - Duration::hours(25);
+                    other.published_at = Some(old);
+                    other.freshness_at = Some(old);
+                    other.evidence[0].original_published_at = Some(old);
+                }
+                _ => other.evidence[0].excerpt = "Release notes without a change reference".into(),
+            }
+            assert_eq!(rollup_events(pair, cutoff).len(), 2, "case {case}");
+        }
+    }
+
     #[tokio::test]
     async fn release_family_packages_preserve_langgraph_core_and_sdk_materials() {
         let (events, cutoff) = package_fixtures().await;

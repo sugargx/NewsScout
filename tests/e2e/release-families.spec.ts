@@ -163,6 +163,71 @@ test("component release groups preserve filters, pagination, versions and indepe
   }
 });
 
+test("scoped npm releases form one coordinated batch without becoming corroboration",async({page,request})=>{
+  test.setTimeout(180_000);
+  const before=preserved(),tag=`scoped-release-${randomUUID()}`,source=randomUUID();
+  const definitions=[
+    ["@modelcontextprotocol/server@2.2.0","%40modelcontextprotocol%2Fserver%402.2.0","Patch Changes #2885 9dd722f Thanks @claude!"],
+    ["@modelcontextprotocol/core@2.2.0","%40modelcontextprotocol%2Fcore%402.2.0","Minor Changes #2887 edd12e2 Thanks @maxisbey!"],
+    ["@modelcontextprotocol/codemod@2.2.0","%40modelcontextprotocol%2Fcodemod%402.2.0","Patch Changes #2582 f091897 Thanks @axits-lab!"],
+    ["@modelcontextprotocol/client@2.2.0","%40modelcontextprotocol%2Fclient%402.2.0","Minor Changes #2887 edd12e2 Thanks @maxisbey!"],
+  ];
+  const fixtures=definitions.map(([title,release,excerpt],index)=>({
+    id:randomUUID(),content:randomUUID(),title,index,excerpt,
+    url:`https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/${release}`,
+  }));
+  const ids=fixtures.map(item=>literal(item.id)).join(",");
+  try {
+    databaseQuery(`BEGIN;
+      INSERT INTO sources(id,publisher_id,name,endpoint,content_type,adapter_type,tier,lifecycle_status,last_success_at)
+        SELECT ${literal(source)},publisher_id,${literal(tag)},${literal(`https://${tag}.example/feed`)},
+          'release','rss','T1','stable',now() FROM sources WHERE id='20000000-0000-0000-0000-000000000110';
+      INSERT INTO events(id,canonical_title,summary,importance,primary_topic,event_type,first_seen_at,updated_at,
+        summary_kind,summary_format_version,summary_points,summary_model,content_version)
+      VALUES ${fixtures.map(item=>`(${literal(item.id)},${literal(item.title)},
+        ${literal(`隔离MCP同批发布样本，并非新采集新闻。${tag}`)},'隔离样本','Agent 与工具','release',
+        now()-interval '4 hours',now()-interval '4 hours','copilot',3,
+        '["隔离MCP同批发布样本，并非真实摘要。"]','isolated-fixture',1)`).join(",")};
+      INSERT INTO content_items(id,source_id,content_type,original_url,canonical_url,title,published_at,content_hash,metadata)
+      VALUES ${fixtures.map(item=>`(${literal(item.content)},${literal(source)},'release',${literal(item.url)},
+        ${literal(item.url)},${literal(item.title)},now()-interval '4 hours'-interval '${item.index} seconds',
+        ${literal(item.content)},${literal(JSON.stringify({feedSummary:item.excerpt}))}::jsonb)`).join(",")};
+      INSERT INTO event_evidence(event_id,content_item_id,is_official)
+        VALUES ${fixtures.map(item=>`(${literal(item.id)},${literal(item.content)},true)`).join(",")};
+      COMMIT;`);
+    const parameters={q:tag,source,hours:"24",sort:"newest",asOf:new Date().toISOString(),limit:"40"};
+    const original=await events(request,parameters);
+    const grouped=await events(request,{...parameters,coverage:"true"});
+    expect(original.items).toHaveLength(4);
+    expect(grouped.items).toHaveLength(1);
+    const bundle=grouped.items[0].coverage!;
+    expect(bundle.topic).toBe("@modelcontextprotocol 2.2.0 同批发布：server / core / codemod 等4项");
+    expect(bundle.method).toBe("release-family-v2");
+    expect(bundle.officialSourceCount).toBe(1);
+    expect(bundle.popularityBoost).toBe(0);
+    expect(bundle.members.map(member=>[member.releaseTarget,member.releaseVersion])).toEqual([
+      ["server","2.2.0"],["core","2.2.0"],["codemod","2.2.0"],["client","2.2.0"],
+    ]);
+    expect(bundle.members.map(member=>member.title)).toEqual(fixtures.map(item=>item.title));
+
+    await page.goto(`/radar?q=${encodeURIComponent(tag)}&hours=24&sort=newest`);
+    const row=page.locator(`article[data-event-id="${grouped.items[0].id}"]`);
+    await expect(row.getByRole("heading",{level:2,name:bundle.topic,exact:true})).toBeVisible();
+    await row.locator(".cp-release-family > summary").click();
+    await expect(row.locator("[data-coverage-member]")).toHaveCount(4);
+    for(const [target,version] of [["server","2.2.0"],["core","2.2.0"],["codemod","2.2.0"],["client","2.2.0"]])
+      await expect(row.getByRole("heading",{level:3,name:`${target} · ${version}`,exact:true})).toBeVisible();
+  } finally {
+    await page.goto("about:blank");
+    databaseQuery(`DELETE FROM user_event_states WHERE event_id IN(${ids});
+      DELETE FROM event_evidence WHERE event_id IN(${ids});
+      DELETE FROM events WHERE id IN(${ids});
+      DELETE FROM content_items WHERE source_id=${literal(source)};
+      DELETE FROM sources WHERE id=${literal(source)};`);
+    expect(preserved()).toBe(before);
+  }
+});
+
 test("component release groups retained-corpus screenshots preserve real release notes",async({page,request},info)=>{
   test.setTimeout(240_000);
   test.skip(process.env.SCOUTNEWS_E2E_CORPUS_BACKUP!=="true","A retained-corpus backup is required.");

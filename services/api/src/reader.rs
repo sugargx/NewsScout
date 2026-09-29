@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::models::{BriefSection, DailyBrief, Event, Evidence, Topic};
 
-pub const DAILY_SELECTION_RULE: &str = "editorial-significance-v1-ranked-v1";
+pub const DAILY_SELECTION_RULE: &str = "editorial-significance-v1-ranked-v2";
 const ESSENTIAL_COUNT: usize = 5;
 const CATCH_UP_LIMIT: usize = 3;
 const STORY_WINDOW_HOURS: i64 = 96;
@@ -445,12 +445,7 @@ fn select_edition(
                 "选文截止前 24 小时内价值最高的内容",
                 main,
             ),
-            (
-                "more",
-                "更多值得读",
-                "同一时段内其余值得读的内容",
-                more,
-            ),
+            ("more", "更多值得读", "同一时段内其余值得读的内容", more),
             (
                 "catch_up",
                 "值得补读",

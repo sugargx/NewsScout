@@ -1,12 +1,20 @@
 # Azure 认证开放预览运行手册
 
-维护日期：2026-09-28。适用于独立仓库 `sugargx/NewsScout` 的完整应用，不是旧5190只读网关。命令从项目根目录在 PowerShell 中执行；基座脚本需要 PowerShell7。**第1节记录带时间的维护者交接，其余操作步骤不表示已经全部执行；实际运行结果须按记录时间区分。**
+维护日期：2026-09-29。适用于独立仓库 `sugargx/NewsScout` 的完整应用，不是旧5190只读网关。命令从项目根目录在 PowerShell 中执行；基座脚本需要 PowerShell7。**第1节记录带时间的维护者交接，其余操作步骤不表示已经全部执行；实际运行结果须按记录时间区分。**
 
 ## 1. 带日期的 rollout 状态
 
 本仓库公开，ACR登录服务器和应用地址只保存在私有记录 `tmp\azure-preview-20260920`（不入库），文中分别写作 `<ACR>` 和 `<应用FQDN>`。
 
-**最新发布（2026-09-28）：r16已部署，Ready revision为 `newsscout--0000013`。** ACR `ckk` 构建唯一tag `preview-20260928-r16-copy-f0d32ba`，镜像为 `<ACR>/scoutnews@sha256:0a109331c0458fd79305edfde98d90c426a7088f73e0cd5b8b11ac43df90b4d4`。本轮只将登录说明精简为“登录后即可创建自己的阅读空间。”；实际页面确认旧申请/人工批准措辞不存在，Microsoft和邮箱入口保持。最终Single/min=max=1、r15退出、公开 `/health` 200；认证、云端schema30、数据库、新闻、5000共享额度和资源规格未改。
+**最新发布（2026-09-29）：r17已部署，Ready revision为 `newsscout--0000014`。** ACR `ckm` 于09:56:46–10:04:57（+08）成功，唯一tag `preview-20260929-r17-editorial-095534`，镜像为 `<ACR>/scoutnews@sha256:297356d6fa94851068a739d9c280f75ea75ee0f6e84ee2f9e312871774520aaa`。本轮新增迁移31，修复长篇阶段回顾漏选；同仓库、同scope、同精确版本的 scoped npm 协调发布按一个 `release-family-v2` 组展示。最终Single/min=max=1、r16退出、公开 `/health` 200，API在迁移之后监听，据此确认云端schema31。认证、GitHub App凭据、Terra/low、5000共享额度和资源规格未改。
+
+维护切换于10:07:51停用r16，10:08:42确认其0副本，10:08:49开始部署，10:10:27确认r17唯一Healthy副本。Bicep恢复Single时控制面有一次短暂读数同时列出r16/r17各一副本，随后r16为inactive且replica列表为空，因此本轮不宣称新旧Worker零重叠。r17启动日志记录2026年9月29日三个保存作用域按 `editorial-significance-v1-ranked-v2` 沿用原截止时刻重选一次，条数为12、15、15；往期不变。
+
+本轮Rust 177/12、空库1→31迁移与精选契约、SQL策略5/5、MCP同形态live E2E 1/1、Node生产构建、ACR Linux构建、Bicep what-if、公开健康和真实登录页通过。what-if与已接受的r16变化形状相同，0 delete；目标镜像和release ID已核对。Azure CLI容器 `exec` 仍因WebSocket 404失败，Azure Monitor MCP查询也超时，因此未完成登录态内容的第二次行级投影，不把启动日志冒充私有页面验收。交接为 `tmp\azure-preview-20260920\release-r17-20260929.json`、`runtime-parameters-r17.json`、`r17-what-if.json` 与维护时间线。
+
+### 2026-09-28：r16记录（历史）
+
+**r16当日部署为Ready `newsscout--0000013`，现已由r17替代。** ACR `ckk` 构建唯一tag `preview-20260928-r16-copy-f0d32ba`，镜像为 `<ACR>/scoutnews@sha256:0a109331c0458fd79305edfde98d90c426a7088f73e0cd5b8b11ac43df90b4d4`。本轮只将登录说明精简为“登录后即可创建自己的阅读空间。”；实际页面确认旧申请/人工批准措辞不存在，Microsoft和邮箱入口保持。最终Single/min=max=1、r15退出、公开 `/health` 200；认证、云端schema30、数据库、新闻、5000共享额度和资源规格未改。
 
 本轮Web typecheck、定向Playwright 1/1、ACR Linux构建、Azure validate/what-if及真实部署页面验证通过。what-if有效容器变化只有镜像digest与 `SCOUTNEWS_RELEASE_ID`，0 delete。交接为 `tmp\azure-preview-20260920\release-r16-20260928.json`、`runtime-parameters-r16.json` 及 `tmp\customer-auth\what-if-r16.json`。
 
@@ -644,6 +652,8 @@ Blob导出是短期副本，不是灾备。托管备份不包含本机keyring、
 **r11迁移29的边界：** `0029_editorial_significance.sql` 新增 `news_editorial_significance`，并以原签名替换 `reader_editorial_features` 与 `reader_editorial_recommendations_for_profile`，不改表结构和数据。同一SQLx校验规则下，29一旦应用，只含1–28的r10镜像不能作为可用回退。发布记录按启动顺序推断云端已为29（API在监听前执行迁移），没有现场读取；做回退决策前须先读取。常规做法是修复前进，或经批准把滚动前的恢复点（2026-09-24 14:16:06 +08）恢复到新服务器。`tmp\brief-r11\rollback-0029.sql` 会恢复旧函数并删除迁移记录第29行，与上面的规则冲突，只作为需要明确批准的应急材料；它只在隔离评估副本的事务内执行过并已整体回滚。
 
 **r12迁移30的边界：** `0030_reader_source_status.sql` 只在 `reader_editorial_features` 里重新套用0025的读者范围来源状态表达式，不改表结构和数据。同一SQLx校验规则下，30一旦应用，只含1–29的r11镜像不能作为可用回退。发布记录按启动顺序推断云端已为30，没有现场读取；做回退决策前须先读取。常规做法是修复前进，或经批准把滚动前的恢复点（2026-09-24 18:20:51 +08）恢复到新服务器。r12 还会在规则版本变化后重选当天已保存的晨报：原选文完整保存在 `admin_audits`（`edition_reselect` 的 `before_value`），可据此核对；据此改回当天那一期属于数据写入，须另行批准，没有准备现成脚本。
+
+**r17迁移31的边界：** `0031_editorial_synthesis.sql` 重命名当前 `news_article_policy_v1` 并创建同签名包装层，只改变长篇阶段回顾/趋势梳理的分类与价值分，不改表或存量材料。同一SQLx校验规则下，31一旦应用，只含1–30的r16镜像不能作为可用回退。r17 API在迁移后开始监听，据此确认31已应用；维护前PITR边界记录为2026-09-29 10:07:08 +08。常规回退是修复前进，或经批准把该时间前的恢复点恢复到新服务器，不能删除 `_sqlx_migrations` 第31行、改旧迁移校验和或直接重新激活r16。r17还把规则版本提升为v2并对当天三个作用域各重选一次；原选文保存在 `admin_audits`，往期未改。
 
 1. 先核对并保存当前完整私有参数、活动revision、digest和真实副本数。需要另行封闭入口时，只用当前digest修改应用级ingress，不提前启动新镜像；封入口本身不停止后台调度。已验证的维护切换接受旧副本停止后的短暂不可用，不承诺零停机。
 2. 在获准维护窗临时改为Multiple，以便停用当前revision；随后必须确认全部旧副本/Worker归零，才可启动下一版。Multiple仅是维护过渡，不允许新旧Worker并行、分流或加副本；无法确认停旧即结束本次更新。

@@ -1,6 +1,6 @@
 # 项目状态
 
-文档维护日期：2026-09-28。当前Azure开放预览以更新后的 `release-status.json` 及Azure手册为准；旧Dev Tunnel已退役。下面保留本地升级与早期隧道/CoDesign交付记录，不将历史数字当作实时统计。
+文档维护日期：2026-09-29。当前Azure开放预览以更新后的 `release-status.json` 及Azure手册为准；旧Dev Tunnel已退役。下面保留本地升级与早期隧道/CoDesign交付记录，不将历史数字当作实时统计。
 
 ## 当前定位
 
@@ -8,7 +8,15 @@
 
 项目名为 ScoutNews，阅读界面显示 NewsScout。日常使用见根 `README.md`；公开访客说明见 [公开阅读契约](PUBLIC-READER.md)。
 
-## 最新修复与运行记录（2026-09-28）
+## 最新修复与运行记录（2026-09-29）
+
+**云端r17已发布：ACR `ckm`、Ready `newsscout--0000014`，Single/min=max=1。** 镜像为 `sha256:297356d6…20aaa`，云端schema31。长篇阶段回顾/趋势梳理在有至少600字保留材料、且不是社区或论文索引时按分析内容评估；`2026 in LLMs (so far)` 的代表性材料为 `analysis / 70 / 可精选`，短材料及社区帖子不升级。同仓库、同scope、同版本的 `@scope/package@semver` 协调发布形成一组，MCP 2.2.0组保留四个package成员、只计一个官方来源且不增加热度。
+
+选文规则提升到 `editorial-significance-v1-ranked-v2`。r17启动后，2026年9月29日三个已保存作用域沿用原截止时刻各重选一次，分别保存12、15、15条；往期不变。Rust 177通过/12忽略，空库1→31迁移和SQL策略5/5、MCP live E2E 1/1、Node/ACR Linux构建、公开健康及真实登录页通过。维护窗先确认r16为0副本；恢复Single时控制面曾短暂同时列出r16/r17，最终只有r17一副本，因此不声称零重叠。Azure容器 `exec` 的WebSocket 404阻止了第二次登录态内容投影，不能把启动日志当作完整私有页面验收。
+
+认证、External ID、GitHub App凭据、Terra/low、5000共享额度、新闻原始材料、历史晨报和资源规格未改。本地日常应用仍未启动或迁移，个人库保持schema27。
+
+## 2026-09-28 r16记录（历史）
 
 **云端r16已发布：ACR `ckk`、Ready `newsscout--0000013`，Single/min=max=1。** 镜像为 `sha256:0a109331…b4d4`。本轮只将登录说明精简为“登录后即可创建自己的阅读空间。”，并增加回归断言确保旧申请/人工批准措辞不存在；双身份、数据库schema30、模型、内容和资源规格均未改。Web typecheck、定向Playwright 1/1、Azure validate/what-if、公开健康及真实部署页面验证通过。
 

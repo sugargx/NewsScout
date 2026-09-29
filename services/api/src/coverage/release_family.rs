@@ -19,6 +19,7 @@ pub(super) struct Release {
     target_key: String,
     client: bool,
     package: bool,
+    coordinated: bool,
     changes: BTreeSet<String>,
     subjects: BTreeSet<Subject>,
 }
@@ -107,6 +108,10 @@ fn package_name(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.'))
 }
 
+fn npm_identifier(value: &str) -> bool {
+    package_name(value) && value.bytes().all(|byte| !byte.is_ascii_uppercase())
+}
+
 fn package_version(value: &str) -> bool {
     if !version(value) {
         return false;
@@ -135,6 +140,62 @@ fn package_version(value: &str) -> bool {
         .all(|part| part.len() == 1 || !part.starts_with('0'))
         && prerelease.is_none_or(|value| identifiers(value, false))
         && build.is_none_or(|value| identifiers(value, true))
+}
+
+fn decoded_scoped_tag(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'%' {
+            let hex = bytes.get(index + 1..index + 3)?;
+            let value = std::str::from_utf8(hex).ok()?;
+            match u8::from_str_radix(value, 16).ok()? {
+                b'@' => decoded.push(b'@'),
+                b'/' => decoded.push(b'/'),
+                _ => return None,
+            }
+            index += 3;
+            continue;
+        }
+        if !byte.is_ascii_alphanumeric() && !matches!(byte, b'@' | b'-' | b'_' | b'.' | b'+') {
+            return None;
+        }
+        decoded.push(byte);
+        index += 1;
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn scoped_package_release(repo: &str, repository: &str, tag: &str, title: &str) -> Option<Release> {
+    let title = title.trim();
+    let package_and_version = title.strip_prefix('@')?;
+    let (package_identity, release_version) = package_and_version.rsplit_once('@')?;
+    let (scope, package) = package_identity.split_once('/')?;
+    if package_identity[scope.len() + 1..].contains('/')
+        || !package_name(repository)
+        || !npm_identifier(scope)
+        || !npm_identifier(package)
+        || !package_version(release_version)
+        || decoded_scoped_tag(tag)?.as_str() != title
+    {
+        return None;
+    }
+    Some(Release {
+        key: format!("{repo}:npm-scope:{scope}:{release_version}"),
+        product: Some(format!("@{scope}")),
+        repository: repository.into(),
+        family_label: "同批",
+        target: package.into(),
+        target_key: format!("npm:{package}"),
+        client: false,
+        package: true,
+        coordinated: true,
+        version: release_version.into(),
+        changes: BTreeSet::new(),
+        subjects: BTreeSet::new(),
+    })
 }
 
 fn package_release(repo: &str, repository: &str, tag: &str, title: &str) -> Option<Release> {
@@ -177,6 +238,7 @@ fn package_release(repo: &str, repository: &str, tag: &str, title: &str) -> Opti
             .unwrap_or_else(|| "core".into()),
         client: false,
         package: true,
+        coordinated: false,
         version: release_version.into(),
         changes: BTreeSet::new(),
         subjects: BTreeSet::new(),
@@ -251,6 +313,7 @@ fn legacy_release(repo: &str, repository: &str, tag: &str, title: &str) -> Optio
         target_key,
         client,
         package: false,
+        coordinated: false,
         version: format!("v{release_version}"),
         changes: BTreeSet::new(),
         subjects: BTreeSet::new(),
@@ -283,7 +346,17 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
             return None;
         };
         let repo = format!("github.com/{owner}/{repository}").to_ascii_lowercase();
-        let mut release = if evidence.title.contains("==") {
+        let mut release = if evidence.title.starts_with('@') {
+            if owner.is_empty()
+                || !owner
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                || evidence.url != url.as_str()
+            {
+                return None;
+            }
+            scoped_package_release(&repo, repository, tag, &evidence.title)?
+        } else if evidence.title.contains("==") {
             if owner.is_empty()
                 || !owner
                     .bytes()
@@ -371,6 +444,20 @@ pub(super) fn label(members: &[&Record]) -> String {
         .filter_map(|release| release.product.as_deref())
         .min()
         .unwrap_or(&first.repository);
+    if first.coordinated {
+        let names = releases
+            .iter()
+            .take(3)
+            .map(|release| release.target.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        let subject = if releases.len() > 3 {
+            format!("{names} 等{}项", releases.len())
+        } else {
+            names
+        };
+        return format!("{product} {} 同批发布：{subject}", first.version);
+    }
     if first.package {
         let mut components = releases.clone();
         components.sort_by(|a, b| {
@@ -486,16 +573,17 @@ fn select<'a>(
         {
             continue;
         }
-        if ((release.client || release.package)
-            && (shared_changes.is_empty() || other.changes.is_empty()))
-            || (!shared_changes.is_empty()
-                && !other.changes.is_empty()
-                && shared_changes.is_disjoint(&other.changes))
+        if !release.coordinated
+            && (((release.client || release.package)
+                && (shared_changes.is_empty() || other.changes.is_empty()))
+                || (!shared_changes.is_empty()
+                    && !other.changes.is_empty()
+                    && shared_changes.is_disjoint(&other.changes)))
         {
             continue;
         }
         // Keep a common change reference, never connect batch A to batch B through an unqualified entry.
-        if !other.changes.is_empty() {
+        if !release.coordinated && !other.changes.is_empty() {
             shared_changes = if shared_changes.is_empty() {
                 other.changes.clone()
             } else {

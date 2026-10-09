@@ -1,6 +1,6 @@
 # 项目状态
 
-文档维护日期：2026-09-29。当前Azure开放预览以更新后的 `release-status.json` 及Azure手册为准；旧Dev Tunnel已退役。下面保留本地升级与早期隧道/CoDesign交付记录，不将历史数字当作实时统计。
+文档维护日期：2026-10-09。当前Azure开放预览以更新后的 `release-status.json` 及Azure手册为准；旧Dev Tunnel已退役。下面保留本地升级与早期隧道/CoDesign交付记录，不将历史数字当作实时统计。
 
 ## 当前定位
 
@@ -8,9 +8,17 @@
 
 项目名为 ScoutNews，阅读界面显示 NewsScout。日常使用见根 `README.md`；公开访客说明见 [公开阅读契约](PUBLIC-READER.md)。
 
-## 最新修复与运行记录（2026-09-29）
+## 最新修复与运行记录（2026-10-09）
 
-**云端r17已发布：ACR `ckm`、Ready `newsscout--0000014`，Single/min=max=1。** 镜像为 `sha256:297356d6…20aaa`，云端schema31。长篇阶段回顾/趋势梳理在有至少600字保留材料、且不是社区或论文索引时按分析内容评估；`2026 in LLMs (so far)` 的代表性材料为 `analysis / 70 / 可精选`，短材料及社区帖子不升级。同仓库、同scope、同版本的 `@scope/package@semver` 协调发布形成一组，MCP 2.2.0组保留四个package成员、只计一个官方来源且不增加热度。
+**云端r18已发布：ACR `ckn`、Ready `newsscout--0000017`，Single/min=max=1。** 镜像为 `sha256:fa597bca…f5529`，schema仍为31。`official-announcement-v1` 补齐有唯一官方依据的完整版本公告与解读；`project-release-window-v1` 把同仓库24小时内的不同语言版本作为更新汇总，不冒称同一事件或共同改动。修复同事件组隐藏主文章时整组消失的前端状态问题。
+
+16:55（+08）真实维护API确认：Agent Framework的Python 1.21.0与.NET 1.24.0为一个多语言更新组，Anthropic官方Haiku 5.5公告与Simon Willison解读为一个同事件组；另一篇带比较/定价主体的文章仍独立。四篇详情成员一致，原始内容、摘要、证据、日期和精度保持；设置、兴趣、阅读状态、保存晨报及来源覆盖指纹与16:32基线一致。Rust 187通过/12忽略、live分组三项、反馈四项及缓存一项、隔离RLS/迁移/选文合同和生产构建通过；真实前端入口字节与本地验证版一致。这是维护API与合成UI证据，不是代用户完成Microsoft登录。
+
+上线前发现0031在r17部署后被规范化为LF，已按现场checksum恢复原CRLF字节并增加回归；没有改SQL逻辑、数据库记录或新增迁移。首次切换因配置比对把secret引用重排和空字段当作变更而自动回退至r17镜像；确认引用实际未变、修正语义比较后，用同一digest完成第二次切换。认证、GitHub App、Terra/low、5000共享额度和资源规格不变，本轮未启动或升级日常schema27库。详细时间线及回退边界见Azure手册。
+
+## 2026-09-29 r17记录（历史）
+
+**r17当日发布为ACR `ckm`、Ready `newsscout--0000014`，现已由r18替代。** 镜像为 `sha256:297356d6…20aaa`，云端schema31。长篇阶段回顾/趋势梳理在有至少600字保留材料、且不是社区或论文索引时按分析内容评估；`2026 in LLMs (so far)` 的代表性材料为 `analysis / 70 / 可精选`，短材料及社区帖子不升级。同仓库、同scope、同版本的 `@scope/package@semver` 协调发布形成一组，MCP 2.2.0组保留四个package成员、只计一个官方来源且不增加热度。
 
 选文规则提升到 `editorial-significance-v1-ranked-v2`。r17启动后，2026年9月29日三个已保存作用域沿用原截止时刻各重选一次，分别保存12、15、15条；往期不变。Rust 177通过/12忽略，空库1→31迁移和SQL策略5/5、MCP live E2E 1/1、Node/ACR Linux构建、公开健康及真实登录页通过。维护窗先确认r16为0副本；恢复Single时控制面曾短暂同时列出r16/r17，最终只有r17一副本，因此不声称零重叠。Azure容器 `exec` 的WebSocket 404阻止了第二次登录态内容投影，不能把启动日志当作完整私有页面验收。
 

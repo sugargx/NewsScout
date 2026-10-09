@@ -19,6 +19,8 @@ test.beforeEach(()=>{
   databaseQuery("SELECT 1");
 });
 
+test.use({actionTimeout:15_000});
+
 async function events(request:APIRequestContext,parameters:Record<string,string>) {
   const response=await request.get(`${api}/api/v1/events?${new URLSearchParams(parameters)}`);
   expect(response.ok(),await response.text()).toBe(true);
@@ -121,10 +123,16 @@ test("component release groups preserve filters, pagination, versions and indepe
     await row.locator(`[data-coverage-member="${member.eventId}"]`).getByRole("button",{name:"查看详情",exact:true}).click();
     const preview=page.getByRole("article",{name:"文章就地阅读",exact:true});
     await expect(preview.getByRole("heading",{level:2,name:member.title,exact:true})).toBeVisible();
+    await expect(preview.getByText("已打开",{exact:true})).toBeVisible();
     await preview.getByRole("button",{name:`不感兴趣：${member.title}`,exact:true}).click();
     await expect(row.locator("[data-coverage-member]")).toHaveCount(4);
     await preview.getByRole("button",{name:`撤销不感兴趣：${member.title}`,exact:true}).click();
     await expect(row.locator("[data-coverage-member]")).toHaveCount(5);
+    await expect.poll(async()=>{
+      const response=await request.get(`${api}/api/v1/events/${member.eventId}`);
+      expect(response.ok(),await response.text()).toBe(true);
+      return (await response.json()).notInterested;
+    }).toBe(false);
     await preview.getByRole("button",{name:"返回列表",exact:true}).click();
     await page.screenshot({path:info.outputPath("synthetic-component-groups-private-1440.png"),fullPage:true});
 

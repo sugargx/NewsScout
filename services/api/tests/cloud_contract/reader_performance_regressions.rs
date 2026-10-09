@@ -417,15 +417,11 @@ async fn profile_coverage_candidates(db: &ScopedDb) -> Result<(f64, i64, i64)> {
           WHERE e.status='published' AND e.created_at<=$2
             AND ($3 OR us.not_interested_at IS NULL)
         )
-        SELECT DISTINCT e.id,e.event_type,ci.original_url
+        SELECT DISTINCT e.id,e.event_type,ci.title,ci.original_url
         FROM authorized_events e
         JOIN event_evidence ee ON ee.event_id=e.id
         JOIN content_items ci ON ci.id=ee.content_item_id
-        WHERE ci.created_at<=$2
-          AND (lower(ci.original_url) LIKE 'https://github.com/%/releases/tag/%'
-            OR lower(ci.original_url) LIKE 'https://github.com/%/pull/%'
-            OR lower(ci.original_url) LIKE 'https://github.com/%/issues/%'
-            OR lower(ci.original_url) LIKE 'https://arxiv.org/abs/%')"#,
+        WHERE ci.created_at<=$2"#,
     )
     .bind(chrono::Utc::now() - chrono::Duration::days(14))
     .bind(chrono::Utc::now())

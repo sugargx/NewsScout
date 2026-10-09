@@ -19,9 +19,25 @@ pub(super) struct Release {
     target_key: String,
     client: bool,
     package: bool,
-    coordinated: bool,
+    grouping: Grouping,
     changes: BTreeSet<String>,
     subjects: BTreeSet<Subject>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Grouping {
+    SharedChanges,
+    ScopedBatch,
+    LanguageWindow,
+}
+
+impl Release {
+    pub(super) fn method(&self) -> &'static str {
+        match self.grouping {
+            Grouping::LanguageWindow => "project-release-window-v1",
+            _ => "release-family-v2",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -191,7 +207,7 @@ fn scoped_package_release(repo: &str, repository: &str, tag: &str, title: &str) 
         target_key: format!("npm:{package}"),
         client: false,
         package: true,
-        coordinated: true,
+        grouping: Grouping::ScopedBatch,
         version: release_version.into(),
         changes: BTreeSet::new(),
         subjects: BTreeSet::new(),
@@ -238,7 +254,51 @@ fn package_release(repo: &str, repository: &str, tag: &str, title: &str) -> Opti
             .unwrap_or_else(|| "core".into()),
         client: false,
         package: true,
-        coordinated: false,
+        grouping: Grouping::SharedChanges,
+        version: release_version.into(),
+        changes: BTreeSet::new(),
+        subjects: BTreeSet::new(),
+    })
+}
+
+fn language_release(repo: &str, repository: &str, tag: &str, title: &str) -> Option<Release> {
+    if title.trim() != tag || !package_name(repository) {
+        return None;
+    }
+    let (language, release_version) = tag.split_once('-')?;
+    let release_version = release_version.strip_prefix('v').unwrap_or(release_version);
+    if !package_version(release_version) {
+        return None;
+    }
+    let (target_key, target) = match language {
+        "python" | "py" => ("python", "Python"),
+        "dotnet" | "net" => ("dotnet", ".NET"),
+        "java" => ("java", "Java"),
+        "javascript" | "node" | "nodejs" | "js" => ("node", "JavaScript"),
+        "typescript" | "ts" => ("node", "TypeScript"),
+        "go" | "golang" => ("go", "Go"),
+        "rust" => ("rust", "Rust"),
+        "ruby" => ("ruby", "Ruby"),
+        "php" => ("php", "PHP"),
+        "swift" => ("swift", "Swift"),
+        "kotlin" => ("kotlin", "Kotlin"),
+        _ => return None,
+    };
+    let channel = if release_version.split('+').next()?.contains('-') {
+        "preview"
+    } else {
+        "stable"
+    };
+    Some(Release {
+        key: format!("{repo}:language:{channel}"),
+        product: Some(repository.into()),
+        repository: repository.into(),
+        family_label: "多语言",
+        target: target.into(),
+        target_key: target_key.into(),
+        client: true,
+        package: false,
+        grouping: Grouping::LanguageWindow,
         version: release_version.into(),
         changes: BTreeSet::new(),
         subjects: BTreeSet::new(),
@@ -313,7 +373,7 @@ fn legacy_release(repo: &str, repository: &str, tag: &str, title: &str) -> Optio
         target_key,
         client,
         package: false,
-        coordinated: false,
+        grouping: Grouping::SharedChanges,
         version: format!("v{release_version}"),
         changes: BTreeSet::new(),
         subjects: BTreeSet::new(),
@@ -367,7 +427,8 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
             }
             package_release(&repo, repository, tag, &evidence.title)?
         } else {
-            legacy_release(&repo, repository, tag, &evidence.title)?
+            language_release(&repo, repository, tag, &evidence.title)
+                .or_else(|| legacy_release(&repo, repository, tag, &evidence.title))?
         };
         let mut changes = BTreeSet::new();
         for word in evidence.excerpt.split_whitespace() {
@@ -444,7 +505,21 @@ pub(super) fn label(members: &[&Record]) -> String {
         .filter_map(|release| release.product.as_deref())
         .min()
         .unwrap_or(&first.repository);
-    if first.coordinated {
+    if first.grouping == Grouping::LanguageWindow {
+        let names = releases
+            .iter()
+            .take(3)
+            .map(|release| format!("{} {}", release.target, release.version))
+            .collect::<Vec<_>>()
+            .join(" / ");
+        let subject = if releases.len() > 3 {
+            format!("{names} 等{}项", releases.len())
+        } else {
+            names
+        };
+        return format!("{product} 多语言更新：{subject}");
+    }
+    if first.grouping == Grouping::ScopedBatch {
         let names = releases
             .iter()
             .take(3)
@@ -573,7 +648,7 @@ fn select<'a>(
         {
             continue;
         }
-        if !release.coordinated
+        if release.grouping == Grouping::SharedChanges
             && (((release.client || release.package)
                 && (shared_changes.is_empty() || other.changes.is_empty()))
                 || (!shared_changes.is_empty()
@@ -583,7 +658,7 @@ fn select<'a>(
             continue;
         }
         // Keep a common change reference, never connect batch A to batch B through an unqualified entry.
-        if !release.coordinated && !other.changes.is_empty() {
+        if release.grouping == Grouping::SharedChanges && !other.changes.is_empty() {
             shared_changes = if shared_changes.is_empty() {
                 other.changes.clone()
             } else {

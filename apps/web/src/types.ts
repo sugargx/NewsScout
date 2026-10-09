@@ -24,7 +24,7 @@ export interface CoverageMember {
   hidden?:boolean; // Client-only feedback overlay; not part of the server/public projection.
 }
 export interface CoverageBundle {
-  key:string;topic:string;relation:"same_named_topic"|"shared_identifier"|"same_event_evidence"|"release_family"|"archived_materials";method:"deterministic-name-v1"|"release-family-v1"|"release-family-v2"|"exact-event-reference-v1"|"archived-materials-v1";windowHours:number;
+  key:string;topic:string;relation:"same_named_topic"|"shared_identifier"|"same_event_evidence"|"release_family"|"archived_materials";method:"deterministic-name-v1"|"release-family-v1"|"release-family-v2"|"project-release-window-v1"|"exact-event-reference-v1"|"official-announcement-v1"|"archived-materials-v1";windowHours:number;
   materialCount:number;newsMaterialCount:number;editorialSourceCount:number;officialSourceCount:number;
   communityMaterialCount:number;popularityBoost:number;members:CoverageMember[];
 }

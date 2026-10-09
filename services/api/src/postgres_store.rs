@@ -358,7 +358,9 @@ impl PostgresStore {
         let references: HashSet<_> = events
             .iter()
             .flat_map(|event| &event.evidence)
-            .filter_map(|evidence| crate::coverage::event_reference(&evidence.url))
+            .filter_map(|evidence| {
+                crate::coverage::candidate_reference(&evidence.title, &evidence.url)
+            })
             .collect();
         if references.is_empty() {
             return Ok(Vec::new());
@@ -392,15 +394,11 @@ impl PostgresStore {
               WHERE e.status='published' AND e.created_at<=$3
                 AND ($4 OR us.not_interested_at IS NULL)
             )
-            SELECT DISTINCT e.id,e.event_type,ci.original_url
+            SELECT DISTINCT e.id,e.event_type,ci.title,ci.original_url
             FROM authorized_events e
             JOIN event_evidence ee ON ee.event_id=e.id
             JOIN content_items ci ON ci.id=ee.content_item_id
-            WHERE ci.created_at<=$3
-              AND (lower(ci.original_url) LIKE 'https://github.com/%/releases/tag/%'
-                OR lower(ci.original_url) LIKE 'https://github.com/%/pull/%'
-                OR lower(ci.original_url) LIKE 'https://github.com/%/issues/%'
-                OR lower(ci.original_url) LIKE 'https://arxiv.org/abs/%')"#,
+            WHERE ci.created_at<=$3"#,
         )
         .bind(start)
         .bind(end)
@@ -411,17 +409,17 @@ impl PostgresStore {
         let mut ids: HashSet<_> = events
             .iter()
             .filter(|event| {
-                event
-                    .evidence
-                    .iter()
-                    .any(|evidence| crate::coverage::event_reference(&evidence.url).is_some())
+                event.evidence.iter().any(|evidence| {
+                    crate::coverage::candidate_reference(&evidence.title, &evidence.url).is_some()
+                })
             })
             .map(|event| event.id)
             .collect();
         for row in rows {
-            let Some(reference) =
-                crate::coverage::event_reference(&row.try_get::<String, _>("original_url")?)
-            else {
+            let Some(reference) = crate::coverage::candidate_reference(
+                &row.try_get::<String, _>("title")?,
+                &row.try_get::<String, _>("original_url")?,
+            ) else {
                 continue;
             };
             let exact = references.contains(&reference);
@@ -827,6 +825,26 @@ fn visitor_editions() -> &'static std::sync::Mutex<std::collections::HashMap<Str
 mod coverage_contract_tests {
     use super::*;
 
+    #[test]
+    fn applied_editorial_migration_keeps_deployed_bytes() {
+        let migrator = sqlx::migrate!("./migrations");
+        let migration = migrator
+            .migrations
+            .iter()
+            .find(|migration| migration.version == 31)
+            .unwrap();
+        let checksum: String = migration
+            .checksum
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        // r17 applied these bytes, including CRLF; normalization breaks startup.
+        assert_eq!(
+            checksum,
+            "02b5b04daa1dd9ecd97c2037c5fff048731ea5acf719bf2fcd6985209183dd8408b3d2ad92d78c899610f8ed1fcf7c39"
+        );
+    }
+
     #[tokio::test]
     #[ignore = "explicit local read-only brief evaluation; prints selections, never writes"]
     async fn brief_selection_read_only_evaluation() -> Result<()> {
@@ -1172,10 +1190,10 @@ impl Store for PostgresStore {
                 .iter()
                 .map(|r| r.try_get::<Uuid, _>("id"))
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            // Ordinary article/podcast URLs cannot form a verified group. Keep
-            // their singleton positions without decoding every archived excerpt.
+            // Check only original titles and URLs before loading full grouping
+            // records; ordinary articles still keep cheap singleton positions.
             let references = sqlx::query(
-                "SELECT ee.event_id,ci.original_url FROM event_evidence ee
+                "SELECT ee.event_id,ci.title,ci.original_url FROM event_evidence ee
                 JOIN content_items ci ON ci.id=ee.content_item_id
                 WHERE ee.event_id=ANY($1) AND ci.created_at<=$2",
             )
@@ -1185,7 +1203,8 @@ impl Store for PostgresStore {
             .await?;
             let mut groupable_ids = std::collections::HashSet::new();
             for reference in references {
-                if crate::coverage::event_reference(
+                if crate::coverage::candidate_reference(
+                    &reference.try_get::<String, _>("title")?,
                     &reference.try_get::<String, _>("original_url")?,
                 )
                 .is_some()

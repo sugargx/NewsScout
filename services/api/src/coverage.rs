@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::models::{CoverageBundle, CoverageMember, Event};
 
+mod announcement;
 mod release_family;
 
 pub const WINDOW_HOURS: i64 = 168;
@@ -24,15 +25,17 @@ pub struct Record {
     freshness_at: Option<DateTime<Utc>>,
     event_references: BTreeSet<String>,
     release: Option<release_family::Release>,
+    announcement: Option<announcement::Announcement>,
 }
 
 impl Record {
     pub fn new(mut member: CoverageMember, sources: Vec<SourceIdentity>) -> Self {
         let release = release_family::parse(&member);
+        let announcement = announcement::parse(&member, &sources);
         member.release_target = release.as_ref().map(|r| r.target.clone());
         member.release_version = release.as_ref().map(|r| r.version.clone());
-        // Only a direct, immutable upstream artifact can prove two independently stored
-        // records describe one event. Names, repository links in prose, and sponsors cannot.
+        // Artifact references stay separate from official announcement identities;
+        // repository links in prose and sponsors are never event references.
         let event_references = member
             .evidence
             .iter()
@@ -50,6 +53,7 @@ impl Record {
             freshness_at,
             event_references,
             release,
+            announcement,
         }
     }
 
@@ -157,6 +161,14 @@ pub(crate) fn event_reference(value: &str) -> Option<String> {
     }
 }
 
+/// Cheap candidate discovery only; grouping still verifies an official anchor
+/// or immutable artifact before collapsing any records.
+pub(crate) fn candidate_reference(title: &str, url: &str) -> Option<String> {
+    event_reference(url).or_else(|| {
+        announcement::subject(title).map(|subject| format!("announcement-subject:{subject}"))
+    })
+}
+
 fn source_title(record: &Record) -> String {
     record
         .member
@@ -175,8 +187,8 @@ pub struct Group {
     pub bundle: Option<CoverageBundle>,
 }
 
-/// Leaders are already sorted by the caller. Only immutable upstream references or
-/// explicitly parsed release families may collapse records into one presentation item.
+/// Leaders are already sorted by the caller. Verify the common event or project
+/// release window independently of ranking before collapsing presentation items.
 pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Vec<Group> {
     let by_id: HashMap<_, _> = records.iter().map(|r| (r.member.event_id, r)).collect();
     let mut by_reference = HashMap::<&str, Vec<&Record>>::new();
@@ -222,6 +234,17 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
                 .map(move |record| (record.member.event_id, index))
         })
         .collect();
+    let announcement_cohorts = announcement::cohorts(records, cutoff);
+    let announcement_membership: HashMap<_, _> = announcement_cohorts
+        .iter()
+        .enumerate()
+        .flat_map(|(index, cohort)| {
+            cohort
+                .members
+                .iter()
+                .map(move |record| (record.member.event_id, index))
+        })
+        .collect();
     let leader_set: HashSet<_> = leaders.iter().copied().collect();
     let mut assigned = HashSet::new();
     let mut result = Vec::new();
@@ -261,11 +284,20 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
                         release_family::label(&members),
                         members,
                         "release_family".into(),
-                        "release-family-v2".into(),
+                        release.method().into(),
                     )]
                 } else {
                     Vec::new()
                 }
+            } else if let Some(index) = announcement_membership.get(id) {
+                let cohort = &announcement_cohorts[*index];
+                vec![(
+                    cohort.reference.clone(),
+                    cohort.title.clone(),
+                    cohort.members.clone(),
+                    "same_event_evidence".into(),
+                    "official-announcement-v1".into(),
+                )]
             } else {
                 lead.event_references
                     .iter()
@@ -395,7 +427,13 @@ pub fn apply(event: &mut Event, bundle: Option<CoverageBundle>) {
                 recommendation.score += bundle.popularity_boost;
             }
             recommendation.explanation.push_str(&if bundle.relation=="release_family" {
-                " 同一官方项目的集中组件发布按一组展示；各组件保留自己的版本和改动，不作为多来源互证，也不因拆成多个发布条目增加热度。".into()
+                if bundle.method=="project-release-window-v1" {
+                    " 同一官方项目24小时内的不同语言版本汇总展示；各自改动独立，不表示同一事件、共同改动或多来源互证，不增加热度。".into()
+                } else {
+                    " 同一官方项目的集中组件发布按一组展示；各组件保留自己的版本和改动，不作为多来源互证，也不因拆成多个发布条目增加热度。".into()
+                }
+            } else if bundle.method=="official-announcement-v1" {
+                " 原始标题中的完整模型版本主体一致，并有唯一官方发布作为依据；公告与解读合并展示，保留各自内容，不表示观点已获互证。".into()
             } else if event.editorial.is_some() {
                 " 精确上游事件引用一致，按一组展示；独立覆盖已在5%上限内计分，分组不再叠加热度。".into()
             } else { format!(
@@ -434,7 +472,9 @@ fn bundle_is_current_or_archived(bundle: &CoverageBundle) -> bool {
         (bundle.relation.as_str(), bundle.method.as_str()),
         ("release_family", "release-family-v1")
             | ("release_family", "release-family-v2")
+            | ("release_family", "project-release-window-v1")
             | ("same_event_evidence", "exact-event-reference-v1")
+            | ("same_event_evidence", "official-announcement-v1")
             | ("archived_materials", "archived-materials-v1")
     )
 }
@@ -599,6 +639,302 @@ mod tests {
         let result = rollup_events(events, now);
         assert_eq!(result.len(), 2);
         assert!(result.iter().all(|event| event.coverage.is_none()));
+    }
+
+    async fn announcement_fixtures() -> (Vec<Event>, DateTime<Utc>) {
+        let (mut events, now) = fixtures().await;
+        events.truncate(2);
+        for (event, (title, url, tier, official)) in events.iter_mut().zip([
+            (
+                "Introducing Claude Haiku 5.5",
+                "https://www.anthropic.com/claude-haiku-5-5",
+                "T1",
+                true,
+            ),
+            (
+                "Claude Haiku 5.5",
+                "https://simonwillison.net/2026/Oct/7/claude-haiku-5-5/",
+                "T2",
+                true,
+            ),
+        ]) {
+            event.event_type = "blog".into();
+            event.title = title.into();
+            event.evidence.truncate(1);
+            event.evidence[0].title = title.into();
+            event.evidence[0].url = url.into();
+            event.evidence[0].source_tier = tier.into();
+            event.evidence[0].is_official = official;
+        }
+        events[0].publication_precision = Some("day".into());
+        (events, now)
+    }
+
+    #[tokio::test]
+    async fn radar_announcement_groups_official_launch_and_exact_version_commentary() {
+        let (events, now) = announcement_fixtures().await;
+        let original = events.clone();
+        let result = rollup_events(events, now);
+        assert_eq!(result.len(), 1);
+        let bundle = result[0].coverage.as_ref().unwrap();
+        assert_eq!(bundle.method, "official-announcement-v1");
+        assert_eq!(bundle.topic, "Introducing Claude Haiku 5.5");
+        assert_eq!(bundle.relation, "same_event_evidence");
+        assert_eq!(bundle.official_source_count, 1);
+        assert_eq!(bundle.editorial_source_count, 1);
+        assert_eq!(bundle.popularity_boost, 0.0);
+        for (member, event) in bundle.members.iter().zip(&original) {
+            assert_eq!(member.event_id, event.id);
+            assert_eq!(member.summary, event.summary);
+            assert_eq!(member.title, event.title);
+            assert_eq!(member.published_at, event.published_at);
+            assert_eq!(member.publication_precision, event.publication_precision);
+            assert_eq!(member.evidence[0].url, event.evidence[0].url);
+        }
+        let mut reversed = original;
+        reversed.reverse();
+        let other = rollup_events(reversed, now);
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].coverage.as_ref().unwrap().key, bundle.key);
+        assert_eq!(other[0].coverage.as_ref().unwrap().topic, bundle.topic);
+    }
+
+    #[tokio::test]
+    async fn radar_announcement_requires_official_anchor_and_exact_source_headline() {
+        let (events, now) = announcement_fixtures().await;
+        for headline in [
+            "Claude Haiku 4.5",
+            "Claude Sonnet 5.5",
+            "Using Claude Haiku 5.5 for financial services",
+            "Claude Haiku 5.5 vs GPT-6 Luna",
+            "Claude Haiku 5.5 pricing changes",
+        ] {
+            let mut changed = events.clone();
+            changed[1].title = headline.into();
+            changed[1].evidence[0].title = headline.into();
+            changed[1].display_title = Some("Claude Haiku 5.5".into());
+            assert_eq!(rollup_events(changed, now).len(), 2, "{headline}");
+        }
+        let mut no_anchor = events.clone();
+        no_anchor[0].evidence[0].source_tier = "T2".into();
+        assert_eq!(rollup_events(no_anchor, now).len(), 2);
+        let mut root_page = events.clone();
+        root_page[0].evidence[0].url = "https://www.anthropic.com/".into();
+        assert_eq!(rollup_events(root_page, now).len(), 2);
+        let mut sponsor = events.clone();
+        sponsor[1].title = "A different article".into();
+        sponsor[1].evidence[0].title = "A different article".into();
+        sponsor[1].evidence[0].excerpt =
+            "Sponsor: Introducing Claude Haiku 5.5 https://www.anthropic.com/claude-haiku-5-5"
+                .into();
+        assert_eq!(rollup_events(sponsor, now).len(), 2);
+        let mut community = events.clone();
+        community[1].event_type = "repository".into();
+        assert_eq!(rollup_events(community, now).len(), 2);
+        let mut old = events;
+        old[1].freshness_at = Some(now - Duration::days(8));
+        assert_eq!(rollup_events(old, now).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn radar_announcement_requires_known_past_dates_and_never_bridges_a_week() {
+        let (events, now) = announcement_fixtures().await;
+        let mut future = events.clone();
+        future[0].freshness_at = Some(now + Duration::seconds(1));
+        assert_eq!(rollup_events(future, now).len(), 2);
+        let mut unknown = events.clone();
+        unknown[0].freshness_at = None;
+        unknown[0].published_at = None;
+        assert_eq!(rollup_events(unknown, now).len(), 2);
+        let mut spread = events.clone();
+        let mut earlier = events[1].clone();
+        earlier.id = Uuid::new_v4();
+        earlier.evidence[0].id = Uuid::new_v4();
+        earlier.freshness_at = Some(now - Duration::days(8));
+        spread[0].freshness_at = Some(now - Duration::days(4));
+        spread.push(earlier.clone());
+        let result = rollup_events(spread, now);
+        assert_eq!(result.len(), 2);
+        assert!(
+            result
+                .iter()
+                .any(|event| event.id == earlier.id && event.coverage.is_none())
+        );
+        for event in result {
+            if let Some(bundle) = event.coverage {
+                assert_eq!(bundle.members.len(), 2);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn radar_announcement_never_conflates_model_variants_or_ambiguous_launches() {
+        let (events, now) = announcement_fixtures().await;
+        for (official, commentary) in [
+            ("Introducing GPT-6 Sol", "GPT-6 Luna"),
+            ("Introducing Gemini 3.5 Pro", "Gemini 3.5 Flash"),
+            ("Introducing Qwen3.8-27B", "Qwen3.8-35B"),
+            ("Introducing Claude Haiku 5.5", "Claude Haiku 55"),
+        ] {
+            let mut changed = events.clone();
+            changed[0].evidence[0].title = official.into();
+            changed[1].evidence[0].title = commentary.into();
+            assert_eq!(rollup_events(changed, now).len(), 2, "{official}");
+        }
+        let mut ambiguous = events.clone();
+        let mut second_official = events[0].clone();
+        second_official.id = Uuid::new_v4();
+        second_official.evidence[0].id = Uuid::new_v4();
+        second_official.evidence[0].url = "https://other.example/claude-haiku-5-5".into();
+        ambiguous.push(second_official);
+        assert_eq!(rollup_events(ambiguous, now).len(), 3);
+    }
+
+    async fn language_release_fixtures() -> (Vec<Event>, DateTime<Utc>) {
+        let (mut events, now) = fixtures().await;
+        events.truncate(2);
+        for (index, (event, (title, notes))) in events
+            .iter_mut()
+            .zip([
+                (
+                    "python-1.21.0",
+                    "Python tool-result guidance and Purview evaluation (#8784).",
+                ),
+                (
+                    "dotnet-1.24.0",
+                    ".NET session state and release solution corrections (#9012, #9140).",
+                ),
+            ])
+            .enumerate()
+        {
+            event.event_type = "release".into();
+            event.title = title.into();
+            event.freshness_at = Some(now - Duration::hours(1 + 21 * index as i64));
+            event.published_at = event.freshness_at;
+            event.publication_precision = Some("time".into());
+            event.evidence.truncate(1);
+            let evidence = &mut event.evidence[0];
+            evidence.title = title.into();
+            evidence.url =
+                format!("https://github.com/microsoft/agent-framework/releases/tag/{title}");
+            evidence.is_official = true;
+            evidence.source_tier = "T1".into();
+            evidence.original_published_at = event.published_at;
+            evidence.excerpt = notes.into();
+        }
+        (events, now)
+    }
+
+    #[tokio::test]
+    async fn radar_language_releases_form_a_project_roundup_not_a_shared_change_claim() {
+        let (events, now) = language_release_fixtures().await;
+        let original = events.clone();
+        let result = rollup_events(events, now);
+        assert_eq!(result.len(), 1);
+        let bundle = result[0].coverage.as_ref().unwrap();
+        assert_eq!(bundle.method, "project-release-window-v1");
+        assert_eq!(bundle.relation, "release_family");
+        assert_eq!(
+            bundle.topic,
+            "agent-framework 多语言更新：Python 1.21.0 / .NET 1.24.0"
+        );
+        assert_eq!(bundle.window_hours, 24);
+        assert_eq!(bundle.official_source_count, 1);
+        assert_eq!(bundle.popularity_boost, 0.0);
+        assert_eq!(bundle.members[0].release_target.as_deref(), Some("Python"));
+        assert_eq!(bundle.members[0].release_version.as_deref(), Some("1.21.0"));
+        assert_eq!(bundle.members[1].release_target.as_deref(), Some(".NET"));
+        assert_eq!(bundle.members[1].release_version.as_deref(), Some("1.24.0"));
+        for (member, event) in bundle.members.iter().zip(&original) {
+            assert_eq!(member.summary, event.summary);
+            assert_eq!(member.evidence[0].excerpt, event.evidence[0].excerpt);
+        }
+        let mut reversed = original;
+        reversed.reverse();
+        let other = rollup_events(reversed, now);
+        assert_eq!(other[0].coverage.as_ref().unwrap().key, bundle.key);
+        assert_eq!(other[0].coverage.as_ref().unwrap().topic, bundle.topic);
+    }
+
+    #[tokio::test]
+    async fn radar_language_releases_require_verified_distinct_targets_in_one_day() {
+        let (events, now) = language_release_fixtures().await;
+        for (title, url) in [
+            (
+                "dotnet-1.24.0",
+                "https://github.com/fork/agent-framework/releases/tag/dotnet-1.24.0",
+            ),
+            (
+                "dotnet-1.24.0",
+                "https://github.com/microsoft/other/releases/tag/dotnet-1.24.0",
+            ),
+            (
+                "dotnet-1.24.0",
+                "https://github.com/microsoft/agent-framework/releases/tag/dotnet-1.23.0",
+            ),
+            (
+                "python-1.20.0",
+                "https://github.com/microsoft/agent-framework/releases/tag/python-1.20.0",
+            ),
+            (
+                "unrelated-1.24.0",
+                "https://github.com/microsoft/agent-framework/releases/tag/unrelated-1.24.0",
+            ),
+        ] {
+            let mut changed = events.clone();
+            changed[1].title = title.into();
+            changed[1].evidence[0].title = title.into();
+            changed[1].evidence[0].url = url.into();
+            assert_eq!(rollup_events(changed, now).len(), 2, "{url}");
+        }
+        let mut old = events.clone();
+        old[1].freshness_at = Some(now - Duration::hours(26));
+        assert_eq!(rollup_events(old, now).len(), 2);
+        let mut imprecise = events.clone();
+        imprecise[1].publication_precision = Some("day".into());
+        assert_eq!(rollup_events(imprecise, now).len(), 2);
+        let mut no_notes = events;
+        no_notes[1].evidence[0].excerpt.clear();
+        assert_eq!(rollup_events(no_notes, now).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn radar_language_windows_preserve_channels_aliases_and_exact_time_boundary() {
+        let (events, now) = language_release_fixtures().await;
+        let mut boundary = events.clone();
+        boundary[1].freshness_at = Some(now - Duration::hours(25));
+        assert_eq!(rollup_events(boundary.clone(), now).len(), 1);
+        boundary[1].freshness_at = Some(now - Duration::hours(25) - Duration::seconds(1));
+        assert_eq!(rollup_events(boundary, now).len(), 2);
+        for (first, second) in [
+            ("python-1.21.0-rc.1", "dotnet-1.24.0"),
+            ("python-1.21.0", "py-1.20.0"),
+            ("javascript-1.21.0", "node-1.24.0"),
+            ("python-01.21.0", "dotnet-1.24.0"),
+        ] {
+            let mut changed = events.clone();
+            for (event, title) in changed.iter_mut().zip([first, second]) {
+                event.title = title.into();
+                event.evidence[0].title = title.into();
+                event.evidence[0].url =
+                    format!("https://github.com/microsoft/agent-framework/releases/tag/{title}");
+            }
+            assert_eq!(rollup_events(changed, now).len(), 2, "{first} / {second}");
+        }
+    }
+
+    #[tokio::test]
+    async fn radar_new_grouping_methods_preserve_already_captured_snapshot_content() {
+        for (events, now) in [
+            announcement_fixtures().await,
+            language_release_fixtures().await,
+        ] {
+            let mut captured = rollup_events(events, now);
+            captured[0].coverage.as_mut().unwrap().topic = "Captured group heading".into();
+            let before = serde_json::to_value(&captured).unwrap();
+            let after = rollup_release_snapshots(captured, now + Duration::days(20));
+            assert_eq!(serde_json::to_value(&after).unwrap(), before);
+        }
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 # 当前实现架构
 
-适用版本：0.2；维护日期：2026-10-09。本文区分可信本地、Azure认证完整应用及已退役的旧匿名网关，不把代码或 [V0规格](V0-SPEC.md) 当全量验收。**r18已部署为Ready `newsscout--0000017`，云端schema为31。** 本轮补齐公告与解读、多语言更新的候选发现和阅读分组；认证架构沿用r15：Microsoft AAD与固定External ID客户OIDC按不可变issuer/subject即时建号，未知provider、错误issuer、匿名和伪造principal在建号前401。Node可信代理、Origin/CSRF、owner route拒绝与PostgreSQL事务角色/RLS保持。本轮未重启或迁移日常本地实例，其已记录数据版本仍为27。
+适用版本：0.2；维护日期：2026-10-11。本文区分可信本地、Azure认证完整应用及已退役的旧匿名网关，不把代码或 [V0规格](V0-SPEC.md) 当全量验收。**r19已部署为Ready `newsscout--0000018`，云端schema为32。** 本轮仅新增 GitHub Engineering 公共来源种子，沿用现有采集、摘要与阅读规则；r18的公告/解读和多语言分组保持。认证架构沿用r15：Microsoft AAD与固定External ID客户OIDC按不可变issuer/subject即时建号，未知provider、错误issuer、匿名和伪造principal在建号前401。Node可信代理、Origin/CSRF、owner route拒绝与PostgreSQL事务角色/RLS保持。本轮未重启或迁移日常本地实例，其已记录数据版本仍为27。
 
 ## 进程与职责
 
@@ -83,6 +83,8 @@ Node宿主在客户端放弃GET/HEAD时向上游传播取消，正常响应结�
 Anthropic News 的 `source_adapters.rs` 以服务端索引中的标题/日期卡片识别文章，而非仅按 `/news/` 路径识别。允许经过校验的官网根路径公告与原新闻路径；排除导航入口、站外/带凭据/异常端口地址及含混编码路径，不请求文章正文或执行脚本。已识别卡片缺少必要字段、日期不合法或超出200条界限时使采集失败，沿用现有 `fetch_runs` 与来源失败/退避链路，避免“仍能解析旧文章”掩盖部分漏采。News 的此门槛不改变 Research/Engineering 的目录与截断契约，也不宣称网站全量覆盖。
 
 仅有日期的公告继续保存来源日期和 `datePrecision=day`；明确的 RFC3339 时间保留 `time` 精度。格式和材料未变的旧日期卡片保留原身份与内容指纹，不因本次解析扩展而重排摘要；新增材料与发布者的实质更新仍沿用正常处理队列。24小时筛选与历史晨报规则不变，补采时间不替代发布时间。
+
+`0032_github_engineering_source.sql` 为 GitHub Engineering 增加独立公共 RSS 来源，复用 AI & ML 的 GitHub 发布者和 `github.blog` 官方域。只新增缺失的公共 endpoint，不覆盖已有来源或私有订阅；来源主题沿用 `AI Coding` / `Agent`，每篇新闻仍按现有材料和时间规则处理。普通 `rss` 适配器只采集登记的 Feed，不因正文出现 Agent 而扫描其他栏目；当前 Feed 可用不代表全站或全历史完整覆盖。官方来源种子采用新增迁移，不修改已应用的 `yikai-2026-09-10` 推荐清单，也不放宽推荐目录不能授予T1的约束。
 
 ## 主要数据对象
 

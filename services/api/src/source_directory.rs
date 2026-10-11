@@ -331,6 +331,107 @@ async fn apply_original_source_policy(pool: &PgPool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::Row;
+
+    async fn verify_github_engineering_registration(pool: &PgPool) {
+        const ENDPOINT: &str = "https://github.blog/engineering/feed/";
+        const MIGRATION: &str = include_str!("../migrations/0032_github_engineering_source.sql");
+        let source = sqlx::query(
+            "SELECT s.id,s.name,s.tier,s.lifecycle_status,s.adapter_type,s.content_type,
+              s.publisher_id,s.compliance,p.official_domains
+            FROM sources s JOIN publishers p ON p.id=s.publisher_id
+            WHERE s.owner_user_id IS NULL AND s.endpoint=$1",
+        )
+        .bind(ENDPOINT)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let id: Uuid = source.get("id");
+        assert_eq!(source.get::<String, _>("name"), "GitHub Blog · Engineering");
+        assert_eq!(source.get::<String, _>("tier"), "T1");
+        assert_eq!(source.get::<String, _>("lifecycle_status"), "observing");
+        assert_eq!(source.get::<String, _>("adapter_type"), "rss");
+        assert_eq!(source.get::<String, _>("content_type"), "blog");
+        assert_eq!(
+            source.get::<serde_json::Value, _>("official_domains"),
+            json!(["github.blog"])
+        );
+        let ai_publisher: Uuid = sqlx::query_scalar(
+            "SELECT publisher_id FROM sources
+            WHERE owner_user_id IS NULL AND endpoint='https://github.blog/ai-and-ml/feed/'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(source.get::<Uuid, _>("publisher_id"), ai_publisher);
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT taxonomy_id FROM source_topics WHERE source_id=$1 ORDER BY taxonomy_id",
+            )
+            .bind(id)
+            .fetch_all(pool)
+            .await
+            .unwrap(),
+            ["agent", "ai-coding"]
+        );
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(
+            "UPDATE sources SET name='Preserved engineering name',lifecycle_status='paused',
+              cursor='{\"retained\":true}',schedule_minutes=1440 WHERE id=$1",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let before: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(s) FROM sources s WHERE id=$1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        sqlx::raw_sql(MIGRATION).execute(&mut *tx).await.unwrap();
+        sqlx::raw_sql(MIGRATION).execute(&mut *tx).await.unwrap();
+        let after: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(s) FROM sources s WHERE id=$1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(before, after);
+        sqlx::query("DELETE FROM sources WHERE id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let private_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO sources(id,name,endpoint,content_type,adapter_type,tier,lifecycle_status,owner_user_id)
+            VALUES($1,'Private engineering feed',$2,'blog','rss','T2','paused','local')",
+        )
+        .bind(private_id)
+        .bind(ENDPOINT)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION).execute(&mut *tx).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM sources WHERE endpoint=$1")
+                .bind(ENDPOINT)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT lifecycle_status FROM sources WHERE id=$1")
+                .bind(private_id)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap(),
+            "paused"
+        );
+        tx.rollback().await.unwrap();
+    }
 
     #[test]
     fn source_directory_is_complete_and_does_not_fake_social_subscriptions() {
@@ -398,6 +499,7 @@ mod tests {
         assert!(suffix.len() == 32 && suffix.bytes().all(|b| b.is_ascii_hexdigit()));
         let pool = PgPool::connect(&connection).await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        verify_github_engineering_registration(&pool).await;
         sqlx::query("UPDATE sources SET name='Owner renamed feed',lifecycle_status='paused',
             schedule_minutes=1440,cursor='{\"owner\":\"preserve\"}' WHERE id='20000000-0000-0000-0000-000000000120'")
             .execute(&pool).await.unwrap();

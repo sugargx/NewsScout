@@ -1,6 +1,6 @@
 # 文档索引
 
-维护日期：2026-09-29。r17开放预览已部署为Ready `newsscout--0000014`；长篇阶段回顾可按分析内容进入精选资格，同仓库/同scope/同版本的 scoped npm 协调发布按一组展示。当天保存版沿用原截止时刻重选一次，往期不变。r16精简登录说明，r15提供Microsoft即时建号和External ID邮箱+密码自助注册，r14保留GitHub App自动轮换。认证、模型、5000共享额度和资源规格未变，云端schema31，日常本地实例仍为27；旧Dev Tunnel已退役。证据见 [测试指南第20节](TESTING.md#20-r17-长篇回顾精选与-scoped-npm-同批发布2026-09-29) 和 [Azure手册第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)。
+维护日期：2026-10-11。r19开放预览已部署为Ready `newsscout--0000018`；新增 GitHub Engineering 默认来源并单独补采10篇，目标Git基础设施文章的正文、摘要和原始日期已核对，原 AI & ML 订阅保留。r18的公告/解读与多语言分组保持；Microsoft即时进入、邮箱自助注册及GitHub App自动轮换不变。云端schema32，5000共享额度、设置、历史快照和资源规格保持，日常本地实例仍为27；旧Dev Tunnel已退役。证据见 [测试指南第22节](TESTING.md#22-r19-github-engineering-来源2026-10-11) 和 [Azure手册第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)。
 
 ## 按任务阅读
 

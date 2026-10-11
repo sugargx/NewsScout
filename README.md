@@ -2,7 +2,7 @@
 
 本地优先、可追溯的跨领域热点雷达。**0.2 保留可信本地单用户模式，并已开放完整应用的 Azure 认证开放预览**：阅读、兴趣主题、来源与采集、每日分享图及账号隐私/导出共用产品能力；云端不开放阅读与模型管理设置。旧Dev Tunnel已退役，代码和历史只读契约保留，不另做缩水公开版。
 
-**当前发布状态（2026-10-09）：r18 revision `newsscout--0000017` Ready，Microsoft账号和NewsScout邮箱账号均可即时进入。** 新闻雷达已补齐官方版本公告与作者解读的关联，以及 `python-` / `dotnet-` 等多语言更新汇总；各篇内容与状态仍独立，隐藏组内主文章不再连带隐藏其他成员。真实云端两组及四篇详情已核对，已有Mem0/MCP分组保留。没有新增迁移或重选晨报，云端仍为schema31；设置、兴趣、阅读状态、历史快照、5000共享额度、认证和资源规格未改。交接与证据边界见 [Azure手册第1节](docs/AZURE-PREVIEW.md#1-带日期的-rollout-状态) 与 [测试指南第21节](docs/TESTING.md#21-r18-雷达公告关联与多语言更新2026-10-09)。本轮未启动或迁移日常本地实例，其已记录版本为schema27。此为开放预览，非生产、无生产SLA。
+**当前发布状态（2026-10-11）：r19 revision `newsscout--0000018` Ready，Microsoft账号和NewsScout邮箱账号均可即时进入。** 默认来源新增 GitHub Blog Engineering，保留 AI & ML；单来源补采新增10篇，包括“为智能体规模开发构建 Git 基础设施”，正文与AI摘要已可读。原始发布时间保留，10月11日可在新闻雷达的“近7天”或“全部历史”查看，不作为当天新文章。此前雷达分组保持；云端新增来源种子迁移32，设置、兴趣、阅读状态、历史快照、5000共享额度、认证和资源规格未改。交接与证据边界见 [Azure手册第1节](docs/AZURE-PREVIEW.md#1-带日期的-rollout-状态) 与 [测试指南第22节](docs/TESTING.md#22-r19-github-engineering-来源2026-10-11)。本轮未启动或迁移日常本地实例，其已记录版本为schema27。此为开放预览，非生产、无生产SLA。
 
 ## 文档入口
 
@@ -266,7 +266,7 @@ Reddit 评论补充使用原站单帖 Atom 的有界解析与策略检查，只�
 这里记录当前来源和处理边界，不是全部 V0 已完成。整体能力、阻塞项和最近交付范围见 [项目状态](docs/PROJECT-STATUS.md)。
 
 - 公开来源目录：在原有四个初始源上，增量登记 22 个经公开端点核验的来源，涵盖公司/研究 Blog、心理学、HCI、Design、Agent/Memory/MCP/Rust、arXiv、精选 Hugging Face 模型、GitHub 元数据和中英文 Podcast（含张小珺）。新增来源先观察，不自动宣称已获用户确认。
-- 直接发布者补充：量子位官网 RSS、新智元官网 RSS（`https://aiera.com.cn/feed/`）、Mistral 官方新闻、GitHub Blog AI & ML、Simon Willison 作者长文及 Andrej Karpathy 作者博客。新智元读取其自有发布内容，不采集站内自动聚合面板，不冒称获得微信公众号接口。
+- 直接发布者补充：量子位官网 RSS、新智元官网 RSS（`https://aiera.com.cn/feed/`）、Mistral 官方新闻、GitHub Blog AI & ML 与 Engineering、Simon Willison 作者长文及 Andrej Karpathy 作者博客。GitHub 的两个栏目分别订阅，共用同一官方发布者身份；Engineering 使用 `https://github.blog/engineering/feed/`，只覆盖当前 Feed，不承诺完整历史。新智元读取其自有发布内容，不采集站内自动聚合面板，不冒称获得微信公众号接口。
 - AIHOT 适配器与订阅已移除，旧聚合正文经增量迁移清理，不再用二次聚合摘要替代原始来源。混合事件仅保留直接证据并重新生成；有用户状态的聚合专属记录保留状态和审计中的原始链接，撤出新闻列表；实际模型尝试计数保留，真实历史快照不改写。已知聚合端点不能通过普通 Feed 适配器重新添加。
 - Builder 观察名单：本人官网可确认的 Andrej Karpathy / `@karpathy` 已登记，博客直接订阅；X 时间线仍待官方授权。Tibo / `@tibo_maker` 仅为待确认候选，尚未监听。没有执行任何社交账号的“关注”操作。
 - X 原帖预览：`x_public_preview` 通过官方 X Publish/oEmbed 读取已登记原帖，不自动扫描主页或发现账户的新动态。在来源管理中选择“X 原帖预览”，以 `https://x.com/handle` 标识作者，再登记1–20条该作者的原帖链接。来源卡片可编辑这份清单；保存只改配置，刷新来源才读取并进入通常的摘要队列。普通间隔最低1440分钟，每日晨读模式仍跟随既有日程。该路径不需要 X API 密钥，不使用 Grok 生成“原帖”或绕过主页访问规则。

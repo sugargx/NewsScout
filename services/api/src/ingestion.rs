@@ -2594,6 +2594,38 @@ mod tests {
     }
 
     #[test]
+    fn github_engineering_feed_preserves_original_publication_and_article_context() {
+        let endpoint = Url::parse("https://github.blog/engineering/feed/").unwrap();
+        let article = "https://github.blog/engineering/architecture-optimization/building-git-infrastructure-for-agent-scale-development/";
+        let xml = format!(
+            r#"<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+            <channel><title>Engineering - The GitHub Blog</title><link>https://github.blog/engineering/</link>
+            <description>Engineering</description><item><guid isPermaLink="true">{article}</guid>
+            <title>Building Git infrastructure for agent-scale development</title><link>{article}</link>
+            <pubDate>Tue, 06 Oct 2026 20:57:56 +0000</pubDate><category>Engineering</category>
+            <description>Synthetic feed fixture, not the original article.</description>
+            <content:encoded><![CDATA[<h2>Fixture architecture</h2>
+            <p>Synthetic retained material about independent storage and compute.</p>
+            <p>This fixture verifies original dates rather than collection dates.</p>]]></content:encoded>
+            </item></channel></rss>"#
+        );
+        let first = parse_items(xml.as_bytes(), &endpoint, "rss").unwrap();
+        let second = parse_items(xml.as_bytes(), &endpoint, "rss").unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].url, article);
+        assert_eq!(first[0].content_hash, second[0].content_hash);
+        assert_eq!(
+            first[0].published_at.unwrap().to_rfc3339(),
+            "2026-10-06T20:57:56+00:00"
+        );
+        let context = first[0].reading_context.as_ref().unwrap();
+        assert_eq!(context.kind, ReadingContextKind::Article);
+        assert!(context.body.contains("Synthetic retained material"));
+        assert!(context.body.contains("original dates rather than collection dates"));
+        assert!(official_url(article, &serde_json::json!(["github.blog"])));
+    }
+
+    #[test]
     fn rss_context_retains_structured_body_and_reddit_never_invents_comments() {
         let rich = parse(
             r#"<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>

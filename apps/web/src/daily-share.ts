@@ -9,6 +9,9 @@ export const SHARE_DISCLAIMER = "摘要由 AI 根据原文生成，仅供参考�
 
 // `earlier` marks a 补读 item (published before the edition's 24-hour window) with its publication day.
 export interface ShareEntry { id: string; title: string; summary: string; url: string; source: string; ai: boolean; earlier?: string }
+export interface SharePortal { url: string; modules: { size: number; data: Uint8Array } }
+export interface ShareRenderInput { date: string; weekday: string; entries: ShareEntry[]; day?: string; portal?: SharePortal | null }
+interface ShareLink { x: number; y: number; width: number; height: number; url: string }
 type Shareable = Pick<Event, "id" | "title" | "summary" | "evidence"> & Partial<Pick<Event, "displayTitle" | "summaryPoints" | "topics" | "publishedAt">>;
 
 const AI_FACETS = new Set(["模型与多模态", "Agent 与工具", "评测与安全", "AI 编程", "记忆与检索", "AGI", "MCP / A2A"]);
@@ -44,7 +47,7 @@ export function earlierLabel(entry: Pick<ShareEntry, "earlier">): string {
 export function cleanUrl(value: string): string {
   try {
     const url = new URL(value);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) return "";
     for (const key of [...url.searchParams.keys()]) if (TRACKING.test(key)) url.searchParams.delete(key);
     return url.href;
   } catch {
@@ -52,7 +55,29 @@ export function cleanUrl(value: string): string {
   }
 }
 
-// Image-only label: readable Unicode paths instead of %E6%B7… runs; text exports keep the exact URL.
+// Only a public HTTPS origin is useful to recipients; never export local hosts, credentials or the reader's route/query.
+export function publicPortalUrl(value: string): string {
+  try {
+    const url = new URL(value), hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+    if (url.protocol !== "https:" || url.username || url.password || url.port
+      || !hostname.includes(".") || hostname.length > 253 || hostname.includes(":") || /^[\d.]+$/.test(hostname)
+      || !hostname.split(".").every(label => /^[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?$/.test(label))
+      || /(?:^|\.)(?:localhost|local|localdomain|internal|lan|home|home\.arpa|invalid)$/.test(hostname)) return "";
+    return `${url.origin}/`;
+  } catch {
+    return "";
+  }
+}
+
+export async function sharePortal(value: string): Promise<SharePortal | null> {
+  const url = publicPortalUrl(value);
+  if (!url) return null;
+  const { create } = await import("qrcode");
+  const { modules } = create(url, { errorCorrectionLevel: "H" });
+  return { url, modules };
+}
+
+// Readable labels may decode paths; hyperlink targets and text exports retain the actual URL.
 export function displayUrl(value: string): string {
   const text = value.replace(/^https?:\/\//, "").replace(/\/$/, "");
   try {
@@ -90,9 +115,10 @@ export function shareSummary(event: Pick<Event, "summary"> & Partial<Pick<Event,
 export function shareEntry(event: Shareable, catchUp = false): ShareEntry {
   const evidence = event.evidence.filter(item => cleanUrl(item.url));
   const primary = evidence.find(item => item.isOfficial) ?? evidence[0];
+  const attribution = primary ?? event.evidence.find(item => item.isOfficial && item.sourceName.trim()) ?? event.evidence.find(item => item.sourceName.trim());
   return {
     id: event.id, title: readingTitle(event), summary: shareSummary(event), ai: aiRelated(event),
-    url: primary ? cleanUrl(primary.url) : "", source: primary ? shareSource(primary.sourceName) : "",
+    url: primary ? cleanUrl(primary.url) : "", source: attribution ? shareSource(attribution.sourceName) : "",
     ...(catchUp ? { earlier: publishedDay(event.publishedAt ?? primary?.publishedAt) } : {}),
   };
 }
@@ -110,29 +136,37 @@ export function shareHeading(count: number, day = "今日") {
   return `${day}值得分享的 ${count} 条新闻`;
 }
 
-export function shareText(date: string, entries: ShareEntry[], day = "今日"): string {
+function originalText(entry: ShareEntry) {
+  const url = cleanUrl(entry.url);
+  return url ? `原文：${url}` : `${entry.source ? `来源：${entry.source} · ` : ""}未提供原文链接`;
+}
+
+export function shareText(date: string, entries: ShareEntry[], day = "今日", portal = ""): string {
   const earlier = entries.filter(entry => entry.earlier).length;
+  const portalUrl = publicPortalUrl(portal);
   return [`NewsScout · ${shareHeading(entries.length, day)}（${date}${earlier ? `，含 ${earlier} 条补读` : ""}）`, "",
-    ...entries.flatMap((entry, index) => [`${index + 1}. ${entry.earlier ? `【${earlierLabel(entry)}】` : ""}${entry.title}`, entry.summary, ...(entry.url ? [`原文：${entry.url}`] : []), ""]),
+    ...entries.flatMap((entry, index) => [`${index + 1}. ${entry.earlier ? `【${earlierLabel(entry)}】` : ""}${entry.title}`, entry.summary, originalText(entry), ""]),
+    ...(portalUrl ? [`更多新闻 · NewsScout：${portalUrl}`, ""] : []),
     SHARE_DISCLAIMER].join("\n");
 }
 
-export function shareSubtitle(entries: ShareEntry[], day = "今日"): string {
+export function shareSubtitle(entries: ShareEntry[], day = "今日", format: "png" | "pdf" = "png"): string {
   const earlier = entries.filter(entry => entry.earlier).length;
-  return `选自 NewsScout ${day === "今日" ? "" : `${day}版`}今日精选${earlier ? ` · 含 ${earlier} 条补读` : ""} · 每条附原文链接`;
+  return `选自 NewsScout ${day === "今日" ? "" : `${day}版`}今日精选${earlier ? ` · 含 ${earlier} 条补读` : ""} · ${format === "pdf" ? "点击标题或原文打开链接" : "附原文地址（图片内不可点击）"}`;
 }
 
 export function entryText(entry: ShareEntry): string {
-  return [entry.title, entry.summary, ...(entry.url ? [`原文：${entry.url}`] : [])].join("\n");
+  return [entry.title, entry.summary, originalText(entry)].join("\n");
 }
 
-export function shareFileName(date: string) {
-  return `NewsScout-今日分享-${date}.png`;
+export function shareFileName(date: string, format: "png" | "pdf" = "png") {
+  return `NewsScout-今日分享-${date}.${format}`;
 }
 
 const FONT = '"PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Source Han Sans SC", "Segoe UI", system-ui, sans-serif';
 const COLORS = { bg: "#fcfcf9", text: "#17211e", soft: "#4f5b56", muted: "#66716c", accent: "#275d52", accentSoft: "#e4eeea", border: "#dce1da" };
 const WIDTH = 1080, PAD = 72, NUMBER = 84, X = PAD + NUMBER, CONTENT = WIDTH - X - PAD;
+const HEADER = 330, GAP = 88, PDF_HEIGHT = Math.ceil(WIDTH * 297 / 210);
 // iOS Safari draws nothing on a canvas above 16,777,216 px (1080 × 15,534); a longer image gets the "too long" message instead.
 const MAX_HEIGHT = 15_500;
 const TOKEN = /[\u2e80-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]|[^\s\u2e80-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]+|\s+/g;
@@ -187,7 +221,7 @@ function wrapUrl(context: CanvasRenderingContext2D, text: string, width: number)
   return lines;
 }
 
-function layout(context: CanvasRenderingContext2D, entries: ShareEntry[]): Block[] {
+function layout(context: CanvasRenderingContext2D, entries: ShareEntry[], format: "png" | "pdf"): Block[] {
   return entries.map(entry => {
     const label = earlierLabel(entry);
     context.font = `700 ${TITLE.size}px ${FONT}`;
@@ -196,9 +230,11 @@ function layout(context: CanvasRenderingContext2D, entries: ShareEntry[]): Block
     const summary = entry.summary ? wrap(context, entry.summary, CONTENT, SUMMARY.max) : [];
     context.font = `400 ${LINK.size}px ${FONT}`;
     // Never print a truncated link: an over-long URL falls back to its domain, written for the recipient.
-    let url = entry.url ? wrapUrl(context, displayUrl(entry.url), CONTENT) : [];
-    if (url.length > LINK.max) url = [`${host(entry.url) || "原文"} · 链接较长，请按标题搜索原文`];
-    const source = entry.source ? `原文 · ${entry.source}` : "原文";
+    const target = cleanUrl(entry.url);
+    let url = target ? wrapUrl(context, displayUrl(target), CONTENT) : [];
+    if (url.length > LINK.max) url = wrap(context, `${host(target) || "原文"} · ${format === "pdf" ? "点击打开完整原文" : "链接较长，请按标题搜索原文"}`, CONTENT, LINK.max);
+    context.font = `700 ${LINK.size}px ${FONT}`;
+    const source = wrap(context, target ? entry.source ? `原文 · ${entry.source}` : "原文" : `${entry.source ? `来源 · ${entry.source} · ` : ""}未提供原文链接`, CONTENT, 1)[0];
     const height = (label ? LABEL_LINE : 0) + title.length * TITLE.line + (summary.length ? 16 + summary.length * SUMMARY.line : 0) + 20 + LINK.line + url.length * LINK.line;
     return { entry, label, title, summary, source, url, height };
   });
@@ -216,18 +252,48 @@ function badge(context: CanvasRenderingContext2D, x: number, y: number, label: s
   context.textAlign = "left";
 }
 
-export function renderShareImage(input: { date: string; weekday: string; entries: ShareEntry[]; day?: string }): HTMLCanvasElement {
-  if (!input.entries.length) throw new Error("至少选择一条新闻，才能生成分享图。");
+function measureBlocks(input: ShareRenderInput, format: "png" | "pdf"): Block[] {
+  if (!input.entries.length || input.entries.length > SHARE_MAX_COUNT) throw new Error(`请选择 1–${SHARE_MAX_COUNT} 条新闻后导出。`);
   const canvas = document.createElement("canvas");
-  canvas.width = WIDTH; canvas.height = 10;
+  canvas.width = WIDTH; canvas.height = 1;
   const measure = canvas.getContext("2d");
   if (!measure) throw new Error("当前浏览器无法生成图片。");
-  const blocks = layout(measure, input.entries);
-  const header = 330, gap = 88, footer = 150;
-  const height = header + blocks.reduce((total, block) => total + block.height, 0) + gap * (blocks.length - 1) + footer;
-  if (height > MAX_HEIGHT) throw new Error("内容太长，无法生成一张图片。请减少条目后重试。");
-  canvas.height = Math.ceil(height);
-  const context = canvas.getContext("2d")!;
+  try { return layout(measure, input.entries, format); }
+  finally { canvas.width = 0; canvas.height = 0; }
+}
+
+function footerHeight(input: ShareRenderInput, format: "png" | "pdf") {
+  return input.portal ? format === "png" ? 450 : 300 : 150;
+}
+
+function portalFooter(context: CanvasRenderingContext2D, portal: SharePortal, top: number, format: "png" | "pdf"): ShareLink {
+  let width = WIDTH - PAD * 2;
+  if (format === "png") {
+    const quiet = 4, size = portal.modules.size, cell = Math.floor(328 / (size + quiet * 2));
+    const side = (size + quiet * 2) * cell, left = WIDTH - PAD - side;
+    context.fillStyle = "#ffffff"; context.fillRect(left, top, side, side);
+    context.fillStyle = "#000000";
+    for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
+      if (portal.modules.data[row * size + col]) context.fillRect(left + (col + quiet) * cell, top + (row + quiet) * cell, cell, cell);
+    }
+    width -= 360;
+  }
+  context.fillStyle = COLORS.accent; context.font = `700 32px ${FONT}`;
+  context.fillText("更多新闻，尽在 NewsScout", PAD, top + 8);
+  context.fillStyle = COLORS.soft; context.font = `400 25px ${FONT}`;
+  context.fillText(format === "png" ? "扫码访问门户 · 登录后继续阅读" : "点击访问门户 · 登录后继续阅读", PAD, top + 56);
+  context.fillStyle = COLORS.accent;
+  const lines = wrap(context, portal.url, width, format === "png" ? 5 : 2);
+  lines.forEach((line, index) => context.fillText(line, PAD, top + 100 + index * 34));
+  return { x: PAD, y: top, width, height: 100 + lines.length * 34, url: portal.url };
+}
+
+function paintPage(input: ShareRenderInput, blocks: Block[], height: number, format: "png" | "pdf", offset = 0, page = 1, pages = 1) {
+  const canvas = document.createElement("canvas");
+  canvas.width = WIDTH; canvas.height = Math.ceil(height);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("当前浏览器无法生成分享文件。");
+  const links: ShareLink[] = [];
   context.textBaseline = "top";
   context.fillStyle = COLORS.bg; context.fillRect(0, 0, WIDTH, canvas.height);
   context.fillStyle = COLORS.accent; context.fillRect(0, 0, WIDTH, 10);
@@ -235,18 +301,21 @@ export function renderShareImage(input: { date: string; weekday: string; entries
   context.fillStyle = COLORS.muted; context.font = `400 26px ${FONT}`; context.textAlign = "right";
   context.fillText(`${input.date} · ${input.weekday}`, WIDTH - PAD, 66); context.textAlign = "left";
   context.fillStyle = COLORS.text; context.font = `700 56px ${FONT}`;
-  context.fillText(shareHeading(blocks.length, input.day), PAD, 136);
+  context.fillText(shareHeading(input.entries.length, input.day), PAD, 136);
   context.fillStyle = COLORS.muted; context.font = `400 28px ${FONT}`;
-  context.fillText(shareSubtitle(input.entries, input.day), PAD, 220);
+  const subtitle = wrap(context, shareSubtitle(input.entries, input.day, format), WIDTH - PAD * 2, 2);
+  subtitle.forEach((line, index) => context.fillText(line, PAD, 214 + index * 34));
   context.fillStyle = COLORS.border; context.fillRect(PAD, 290, WIDTH - PAD * 2, 2);
-  let y = header;
+  let y = HEADER;
   blocks.forEach((block, index) => {
-    badge(context, PAD, y + 4, String(index + 1).padStart(2, "0"));
+    badge(context, PAD, y + 4, String(offset + index + 1).padStart(2, "0"));
     let cursor = y;
     if (block.label) {
       context.fillStyle = COLORS.accent; context.font = `700 ${LINK.size}px ${FONT}`;
       context.fillText(block.label, X, cursor + 4); cursor += LABEL_LINE;
     }
+    const url = cleanUrl(block.entry.url);
+    if (url) links.push({ x: X, y: cursor, width: CONTENT, height: block.title.length * TITLE.line, url });
     context.fillStyle = COLORS.text; context.font = `700 ${TITLE.size}px ${FONT}`;
     block.title.forEach(line => { context.fillText(line, X, cursor); cursor += TITLE.line; });
     if (block.summary.length) {
@@ -254,22 +323,62 @@ export function renderShareImage(input: { date: string; weekday: string; entries
       block.summary.forEach(line => { context.fillText(line, X, cursor); cursor += SUMMARY.line; });
     }
     cursor += 20; context.fillStyle = COLORS.muted; context.font = `700 ${LINK.size}px ${FONT}`;
+    if (url) links.push({ x: X, y: cursor, width: CONTENT, height: (1 + block.url.length) * LINK.line, url });
     context.fillText(block.source, X, cursor); cursor += LINK.line;
     context.fillStyle = COLORS.accent; context.font = `400 ${LINK.size}px ${FONT}`;
     block.url.forEach(line => { context.fillText(line, X, cursor); cursor += LINK.line; });
     y += block.height;
     if (index < blocks.length - 1) {
-      context.fillStyle = COLORS.border; context.fillRect(X, y + gap / 2 - 1, CONTENT, 1);
-      y += gap;
+      context.fillStyle = COLORS.border; context.fillRect(X, y + GAP / 2 - 1, CONTENT, 1);
+      y += GAP;
     }
   });
-  const bottom = canvas.height - footer;
-  context.fillStyle = COLORS.border; context.fillRect(PAD, bottom + 44, WIDTH - PAD * 2, 2);
+  const bottom = canvas.height - footerHeight(input, format);
+  context.fillStyle = COLORS.border; context.fillRect(PAD, bottom + 24, WIDTH - PAD * 2, 2);
+  if (input.portal) links.push(portalFooter(context, input.portal, bottom + 48, format));
   context.fillStyle = COLORS.muted; context.font = `400 24px ${FONT}`;
-  context.fillText(SHARE_DISCLAIMER, PAD, bottom + 78);
+  context.fillText(SHARE_DISCLAIMER, PAD, canvas.height - 64);
   context.fillStyle = COLORS.accent; context.font = `700 24px ${FONT}`; context.textAlign = "right";
-  context.fillText("NewsScout · 今日精选", WIDTH - PAD, bottom + 78); context.textAlign = "left";
-  return canvas;
+  context.fillText(format === "pdf" ? `${page} / ${pages} 页` : "NewsScout · 今日精选", WIDTH - PAD, canvas.height - 64); context.textAlign = "left";
+  return { canvas, links };
+}
+
+export function renderShareImage(input: ShareRenderInput): HTMLCanvasElement {
+  const blocks = measureBlocks(input, "png");
+  const height = HEADER + blocks.reduce((total, block) => total + block.height, 0) + GAP * (blocks.length - 1) + footerHeight(input, "png");
+  if (height > MAX_HEIGHT) throw new Error("内容太长，无法生成一张图片。请减少条目后重试。");
+  return paintPage(input, blocks, height, "png").canvas;
+}
+
+export async function renderSharePdf(input: ShareRenderInput): Promise<{ blob: Blob; pages: number }> {
+  const blocks = measureBlocks(input, "pdf"), available = PDF_HEIGHT - HEADER - footerHeight(input, "pdf");
+  const pages: Block[][] = [];
+  let current: Block[] = [], used = 0;
+  for (const block of blocks) {
+    if (block.height > available) throw new Error("单条内容超出 PDF 页面，请减少文字后重试。");
+    if (current.length && used + GAP + block.height > available) {
+      pages.push(current); current = []; used = 0;
+    }
+    used += (current.length ? GAP : 0) + block.height; current.push(block);
+  }
+  if (current.length) pages.push(current);
+  const { jsPDF } = await import("jspdf");
+  const pdf = new jsPDF({ unit: "mm", format: "a4", compress: true });
+  pdf.setProperties({ title: `NewsScout · ${shareHeading(input.entries.length, input.day)}（${input.date}）`, creator: "NewsScout" });
+  let offset = 0;
+  for (let index = 0; index < pages.length; index++) {
+    if (index) pdf.addPage();
+    const { canvas, links } = paintPage(input, pages[index], PDF_HEIGHT, "pdf", offset, index + 1, pages.length);
+    const width = canvas.width, height = canvas.height;
+    const png = await canvasPng(canvas);
+    const pageWidth = pdf.internal.pageSize.getWidth(), pageHeight = pdf.internal.pageSize.getHeight();
+    pdf.addImage(new Uint8Array(await png.arrayBuffer()), "PNG", 0, 0, pageWidth, pageHeight, undefined, "FAST");
+    for (const link of links) {
+      pdf.link(link.x / width * pageWidth, link.y / height * pageHeight, link.width / width * pageWidth, link.height / height * pageHeight, { url: link.url });
+    }
+    offset += pages[index].length;
+  }
+  return { blob: pdf.output("blob"), pages: pages.length };
 }
 
 // Encoding releases the canvas: iOS Safari keeps each 40–60 MB bitmap until garbage collection and stops drawing once its total canvas budget is spent.

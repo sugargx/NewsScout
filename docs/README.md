@@ -1,6 +1,6 @@
 # 文档索引
 
-维护日期：2026-10-11。r19开放预览已部署为Ready `newsscout--0000018`；新增 GitHub Engineering 默认来源并单独补采10篇，目标Git基础设施文章的正文、摘要和原始日期已核对，原 AI & ML 订阅保留。r18的公告/解读与多语言分组保持；Microsoft即时进入、邮箱自助注册及GitHub App自动轮换不变。云端schema32，5000共享额度、设置、历史快照和资源规格保持，日常本地实例仍为27；旧Dev Tunnel已退役。证据见 [测试指南第22节](TESTING.md#22-r19-github-engineering-来源2026-10-11) 和 [Azure手册第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)。
+维护日期：2026-10-12。r20开放预览已部署为Ready `newsscout--0000019`；今日分享新增可点击原文与门户入口的 PDF，PNG 附门户网址/二维码，文字版附同一地址，不新建公开分享页面。后端及32份迁移输入与r19相同，认证、GitHub App、模型/5000共享额度、选文规则和资源规格未调整；r19的 Engineering 来源及此前雷达分组保持。点击正向学习仅列为待办，未读取个人点击清单或修改推荐算法。日常本地实例的已记录schema仍为27，旧Dev Tunnel已退役。证据见 [测试指南第23节](TESTING.md#23-可点击分享-pdf-与门户二维码2026-10-12) 和 [Azure手册第1节](AZURE-PREVIEW.md#1-带日期的-rollout-状态)。
 
 ## 按任务阅读
 

@@ -23,6 +23,10 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.0-alpha-2026-07-20"
+    "@playwright/test": "^1.62.0-alpha-2026-07-20",
+    "@types/pngjs": "6.0.5",
+    "jsqr": "1.4.0",
+    "pdf-lib": "1.17.1",
+    "pngjs": "7.0.0"
   }
 }

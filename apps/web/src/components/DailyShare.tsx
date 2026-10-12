@@ -1,6 +1,6 @@
 import { ArrowDownloadRegular, CopyRegular, ShareRegular } from "@fluentui/react-icons";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { canvasPng, downloadBlob, earlierLabel, orderForShare, renderShareImage, shareEntry, shareFileName, shareHeading, shareText, shareWeekday, SHARE_DEFAULT_COUNT, SHARE_MAX_COUNT, SHARE_ORDER_KEY, type ShareOrder } from "../daily-share";
+import { canvasPng, downloadBlob, earlierLabel, orderForShare, publicPortalUrl, renderShareImage, renderSharePdf, shareEntry, shareFileName, shareHeading, sharePortal, shareText, shareWeekday, SHARE_DEFAULT_COUNT, SHARE_MAX_COUNT, SHARE_ORDER_KEY, type ShareOrder } from "../daily-share";
 import type { BriefSection, Event } from "../types";
 import { ErrorNotice } from "./Feedback";
 import { ReaderButton } from "./ReaderControls";
@@ -13,7 +13,7 @@ function storedOrder(): ShareOrder {
   try { return localStorage.getItem(SHARE_ORDER_KEY) === "scout" ? "scout" : "ai"; } catch { return "ai"; }
 }
 
-// System sharing is offered on touch devices only; desktop keeps download as the single primary action.
+// Only touch devices get the native PNG share sheet; PDF remains the primary download on all devices.
 function canShareFiles() {
   try {
     if (typeof navigator.share !== "function" || typeof navigator.canShare !== "function" || !matchMedia("(pointer: coarse)").matches) return false;
@@ -42,8 +42,10 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
   const [picked, setPicked] = useState<ReadonlySet<string> | null>(null);
   const [rendered, setRendered] = useState<Rendered | null>(null), [rendering, setRendering] = useState(true);
   const [renderError, setRenderError] = useState<unknown>(null), [actionError, setActionError] = useState<{ title: string; error: unknown } | null>(null);
-  const [status, setStatus] = useState(""), [busy, setBusy] = useState(false), [manualText, setManualText] = useState(0);
+  const [status, setStatus] = useState(""), [busy, setBusy] = useState<"png" | "pdf" | "share" | null>(null), [manualText, setManualText] = useState(0);
   const [moreBelow, setMoreBelow] = useState(false), [shareFiles] = useState(canShareFiles);
+  const [portalUrl] = useState(() => publicPortalUrl(window.location.origin));
+  const inFlight = useRef(false);
   const frame = useRef<HTMLDivElement>(null), latest = useRef<Rendered | null>(null);
   const heading = useRef<HTMLHeadingElement>(null), manual = useRef<HTMLTextAreaElement>(null);
   const earlierIds = useMemo(() => new Set(sections.filter(section => section.kind === "catch_up").flatMap(section => section.eventIds)), [sections]);
@@ -60,8 +62,12 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
     return ai > 0 && ai < entryById.size;
   }, [entryById]);
   const weekday = shareWeekday(date), full = entries.length >= SHARE_MAX_COUNT;
-  const renderKey = `${date}|${day}|${entries.map(entry => entry.id).join(",")}`;
+  const renderKey = JSON.stringify([date, day, portalUrl, entries]);
   const ready = rendered?.key === renderKey && !rendering ? rendered : null;
+  const exportInput = useCallback(async () => {
+    await document.fonts.ready;
+    return { date, weekday, entries, day, portal: await sharePortal(portalUrl) };
+  }, [date, day, weekday, entries, portalUrl]);
 
   // Switching editions or restoring the defaults removes the control that had focus; keep keyboard users in the picker.
   useEffect(() => { if (focusOnMount) heading.current?.focus(); }, [focusOnMount]);
@@ -95,8 +101,9 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
     setRendering(true);
     const timer = setTimeout(() => void (async () => {
       try {
-        await document.fonts.ready;
-        const canvas = renderShareImage({ date, weekday, entries, day }), height = canvas.height;
+        const input = await exportInput();
+        if (cancelled) return;
+        const canvas = renderShareImage(input), height = canvas.height;
         const blob = await canvasPng(canvas);
         if (cancelled) return;
         if (latest.current) URL.revokeObjectURL(latest.current.url);
@@ -112,7 +119,7 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
       }
     })(), 120);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [date, day, weekday, entries, renderKey]);
+  }, [entries.length, renderKey, exportInput]);
 
   function changeOrder(next: ShareOrder) {
     setOrder(next); setStatus("");
@@ -125,25 +132,33 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
   }
   async function imageBlob() {
     if (latest.current?.key === renderKey) return latest.current.blob;
-    await document.fonts.ready;
-    return canvasPng(renderShareImage({ date, weekday, entries, day }));
+    return canvasPng(renderShareImage(await exportInput()));
   }
-  async function download() {
+  async function download(format: "png" | "pdf") {
+    if (inFlight.current || !entries.length) return;
+    inFlight.current = true;
     const started = performance.now();
-    setBusy(true); setActionError(null); setStatus("");
+    setBusy(format); setActionError(null); setStatus("");
     try {
-      downloadBlob(await imageBlob(), shareFileName(date));
-      setStatus(`已下载分享图：${entries.length} 条新闻，每条附原文链接。`);
+      if (format === "pdf") {
+        const result = await renderSharePdf(await exportInput());
+        downloadBlob(result.blob, shareFileName(date, "pdf"));
+        setStatus(`已下载 PDF：${entries.length} 条新闻，共 ${result.pages} 页。可点击原文${portalUrl ? "和门户" : ""}链接。`);
+      } else {
+        downloadBlob(await imageBlob(), shareFileName(date));
+        setStatus(`已下载分享图：${entries.length} 条新闻。${portalUrl ? "可扫描底部二维码访问门户；" : ""}图片内的文字无法点击。`);
+      }
       onAction?.("success", performance.now() - started);
     } catch (error) {
-      setActionError({ title: "分享图未生成", error }); onAction?.("failure", performance.now() - started);
+      setActionError({ title: format === "pdf" ? "PDF 未生成" : "分享图未生成", error }); onAction?.("failure", performance.now() - started);
     } finally {
-      setBusy(false);
+      inFlight.current = false; setBusy(null);
     }
   }
   // navigator.share must run within the tap's user activation, so it only uses the finished preview.
   async function share() {
-    if (!ready) return;
+    if (!ready || inFlight.current) return;
+    inFlight.current = true; setBusy("share");
     const started = performance.now();
     setActionError(null); setStatus("");
     try {
@@ -153,12 +168,14 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setActionError({ title: "没有打开系统分享", error: shareFailure(error) }); onAction?.("failure", performance.now() - started);
+    } finally {
+      inFlight.current = false; setBusy(null);
     }
   }
   async function copy() {
     setActionError(null);
     try {
-      await navigator.clipboard.writeText(shareText(date, entries, day));
+      await navigator.clipboard.writeText(shareText(date, entries, day, portalUrl));
       setManualText(0); setStatus("文字版已复制，可直接粘贴到聊天或社交平台。");
     } catch {
       setManualText(count => count + 1); setStatus("浏览器未允许自动复制，请在下方文本框中手动复制。");
@@ -171,7 +188,7 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
     const meta = [earlierLabel(entry), entry.source || "来源未知", aiMixed && entry.ai ? "AI 相关" : ""].filter(Boolean).join(" · ");
     return <li key={item.id} className={checked ? "is-selected" : undefined}>
       <label>
-        <input type="checkbox" checked={checked} disabled={locked} onChange={() => toggle(item.id)}
+        <input type="checkbox" checked={checked} disabled={locked || busy !== null} onChange={() => toggle(item.id)}
           aria-labelledby={`${id}-title`} aria-describedby={locked ? `${id}-meta ${limitId}` : `${id}-meta`} />
         <span className="ns-share-position" aria-hidden="true">{checked ? String(position + 1).padStart(2, "0") : "—"}</span>
         <span className="ns-share-option-text">
@@ -188,32 +205,34 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
       <div className="ns-share-order">
         <span className="ns-share-order-label" aria-hidden="true">排序</span>
         <div className="ns-segmented" role="group" aria-label="分享排序">
-          <button type="button" aria-pressed={order === "ai"} onClick={() => changeOrder("ai")}>AI 相关优先</button>
-          <button type="button" aria-pressed={order === "scout"} onClick={() => changeOrder("scout")}>精选顺序</button>
+          <button type="button" aria-pressed={order === "ai"} disabled={busy !== null} onClick={() => changeOrder("ai")}>AI 相关优先</button>
+          <button type="button" aria-pressed={order === "scout"} disabled={busy !== null} onClick={() => changeOrder("scout")}>精选顺序</button>
         </div>
         <span className="ns-share-order-note">{orderNote(order, current.length, currentAi)}{order === "ai" && later.length ? "补读内容始终排在最后。" : ""}</span>
       </div>
-      <div className="ns-share-actions">
-        <ReaderButton icon={<CopyRegular />} disabled={!entries.length} onClick={() => void copy()}>复制文字版</ReaderButton>
-        <ReaderButton variant={shareFiles ? "secondary" : "primary"} icon={<ArrowDownloadRegular />} disabled={!entries.length} disabledFocusable={busy} aria-busy={busy} onClick={() => void download()}>{busy ? "正在生成…" : "下载分享图"}</ReaderButton>
-        {shareFiles && <ReaderButton variant="primary" icon={<ShareRegular />} disabled={!ready} onClick={() => void share()}>分享图片</ReaderButton>}
+      <div className="ns-share-actions" data-system-share={shareFiles ? "true" : undefined}>
+        <ReaderButton icon={<CopyRegular />} disabled={!entries.length} disabledFocusable={busy !== null} onClick={() => void copy()}>复制文字版</ReaderButton>
+        <ReaderButton icon={<ArrowDownloadRegular />} disabled={!entries.length} disabledFocusable={busy !== null} aria-busy={busy === "png"} onClick={() => void download("png")}>{busy === "png" ? "正在生成…" : "下载分享图"}</ReaderButton>
+        <ReaderButton variant="primary" icon={<ArrowDownloadRegular />} disabled={!entries.length} disabledFocusable={busy !== null} aria-busy={busy === "pdf"} onClick={() => void download("pdf")}>{busy === "pdf" ? "正在生成 PDF…" : "下载 PDF"}</ReaderButton>
+        {shareFiles && <ReaderButton icon={<ShareRegular />} disabled={!ready} disabledFocusable={busy !== null} aria-busy={busy === "share"} onClick={() => void share()}>分享图片</ReaderButton>}
       </div>
+      <p className="ns-share-format"><strong>PDF 可点击原文{portalUrl ? "和门户" : ""}链接。</strong>{portalUrl ? " PNG 图片可扫码访问门户，图中文字不可点击。" : " PNG 是图片，文字不可点击。当前不是公共 HTTPS 地址，导出不附门户入口。"}</p>
     </div>
     <p className="ns-share-status" role="status">{status}</p>
     {actionError && <ErrorNotice title={actionError.title} error={actionError.error} />}
-    {manualText > 0 && <textarea ref={manual} className="ns-share-manual" readOnly rows={8} aria-label="分享文字版" value={shareText(date, entries, day)} onFocus={event => event.currentTarget.select()} />}
+    {manualText > 0 && <textarea ref={manual} className="ns-share-manual" readOnly rows={8} aria-label="分享文字版" value={shareText(date, entries, day, portalUrl)} onFocus={event => event.currentTarget.select()} />}
     <div className="ns-share-layout">
       <section className="ns-share-picker" aria-labelledby={headingId}>
         <div className="ns-share-picker-head">
           <h2 ref={heading} id={headingId} className="ns-share-col-title" tabIndex={-1}>选择新闻</h2>
           <span>已选 {entries.length} / 最多 {SHARE_MAX_COUNT} 条</span>
-          {picked && <button type="button" className="ns-share-reset" onClick={() => { setPicked(null); setStatus(""); heading.current?.focus(); }}>恢复默认</button>}
+          {picked && <button type="button" className="ns-share-reset" disabled={busy !== null} onClick={() => { setPicked(null); setStatus(""); heading.current?.focus(); }}>恢复默认</button>}
         </div>
         <p id={limitId} className="ns-share-limit" role="status">{full ? `已达 ${SHARE_MAX_COUNT} 条上限，取消一条后可再选。` : ""}</p>
         <ol className="ns-share-options">{current.map(option)}</ol>
         {later.length > 0 && <div className="ns-share-earlier">
           <h3 className="ns-share-group-title">值得补读 · 较早发布</h3>
-          <p className="ns-share-group-note">默认不选入。勾选后，图片和文字版都会标注“补读”和发布日期。</p>
+          <p className="ns-share-group-note">默认不选入。勾选后，PDF、图片和文字版都会标注“补读”和发布日期。</p>
           <ol className="ns-share-options">{later.map(option)}</ol>
         </div>}
       </section>
@@ -233,7 +252,7 @@ export function DailyShare({ date, day = "今日", items, sections = [], onActio
           </div>
           {moreBelow && rendered && <p className="ns-share-scroll-hint" aria-hidden="true">在预览中滚动查看全部 {rendered.count} 条</p>}
         </div>
-        <p className="ns-share-footnote">图片在当前浏览器生成，不会上传或公开发布。摘要来自今日精选，转发前请核对原文。图中链接无法点击；需要可点链接时，请一并发送文字版。{shareFiles ? "也可长按预览图保存。" : ""}</p>
+        <p className="ns-share-footnote">PDF 和图片都在当前浏览器生成，不会上传或公开发布。预览为 PNG 长图；PDF 沿用相同选文，按整条新闻分页。摘要来自今日精选，转发前请核对原文。{shareFiles ? "也可长按预览图保存。" : ""}</p>
       </section>
     </div>
   </div>;

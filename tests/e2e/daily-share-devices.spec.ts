@@ -1,10 +1,14 @@
 import { chromium, devices, expect, test, webkit, type BrowserContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import type { Brief, Event, ReaderSession } from "../../apps/web/src/types";
+import { cleanUrl, publicPortalUrl, shareText } from "../../apps/web/src/daily-share";
+import { inspectPortalQr, inspectSharePdf } from "./share-export-assertions";
 
 // Mock-only phone and WeChat checks for the daily share image. No physical device runs here:
 // WebKit stands in for iOS Safari and Chromium's mobile emulation for Android.
 const candidate = "http://127.0.0.1:15175";
+const publicOrigin = "https://newsscout.example.com";
+const portal = `${publicOrigin}/`;
 const timestamp = "2026-09-21T03:00:00.000Z";
 const fileName = "NewsScout-今日分享-2026-09-21.png";
 // WeChat does not publish its image rules. Luban 2 (github.com/Curzibn/Luban) reverse-engineered them from about 100 WeChat
@@ -169,7 +173,7 @@ function brief(list = stories, catchUp = 0): Brief {
 }
 
 // Every request is answered locally; any other origin, write or unlisted endpoint is recorded as a failure.
-async function mockCloud(context: BrowserContext, edition: Brief = brief()): Promise<string[]> {
+async function mockCloud(context: BrowserContext, edition: Brief = brief(), origin = candidate): Promise<string[]> {
   const problems: string[] = [];
   await context.addInitScript(() => {
     const apply = () => {
@@ -188,11 +192,14 @@ async function mockCloud(context: BrowserContext, edition: Brief = brief()): Pro
   const lists = new Set(["/api/v1/sources", "/api/v1/sources/coverage", "/api/v1/source-watchlist", "/api/v1/me/interests", "/api/v1/shares"]);
   await context.route("**/*", async route => {
     const request = route.request(), url = new URL(request.url());
-    if (url.origin !== candidate || url.pathname.startsWith("/.auth/")) {
+    if (url.origin !== origin || url.pathname.startsWith("/.auth/")) {
       problems.push(`Blocked network request: ${request.method()} ${url.origin}${url.pathname}`);
       return route.abort("blockedbyclient");
     }
-    if (!url.pathname.startsWith("/api/")) return route.continue();
+    if (!url.pathname.startsWith("/api/")) {
+      if (origin === candidate) return route.continue();
+      return route.fulfill({ response: await route.fetch({ url: `${candidate}${url.pathname}${url.search}` }) });
+    }
     const json = request.method() !== "GET" ? undefined
       : url.pathname === "/api/v1/session" ? session
       : url.pathname === "/api/v1/runtime" ? { mode: "postgres", version: "share-device-fixture", timeZone: "Asia/Shanghai" }
@@ -256,7 +263,7 @@ for (const phone of phones) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth), "The page never scrolls sideways").toBeLessThanOrEqual(viewport.width);
       const order = page.getByRole("group", { name: "分享排序", exact: true });
       const targets: [string, Locator][] = [
-        ...["复制文字版", "下载分享图", "分享图片"].map(name => [name, page.getByRole("button", { name, exact: true })] as [string, Locator]),
+        ...["复制文字版", "下载分享图", "下载 PDF", "分享图片"].map(name => [name, page.getByRole("button", { name, exact: true })] as [string, Locator]),
         ...["AI 相关优先", "精选顺序"].map(name => [name, order.getByRole("button", { name, exact: true })] as [string, Locator]),
         ["first story option", page.locator(".ns-share-options label").first()],
       ];
@@ -267,7 +274,7 @@ for (const phone of phones) {
         expect.soft(box.x + box.width, `${name} ends on screen`).toBeLessThanOrEqual(viewport.width);
       }
       // Narrow buttons break "复制文字版" into "复制文字 / 版"; every button label keeps a single line.
-      for (const [name, target] of targets.slice(0, 5)) {
+      for (const [name, target] of targets.slice(0, 6)) {
         const lines = await target.evaluate(element => {
           const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT), range = document.createRange(), tops = new Set<number>();
           for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -302,13 +309,276 @@ for (const phone of phones) {
       const png = await readFile((await download.path())!);
       expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
       expect([png.readUInt32BE(16), png.readUInt32BE(20), png.length]).toEqual([1080, natural.height, bytes]);
-      await expect(page.getByRole("status").filter({ hasText: "已下载分享图：10 条新闻，每条附原文链接。" })).toBeVisible();
+      await expect(page.getByRole("status").filter({ hasText: "已下载分享图：10 条新闻。图片内的文字无法点击。" })).toBeVisible();
+      const pdfDownloading = page.waitForEvent("download");
+      await page.getByRole("button", { name: "下载 PDF", exact: true }).tap();
+      const pdfDownload = await pdfDownloading;
+      expect(pdfDownload.suggestedFilename()).toBe(fileName.replace(".png", ".pdf"));
+      const pdfBytes = await readFile((await pdfDownload.path())!);
+      await inspectSharePdf(pdfBytes, stories.slice(0, 10).map(story => cleanUrl(story.url)));
+      await attachFile(info, `share-${phone.slug}.pdf`, pdfBytes, "application/pdf");
       expect(problems).toEqual([]);
     } finally {
       await browser.close();
     }
   });
 }
+
+  declare global {
+    interface Window {
+      __shareExportTest: { drawn: string[]; copied: string; failEncoding: boolean; slowEncoding: boolean; holdEncoding: boolean; pendingEncodes: (() => void)[] };
+    }
+  }
+
+  function captureExport(initialHold = false) {
+    window.__shareExportTest = { drawn: [], copied: "", failEncoding: false, slowEncoding: false, holdEncoding: initialHold, pendingEncodes: [] };
+    const draw = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
+      window.__shareExportTest.drawn.push(text);
+      if (maxWidth === undefined) draw.call(this, text, x, y); else draw.call(this, text, x, y, maxWidth);
+    };
+    const encode = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
+      if (window.__shareExportTest.failEncoding) return callback(null);
+      if (window.__shareExportTest.holdEncoding) {
+        window.__shareExportTest.pendingEncodes.push(() => encode.call(this, callback, type, quality));
+        return;
+      }
+      if (window.__shareExportTest.slowEncoding) setTimeout(() => encode.call(this, callback, type, quality), 600);
+      else encode.call(this, callback, type, quality);
+    };
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async (text: string) => { window.__shareExportTest.copied = text; },
+    } });
+  }
+
+  test("portal URLs omit private locations and reader-specific paths", () => {
+    expect(publicPortalUrl(`${publicOrigin}/share?session=DO_NOT_SHARE#private-reader`)).toBe(portal);
+    expect(publicPortalUrl(`${publicOrigin}:443/`)).toBe(portal);
+    for (const url of [
+      "", "not a URL", candidate, "http://newsscout.example.com", "https://localhost", "https://localHost.",
+      "https://news.localhost", "https://news.local", "https://news.home.arpa", "https://news.internal",
+      "https://192.168.1.1", "https://127.1", "https://10.0.0.1", "https://2130706433", "https://[::1]",
+      "https://[fd00::1]", "https://news", `${publicOrigin}:15175`, "https://reader:secret@newsscout.example.com",
+    ]) expect(publicPortalUrl(url), url).toBe("");
+    for (const url of ["javascript:alert(1)", "data:text/html,test", "file:///tmp/article", "https://reader:secret@example.com/story"]) {
+      expect(cleanUrl(url)).toBe("");
+    }
+    expect(shareText("2026-09-21", [], "今日", candidate)).not.toContain(candidate);
+    expect(shareText("2026-09-21", [], "今日", `${publicOrigin}/share?session=PRIVATE`)).toContain(`NewsScout：${portal}`);
+  });
+
+  test("public-origin exports contain precise clickable article and portal targets and a decodable PNG QR", async ({ page }, info) => {
+    const edition = brief();
+    const longUrl = `https://publisher.example.com/${encodeURIComponent("很长的中文路径").repeat(35)}?keep=%28detail%29&keep=two&x=%5C&plus=%2B&utm_source=mail#${encodeURIComponent("原文段落")}`;
+    edition.items[2].evidence[0].url = longUrl;
+    edition.items[9].evidence[0].url = "javascript:alert('DO_NOT_EXPORT')";
+    edition.items[14].title = "PRIVATE_UNSELECTED_STORY";
+    const problems = await mockCloud(page.context(), edition, publicOrigin);
+    await page.addInitScript(captureExport);
+    await page.clock.setFixedTime(new Date("2026-09-21T10:00:00+08:00"));
+    await page.goto(`${publicOrigin}/share?session=PRIVATE_READER#private`);
+    const preview = page.getByRole("img", { name: "分享图预览：今日值得分享的 10 条新闻", exact: true });
+    await expect(preview).toBeVisible();
+    await expect(page.getByText("PDF 可点击原文和门户链接。", { exact: true })).toBeVisible();
+    const pngDownloading = page.waitForEvent("download");
+    await page.getByRole("button", { name: "下载分享图", exact: true }).click();
+    const png = await readFile((await (await pngDownloading).path())!);
+    const qr = inspectPortalQr(png, portal);
+    await attachFile(info, "public-share-qr.png", png, "image/png");
+    await expect(page.getByRole("status").filter({ hasText: "可扫描底部二维码访问门户；图片内的文字无法点击。" })).toBeVisible();
+
+    await page.getByRole("button", { name: "复制文字版", exact: true }).click();
+    const text = await page.evaluate(() => window.__shareExportTest.copied);
+    expect(text).toContain(`更多新闻 · NewsScout：${portal}`);
+    expect(text).toContain(cleanUrl(longUrl));
+    expect(text).toContain("来源：示例科技媒体 · 未提供原文链接");
+    expect(text).not.toMatch(/utm_source|PRIVATE_READER|PRIVATE_UNSELECTED_STORY|javascript:|DO_NOT_EXPORT|127\.0\.0\.1/);
+    await page.evaluate(() => { window.__shareExportTest.drawn = []; });
+    const pdfDownloading = page.waitForEvent("download");
+    await page.getByRole("button", { name: "下载 PDF", exact: true }).click();
+    const pdf = await readFile((await (await pdfDownloading).path())!);
+    const expected = edition.items.slice(0, 10).map(item => cleanUrl(item.evidence[0].url)).filter(Boolean);
+    const inspected = await inspectSharePdf(pdf, expected, portal);
+    const drawn = await page.evaluate(() => window.__shareExportTest.drawn);
+    expect(drawn.join("")).toContain("点击打开完整原文");
+    expect(drawn.join("")).toContain("未提供原文链接");
+    expect(drawn.join("")).toContain("来源 · 示例科技媒体 · 未提供原文链接");
+    await expect(page.locator(".ns-share-options li").nth(9)).toContainText("示例科技媒体");
+    await expect(page.locator(".ns-share-options li").nth(9)).not.toContainText("来源未知");
+    expect(drawn.join("")).not.toMatch(/PRIVATE_READER|PRIVATE_UNSELECTED_STORY|DO_NOT_EXPORT/);
+    expect(drawn.filter(text => text === "更多新闻，尽在 NewsScout")).toHaveLength(inspected.pages);
+    await attachFile(info, "public-share-clickable.pdf", pdf, "application/pdf");
+    await attachFile(info, "public-share-links.json", Buffer.from(JSON.stringify({ qr, ...inspected, drawn }, null, 2)), "application/json");
+    await page.screenshot({ path: info.outputPath("public-share-desktop.png"), fullPage: true });
+    const frame = page.getByRole("group", { name: "分享图预览区域，可滚动", exact: true });
+    await frame.scrollIntoViewIfNeeded();
+    await frame.evaluate(frame => { frame.scrollTo({ top: frame.scrollHeight, behavior: "instant" }); });
+    await expect.poll(() => frame.evaluate(frame => frame.scrollHeight - frame.scrollTop - frame.clientHeight)).toBeLessThanOrEqual(2);
+    await frame.screenshot({ path: info.outputPath("public-share-portal-preview.png") });
+    for (const width of [390, 744, 768, 1024]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await page.screenshot({ path: info.outputPath(`public-share-${width}.png`), fullPage: true });
+    }
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.reload();
+    await expect(preview).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await page.screenshot({ path: info.outputPath("public-share-dark.png"), fullPage: true });
+    expect(problems).toEqual([]);
+  });
+
+  test("fifteen longest items remain whole PDF pages and the portal QR survives simulated image compression", async ({ page }, info) => {
+    const problems = await mockCloud(page.context(), brief(longest, 3), publicOrigin);
+    await page.addInitScript(captureExport);
+    await page.clock.setFixedTime(new Date("2026-09-21T10:00:00+08:00"));
+    await page.goto(`${publicOrigin}/share`);
+    await expect(page.getByRole("img", { name: "分享图预览：今日值得分享的 10 条新闻", exact: true })).toBeVisible();
+    for (const story of longest.slice(10)) await page.getByRole("checkbox", { name: story.title, exact: true }).check();
+    await expect(page.getByRole("img", { name: "分享图预览：今日值得分享的 15 条新闻", exact: true })).toBeVisible();
+    const measured = await wechatCopy(page, info, "15-portal");
+    expect(measured.source.width * measured.source.height).toBeLessThanOrEqual(IOS_CANVAS_PIXELS);
+    inspectPortalQr(await readFile(info.outputPath("share-15-portal.png")), portal);
+    // This is a simulated copy fitted to the phone's physical-pixel width, not a claim about a real WeChat upload.
+    inspectPortalQr(await readFile(info.outputPath("wechat-15-portal-phone-footer.png")), portal);
+    await page.evaluate(() => { window.__shareExportTest.drawn = []; });
+    const downloading = page.waitForEvent("download");
+    await page.getByRole("button", { name: "下载 PDF", exact: true }).click();
+    const pdf = await readFile((await (await downloading).path())!);
+    const inspected = await inspectSharePdf(pdf, longest.map(story => cleanUrl(story.url)), portal);
+    expect(inspected.pages).toBe(15);
+    const drawn = await page.evaluate(() => window.__shareExportTest.drawn);
+    expect(drawn.filter(text => text === "补读 · 9月18日发布")).toHaveLength(3);
+    for (let number = 1; number <= 15; number++) expect(drawn.filter(text => text === String(number).padStart(2, "0"))).toHaveLength(1);
+    await attachFile(info, "longest-share.pdf", pdf, "application/pdf");
+    await attachFile(info, "longest-share-links.json", Buffer.from(JSON.stringify({ ...inspected, drawn }, null, 2)), "application/json");
+    expect(problems).toEqual([]);
+  });
+
+  test("PDF failures are visible, keyboard focus and selection survive, and retry downloads only once", async ({ page }, info) => {
+    const problems = await mockCloud(page.context(), brief(stories.slice(0, 2)));
+    await page.addInitScript(captureExport);
+    await page.clock.setFixedTime(new Date("2026-09-21T10:00:00+08:00"));
+    await page.goto("/share");
+    await expect(page.getByRole("img", { name: "分享图预览：今日值得分享的 2 条新闻", exact: true })).toBeVisible();
+    const download = page.getByRole("button", { name: "下载 PDF", exact: true });
+    await page.evaluate(() => { window.__shareExportTest.failEncoding = true; });
+    await download.click();
+    await expect(page.getByRole("alert")).toContainText("PDF 未生成");
+    await expect(page.getByRole("alert")).toContainText("图片编码失败，请重试。");
+    await expect(download).toBeFocused();
+    await expect(download).toBeEnabled();
+    await expect(page.getByText("已选 2 / 最多 15 条", { exact: true })).toBeVisible();
+    await page.evaluate(() => { window.__shareExportTest.failEncoding = false; window.__shareExportTest.slowEncoding = true; });
+    const downloads: string[] = [];
+    page.on("download", result => downloads.push(result.suggestedFilename()));
+    const downloading = page.waitForEvent("download");
+    await page.keyboard.press("Enter");
+    const busy = page.getByRole("button", { name: "正在生成 PDF…", exact: true });
+    await expect(busy).toBeFocused();
+    await expect(busy).toHaveAttribute("aria-disabled", "true");
+    await expect(busy).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByRole("checkbox").first()).toBeDisabled();
+    await busy.evaluate(button => { if (button instanceof HTMLButtonElement) button.click(); });
+    const pdf = await readFile((await (await downloading).path())!);
+    await inspectSharePdf(pdf, stories.slice(0, 2).map(story => cleanUrl(story.url)));
+    await expect(download).toBeFocused();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByRole("checkbox").first()).toBeEnabled();
+    expect(downloads).toEqual([fileName.replace(".png", ".pdf")]);
+    await page.screenshot({ path: info.outputPath("pdf-retry-focus.png"), fullPage: true });
+    for (const story of stories.slice(0, 2)) await page.getByRole("checkbox", { name: story.title, exact: true }).uncheck();
+    for (const name of ["复制文字版", "下载分享图", "下载 PDF"]) await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+    expect(problems).toEqual([]);
+  });
+
+test("long public portal addresses wrap in both exports and still decode", async ({ page }, info) => {
+  const origin = "https://newsscout-preview-long-hostname.sample-region-abcdefgh1234.eastus.azurecontainerapps.io";
+  const destination = `${origin}/`;
+  const problems = await mockCloud(page.context(), brief(stories.slice(0, 1)), origin);
+  await page.addInitScript(captureExport);
+  await page.clock.setFixedTime(new Date("2026-09-21T10:00:00+08:00"));
+  await page.goto(`${origin}/share?private=DO_NOT_SHARE`);
+  await expect(page.getByRole("img", { name: "分享图预览：今日值得分享的 1 条新闻", exact: true })).toBeVisible();
+  const pngDownloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载分享图", exact: true }).click();
+  const png = await readFile((await (await pngDownloading).path())!);
+  const qr = inspectPortalQr(png, destination);
+  await attachFile(info, "long-portal.png", png, "image/png");
+  const pdfDownloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载 PDF", exact: true }).click();
+  const pdf = await readFile((await (await pdfDownloading).path())!);
+  const inspected = await inspectSharePdf(pdf, [cleanUrl(stories[0].url)], destination);
+  expect(inspected.pages).toBe(1);
+  await attachFile(info, "long-portal.pdf", pdf, "application/pdf");
+  await attachFile(info, "long-portal-links.json", Buffer.from(JSON.stringify({ ...inspected, qr }, null, 2)), "application/json");
+  const frame = page.getByRole("group", { name: "分享图预览区域，可滚动", exact: true });
+  await frame.evaluate(frame => frame.scrollTo({ top: frame.scrollHeight, behavior: "instant" }));
+  await expect.poll(() => frame.evaluate(frame => frame.scrollHeight - frame.scrollTop - frame.clientHeight)).toBeLessThanOrEqual(2);
+  await frame.screenshot({ path: info.outputPath("long-portal-preview.png") });
+  expect(problems).toEqual([]);
+});
+
+test("share export states retain readable focus in light dark and forced colors", async ({ page }, info) => {
+  const problems = await mockCloud(page.context(), brief(stories.slice(0, 2)));
+  await page.addInitScript(captureExport, true);
+  await page.setViewportSize({ width: 390, height: 900 });
+  const modes = [
+    { name: "light", colorScheme: "light" as const, forcedColors: "none" as const },
+    { name: "dark", colorScheme: "dark" as const, forcedColors: "none" as const },
+    { name: "forced-colors", colorScheme: "light" as const, forcedColors: "active" as const },
+  ];
+  const release = () => page.evaluate(() => {
+    const state = window.__shareExportTest;
+    state.holdEncoding = false;
+    for (const encode of state.pendingEncodes.splice(0)) encode();
+  });
+  for (const mode of modes) {
+    await page.emulateMedia({ colorScheme: mode.colorScheme, forcedColors: mode.forcedColors });
+    await page.clock.setFixedTime(new Date("2026-09-21T10:00:00+08:00"));
+    await page.goto("/share");
+    await expect(page.getByText("正在生成预览…", { exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath(`${mode.name}-loading.png`) });
+    await expect.poll(() => page.evaluate(() => window.__shareExportTest.pendingEncodes.length)).toBeGreaterThan(0);
+    await release();
+    await expect(page.getByRole("img", { name: "分享图预览：今日值得分享的 2 条新闻", exact: true })).toBeVisible();
+    const download = page.getByRole("button", { name: "下载 PDF", exact: true });
+    await page.evaluate(() => { window.__shareExportTest.failEncoding = true; });
+    await download.click();
+    await expect(page.getByRole("alert")).toContainText("PDF 未生成");
+    expect(await download.evaluate(button => button.hasAttribute("data-fui-focus-visible"))).toBe(false);
+    await page.screenshot({ path: info.outputPath(`${mode.name}-pointer-error.png`) });
+    await page.evaluate(() => { window.__shareExportTest.failEncoding = false; window.__shareExportTest.holdEncoding = true; });
+    await page.getByRole("button", { name: "下载分享图", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await expect(download).toBeFocused();
+    const downloading = page.waitForEvent("download");
+    await page.keyboard.press("Enter");
+    const busy = page.getByRole("button", { name: "正在生成 PDF…", exact: true });
+    await expect(busy).toBeFocused();
+    await expect(busy).toHaveAttribute("aria-disabled", "true");
+    expect(await busy.evaluate(button => { const style = getComputedStyle(button); return `${style.outlineStyle} ${style.outlineWidth}`; })).toBe("solid 3px");
+    await page.screenshot({ path: info.outputPath(`${mode.name}-keyboard-busy.png`) });
+    await expect.poll(() => page.evaluate(() => window.__shareExportTest.pendingEncodes.length)).toBeGreaterThan(0);
+    await release();
+    await downloading;
+    await expect(download).toBeFocused();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.screenshot({ path: info.outputPath(`${mode.name}-keyboard-recovered.png`) });
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new DOMException("blocked", "NotAllowedError"); } } });
+    });
+    await page.getByRole("button", { name: "复制文字版", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "分享文字版", exact: true })).toBeFocused();
+    await page.screenshot({ path: info.outputPath(`${mode.name}-manual-copy.png`) });
+    for (const story of stories.slice(0, 2)) await page.getByRole("checkbox", { name: story.title, exact: true }).uncheck();
+    await expect(page.getByText("勾选至少 1 条新闻即可预览", { exact: true })).toBeVisible();
+    await expect(download).toBeDisabled();
+    await page.screenshot({ path: info.outputPath(`${mode.name}-empty.png`) });
+  }
+  expect(problems).toEqual([]);
+});
 
 // Recompresses the current preview the way WeChat does for a long image, and renders what a recipient sees on an iPhone 14.
 async function wechatCopy(page: Page, info: TestInfo, label: string) {
@@ -440,7 +710,7 @@ test("keyboard focus stays on the download button while the image is generated",
   await expect(busy).toHaveAttribute("aria-disabled", "true");
   await expect(busy).toHaveAttribute("aria-busy", "true");
   expect((await downloading).suggestedFilename()).toBe(fileName);
-  await expect(page.getByRole("status").filter({ hasText: "已下载分享图：10 条新闻，每条附原文链接。" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "已下载分享图：10 条新闻。图片内的文字无法点击。" })).toBeVisible();
   await expect(download).toBeFocused();
   expect(problems).toEqual([]);
 });
@@ -482,7 +752,7 @@ test("a failed system share explains the next step in Chinese instead of the bro
     const downloading = page.waitForEvent("download");
     await page.getByRole("button", { name: "下载分享图", exact: true }).tap();
     expect((await downloading).suggestedFilename()).toBe(fileName);
-    await expect(page.getByRole("status").filter({ hasText: "已下载分享图：10 条新闻，每条附原文链接。" })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "已下载分享图：10 条新闻。图片内的文字无法点击。" })).toBeVisible();
     await expect(alert).toHaveCount(0);
     expect(problems).toEqual([]);
   } finally {

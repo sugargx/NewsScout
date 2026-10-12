@@ -7,6 +7,9 @@
 .ns-share-order .ns-segmented>button { white-space: nowrap; }
 .ns-share-order-note { flex: 1 1 14em; min-width: 0; color: var(--cp-text-muted); font-size: 12px; line-height: 1.6; }
 .ns-share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.ns-share-actions>button { white-space: nowrap; }
+.ns-share-format { flex-basis: 100%; margin: 0; color: var(--cp-text-soft); font-size: 12px; line-height: 1.7; }
+.ns-share-format strong { color: var(--cp-text); }
 .ns-share-status { margin: 0; color: var(--cp-accent); font-size: 12px; line-height: 1.6; }
 .ns-share-status:empty { margin-top: -14px; }
 .ns-share-switch { margin-left: 10px; padding: 2px; border: 0; background: none; color: var(--cp-link, var(--cp-accent)); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
@@ -74,8 +77,8 @@ html[data-theme="dark"] .ns-share-options li.is-selected label { border-color: v
   .ns-share-toolbar { padding: 12px; }
   .ns-share-order, .ns-share-actions { width: 100%; }
   .ns-share-order .ns-segmented { flex: 1 1 100%; }
-  /* Two equal columns keep every label on one line; with system sharing, the primary 分享图片 takes the full row below. */
+  /* PDF is full width without a native share action; touch devices get two equal rows. */
   .ns-share-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 0; }
-  .ns-share-actions>:nth-child(3) { grid-column: 1 / -1; }
+  .ns-share-actions:not([data-system-share])>:nth-child(3) { grid-column: 1 / -1; }
   .ns-share-options label { padding: 12px; }
 }

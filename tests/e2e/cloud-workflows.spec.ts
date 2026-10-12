@@ -1,6 +1,7 @@
 import { expect, test as base, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import type { Brief, Event, IngestionResult, ReaderSession, ShareDocument, ShareLink, Source } from "../../apps/web/src/types";
+import { inspectSharePdf } from "./share-export-assertions";
 
 const candidate = "http://127.0.0.1:15175";
 const shareId = "c3100000-0000-4000-8000-000000000001";
@@ -257,7 +258,7 @@ test("cloud daily share downloads a local image, publishes nothing and keeps leg
   await screenshot(page, info, "daily-share-ai-first");
 
   // Fluent draws its own focus border and inset shadow; only the shared ring may show (r12 review).
-  for (const name of ["复制文字版", "下载分享图"]) {
+  for (const name of ["复制文字版", "下载分享图", "下载 PDF"]) {
     const button = page.getByRole("button", { name, exact: true });
     const edge = () => button.evaluate(element => { const style = getComputedStyle(element);
       return { border: style.borderTopColor, radius: style.borderTopLeftRadius, shadow: style.boxShadow }; });
@@ -278,8 +279,9 @@ test("cloud daily share downloads a local image, publishes nothing and keeps leg
   expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
   expect(png.readUInt32BE(16)).toBe(1080);
   expect(png.readUInt32BE(20)).toBeGreaterThan(3000);
-  await expect(page.getByRole("status").filter({ hasText: "已下载分享图：10 条新闻，每条附原文链接。" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "已下载分享图：10 条新闻。图片内的文字无法点击。" })).toBeVisible();
   await info.attach("daily-share-download", { body: png, contentType: "image/png" });
+  await expect(page.getByText(/当前不是公共 HTTPS 地址，导出不附门户入口/)).toBeVisible();
 
   await order.getByRole("button", { name: "精选顺序", exact: true }).click();
   await expect(order.getByRole("button", { name: "精选顺序", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -301,6 +303,17 @@ test("cloud daily share downloads a local image, publishes nothing and keeps leg
   expect(text).not.toContain("utm_source");
   expect(text).not.toContain("城市交通数据开放计划发布");
   expect(text).not.toContain(privateTitle);
+  expect(text).not.toContain(candidate);
+  const pdfDownloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载 PDF", exact: true }).click();
+  const pdfDownload = await pdfDownloading;
+  expect(pdfDownload.suggestedFilename()).toBe("NewsScout-今日分享-2026-09-21.pdf");
+  const pdfBytes = await readFile((await pdfDownload.path())!);
+  const expectedUrls = [...text.matchAll(/^原文：(https?:\/\/.+)$/gm)].map(match => match[1]);
+  const inspected = await inspectSharePdf(pdfBytes, expectedUrls);
+  expect(inspected.title).toContain("今日值得分享的 10 条新闻");
+  await info.attach("daily-share-clickable-pdf", { body: pdfBytes, contentType: "application/pdf" });
+  await expect(page.getByRole("status").filter({ hasText: `已下载 PDF：10 条新闻，共 ${inspected.pages} 页。可点击原文链接。` })).toBeVisible();
   // Restoring the defaults removes the button that had focus; keyboard users land on the picker heading.
   await page.getByRole("button", { name: "恢复默认", exact: true }).click();
   await expect(page.getByRole("heading", { level: 2, name: "选择新闻", exact: true })).toBeFocused();
@@ -339,7 +352,7 @@ test("cloud daily share downloads a local image, publishes nothing and keeps leg
 
     const legacy = page.locator("details.ns-share-legacy");
     await legacy.locator("summary").click();
-    await expect(legacy).toContainText("旧版分享链接仍可访问。新的分享图只在本机生成，不会创建公开链接。");
+    await expect(legacy).toContainText("旧版分享链接仍可访问。新的 PDF 和分享图只在本机生成，不会创建公开链接。");
     await expect(legacy.getByRole("link", { name: "打开 ↗", exact: true })).toHaveAttribute("href", `/p/${shareId}`);
     await legacy.getByRole("button", { name: "撤回链接", exact: true }).click();
     expect(owner.requests.filter(request => request.method === "DELETE")).toHaveLength(0);
@@ -387,6 +400,12 @@ test("cloud daily share keeps the reader's edition until they switch to the newl
   // The picks stay on the held edition, and the finished run no longer reads as still generating.
   await expect(page.getByText("来自 9月20日版今日精选 · 共 6 条可选", { exact: true })).toBeVisible();
   await expect(page.getByText("已选 5 / 最多 15 条", { exact: true })).toBeVisible();
+  const heldDownloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载 PDF", exact: true }).click();
+  const heldDownload = await heldDownloading;
+  expect(heldDownload.suggestedFilename()).toBe("NewsScout-今日分享-2026-09-20.pdf");
+  const heldPdf = await inspectSharePdf(await readFile((await heldDownload.path())!), [...heldText.matchAll(/^原文：(https?:\/\/.+)$/gm)].map(match => match[1]));
+  expect(heldPdf.title).toContain("9月20日值得分享的 5 条新闻");
   await notice.getByRole("button", { name: "换成新版", exact: true }).click();
   await expect(page.getByText("来自 9月21日版今日精选 · 共 15 条可选（其中 3 条为补读）", { exact: true })).toBeVisible();
   await expect(page.getByText("已选 10 / 最多 15 条", { exact: true })).toBeVisible();

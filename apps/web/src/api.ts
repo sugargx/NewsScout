@@ -1,4 +1,4 @@
-import type { Brief, BriefHistory, Event, EventState, Exploration, IngestionResult, NewSource, Processing, ProcessingSettings, Provider, ReaderSettings, ReaderStatus, Runtime, Source, SourceCoverage, Topic, SourceWatch, ShareDocument, ShareLink, ReaderSession } from "./types";
+import type { Brief, BriefHistory, Event, EventState, Exploration, IngestionResult, NewSource, Processing, ProcessingSettings, Provider, ReaderSettings, ReaderStatus, Runtime, Source, SourceCoverage, Topic, SourceWatch, ShareDocument, ShareLink, ReaderSession, ReadingPersonalization, ReadingSignal } from "./types";
 
 let csrfToken: string | null = null;
 let sessionUserId: string | null = null;
@@ -99,6 +99,10 @@ async function collect(path: string): Promise<IngestionResult> {
 export const api = {
   session: (signal?: AbortSignal) => request<ReaderSession>("/api/v1/session", { signal }),
   telemetryConsent: (enabled: boolean) => request<{ enabled: boolean }>("/api/v1/me/telemetry-consent", { method: "PUT", body: JSON.stringify({ enabled }) }),
+  readingPersonalization: () => request<ReadingPersonalization>("/api/v1/me/reading-personalization"),
+  setReadingPersonalization: (enabled: boolean) => request<ReadingPersonalization>("/api/v1/me/reading-personalization", { method: "PUT", body: JSON.stringify({ enabled }) }),
+  clearReadingPersonalization: () => request<ReadingPersonalization>("/api/v1/me/reading-personalization", { method: "DELETE" }),
+  readingSignal: (input: ReadingSignal, signal?: AbortSignal) => request<{ recorded: boolean; settings: ReadingPersonalization }>("/api/v1/events/reading-signals", { method: "POST", body: JSON.stringify(input), signal }),
   exportData: () => request<Record<string, unknown>>("/api/v1/me/export", { method: "POST", body: "{}" }),
   telemetry: (events: { name: string; page: string; outcome?: "success" | "failure"; durationMs?: number }[]) =>
     request<{ accepted: number }>("/api/v1/telemetry", { method: "POST", body: JSON.stringify({ events }) }),

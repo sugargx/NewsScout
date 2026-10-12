@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 const routes = new Set([
   "/api/v1/session", "/api/v1/runtime", "/api/v1/me/interests", "/api/v1/me/telemetry-consent", "/api/v1/me/export",
   "/api/v1/events", "/api/v1/events/:id", "/api/v1/events/:id/state", "/api/v1/events/exposures",
+  "/api/v1/me/reading-personalization", "/api/v1/events/reading-signals",
   "/api/v1/explore", "/api/v1/briefs", "/api/v1/briefs/:date", "/api/v1/briefs/:date/generate", "/api/v1/weekly",
   "/api/v1/sources", "/api/v1/sources/coverage", "/api/v1/sources/:id", "/api/v1/sources/:id/refresh",
   "/api/v1/sources/:id/x-posts", "/api/v1/source-watchlist", "/api/v1/admin/ingestion/run", "/api/v1/ingestion-runs/:id",

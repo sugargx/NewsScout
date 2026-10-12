@@ -15,6 +15,7 @@ import { entryText, shareEntry } from "../daily-share";
 import { LoadingStatus, ReaderSkeleton } from "./ReaderLoading";
 import { ReaderButton, ReaderProgress, ReaderTabs } from "./ReaderControls";
 import { useReaderDialog } from "./useReaderDialog";
+import { useReadingSignal } from "./useReadingSignal";
 
 type ReaderPreview=Pick<Event,"title"|"displayTitle"|"summary"|"summaryKind"|"summaryPoints"|"eventType"|"evidence">
   & Partial<Pick<Event,"primaryTopic"|"publishedAt"|"freshnessAt"|"publicationPrecision"|"opened">>;
@@ -38,6 +39,7 @@ export function EventPreviewPane({eventId,onClose,closeLabel,backText="返回列
   const opened=useMutation({mutationFn:(id:string)=>api.eventState(id,{opened:true}),
     onSuccess:event=>{updateReaderState(client,event);callback.current?.(event);}});
   const record=opened.mutate,data=query.data;
+  const readingSignal=useReadingSignal(data,pane);
   const sourceCapabilities=data?sourceReadingCapabilities(data.evidence,data.summary):{hasDistinctBody:false,hasDetailSourceContent:false};
   const hasDistinctSourceContext=sourceCapabilities.hasDistinctBody;
   const hasRichSourceContent=sourceCapabilities.hasDetailSourceContent;
@@ -90,6 +92,7 @@ export function EventPreviewPane({eventId,onClose,closeLabel,backText="返回列
         {deck&&<p className="ns-preview-deck">{deck}</p>}
         {activeEditionNote&&<p className="ns-edition-note">{activeEditionNote}</p>}
         {opened.error&&<ErrorNotice title="浏览进度尚未保存" error={opened.error} retry={()=>record(data.id)}/>}
+        {readingSignal.error&&<ErrorNotice title="阅读兴趣信号尚未保存" error={readingSignal.error} retry={readingSignal.retry}/>}
         {hasRichSourceContent?<section className="ns-preview-section ns-preview-content-switch">
           <ReaderTabs label="详情内容" value={detailView} onChange={setDetailView} options={[{value:"summary",label:"要点"},{value:"source",label:"已收录原文 / 来源内容"}]}>
             {detailView==="summary"?(showSummary?<SummaryContent event={data}/>:<p className="ns-source-note">这篇只保留了来源摘录；请在“已收录原文 / 来源内容”中查看。</p>):sources}

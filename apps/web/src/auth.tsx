@@ -7,11 +7,13 @@ import { Link, useLocation } from "react-router-dom";
 import { api, ApiError, getDocumentReaderId, SessionChangedError, setSessionCsrfToken, suspendSessionRequests } from "./api";
 import { ErrorNotice } from "./components/Feedback";
 import { ReaderButton } from "./components/ReaderControls";
+import { ReadingPersonalizationControls } from "./components/ReadingPersonalizationControls";
+import { acceptReadingPersonalization, isReadingPersonalization } from "./reading-personalization";
 import type { ReaderSession } from "./types";
 import "./auth.css";
 
-const localAccess = { user: null, capabilities: { manageReadingSettings: true }, telemetryConsent: false, identityVerified: true };
-const SessionContext = createContext<Pick<ReaderSession, "capabilities" | "telemetryConsent"> & { user: ReaderSession["user"] | null; identityVerified: boolean }>(localAccess);
+const localAccess = { user: null, capabilities: { manageReadingSettings: true }, telemetryConsent: false, readingPersonalization: null, identityVerified: true };
+const SessionContext = createContext<Pick<ReaderSession, "capabilities" | "telemetryConsent" | "readingPersonalization"> & { user: ReaderSession["user"] | null; identityVerified: boolean }>(localAccess);
 export const useReaderSession = () => useContext(SessionContext);
 
 const verificationNoticeDelay = 500;
@@ -155,6 +157,9 @@ function CloudSession({ children }: { children: ReactNode }) {
         signal.throwIfAborted();
         if (!value.user?.id || !value.user.displayName || !value.csrfToken || typeof value.capabilities?.manageReadingSettings !== "boolean" || typeof value.telemetryConsent !== "boolean") {
           throw new Error("账号会话响应不完整，请重新连接。");
+        }
+        if (value.readingPersonalization != null && !isReadingPersonalization(value.readingPersonalization)) {
+          throw new Error("账号阅读学习设置响应不完整，请重新连接。");
         }
         // One document never adopts another identity's credentials, including for paused mutations.
         setSessionCsrfToken(value.csrfToken, value.user.id);
@@ -319,15 +324,27 @@ export function AccountControls() {
   const trigger = useRef<HTMLButtonElement>(null);
   const cancelTriggerRestore = useRef<(() => void) | null>(null);
   const setDialogOpen = useCallback((next: boolean) => {
+    cancelTriggerRestore.current?.();
+    cancelTriggerRestore.current = null;
     setOpen(next);
     if (!next) {
-      cancelTriggerRestore.current?.();
       cancelTriggerRestore.current = restoreFocusAfterTransition(() => {
         const visibleTrigger = [...document.querySelectorAll<HTMLButtonElement>('.ns-account-controls button[aria-haspopup="dialog"]')]
           .find(element => element.getClientRects().length > 0 && !element.closest("[inert]"));
         return visibleTrigger ?? trigger.current;
       }, modalFocusRestoreDelay, () => { cancelTriggerRestore.current = null; });
     }
+  }, []);
+  useEffect(() => {
+    // New input must outrank the delayed focus restoration of a closed dialog.
+    const cancel = () => { cancelTriggerRestore.current?.(); cancelTriggerRestore.current = null; };
+    document.addEventListener("pointerdown", cancel, true);
+    document.addEventListener("keydown", cancel, true);
+    return () => {
+      cancel();
+      document.removeEventListener("pointerdown", cancel, true);
+      document.removeEventListener("keydown", cancel, true);
+    };
   }, []);
   const consent = useMutation({
     mutationFn: api.telemetryConsent,
@@ -352,6 +369,9 @@ export function AccountControls() {
       <DialogSurface className="ns-account-dialog"><DialogBody>
         <DialogTitle>隐私与使用统计</DialogTitle>
         <DialogContent>
+          {session.readingPersonalization && <ReadingPersonalizationControls value={session.readingPersonalization}
+            onChange={value => acceptReadingPersonalization(client, value)} />}
+          <h3>可选择的使用统计</h3>
           <p>可选择提供去标识化的页面访问和操作类别，帮助改进产品。不会记录搜索词、新闻正文、邮箱、密码或登录令牌。</p>
           <Switch id="ns-telemetry-consent" label="允许可选的使用统计" checked={session.telemetryConsent} disabled={consent.isPending} onChange={(_, data) => consent.mutate(data.checked)} />
           <p>关闭后仍会保留运行和安全日志，以及实现收藏、兴趣和阅读记录所需的账号数据。</p>
@@ -399,6 +419,10 @@ export function PrivacyPage() {
     <p>服务记录请求结果、耗时、采集任务状态和必要的安全事件，用于排错与防止滥用。不把密码、令牌、搜索内容或新闻正文写入 telemetry。</p>
     <h2>可选择的使用统计</h2>
     <p>默认关闭。你可以在“隐私与使用统计”中决定是否提供去标识化的页面类型和操作类别，并随时关闭。这与实现阅读偏好所需的收藏、打开和曝光记录不同。</p>
+    <h2>可选择的阅读兴趣学习</h2>
+    <p>云端账号可在“隐私与使用统计”中单独开启，其他账号默认关闭。这不需要开启使用统计，也不会使用其他人的阅读历史。旧的打开记录不用于补建学习信号。</p>
+    <p>开启后，站内文章在可见、有焦点且未空闲的阅读区累计停留至少20秒，才记录一条弱兴趣信号；这不是读完或喜欢的证明。仅保存文章标识、内容版本、粗粒度入口、前台停留时间、材料主题及服务端记录时间，不跟踪原站浏览或采集页面正文、搜索词。</p>
+    <p>每篇文章30天内最多计一次，每日最多60篇；至少两篇不同文章出现相同主题后才小幅影响本人后续推荐。收藏与“不感兴趣”优先，已保存的精选不会因此重排。信号有效期30天，过期即不再使用，每小时清理过期记录。确认关闭会删除信号；单独清空则保留开关状态。两者都不删除收藏、打开记录或已保存精选。</p>
     <h2>管理你的数据</h2>
     <p>云端预览服务的账号数据在维护者的 Azure 环境中保存，本地运行的数据保存在本机配置的数据库。登录云端后可从“隐私与使用统计”导出自己的数据；导出时生成的私有临时副本在 7 天后自动清理。需要删除账号数据时，请联系服务维护者。</p>
   </main>;

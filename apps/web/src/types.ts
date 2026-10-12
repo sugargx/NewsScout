@@ -52,11 +52,15 @@ export interface ProcessingJob { eventId: string; title: string; status: Summary
 export interface Processing { settings: ProcessingSettings; counts: { pending: number; running: number; failed: number; completed: number }; usage: { used: number; limit: number; resetsAt: string | null }; blockedReason: "disabled" | "demo" | "isolated" | "account" | "model" | "quota" | null; feedCount: number; aiCount: number; jobs: ProcessingJob[] }
 export interface Provider { provider: string; connected: boolean; eligible: boolean; model: string | null; message: string; models: string[]; verifiedAt: string | null; authMode: "local" | "oauth" | "service" | null; accountLogin: string | null; preferredModel: string; oauthConfigured: boolean }
 export interface Runtime { mode: "demo" | "postgres"; timeZone: "Asia/Shanghai"; version: string }
+export interface ReadingPersonalization { enabled: boolean; generation: string | null; signalCount: number }
+export type ReadingSurface = "radar" | "brief" | "reading" | "weekly" | "saved" | "topics" | "article";
+export interface ReadingSignal { eventId: string; contentVersion: number; generation: string; activeMs: number; surface: ReadingSurface }
 export interface ReaderSession {
   user: { id: string; displayName: string };
   capabilities: { manageReadingSettings: boolean };
   csrfToken: string;
   telemetryConsent: boolean;
+  readingPersonalization?: ReadingPersonalization | null;
 }
 export type NotInterestedReason = "topic"|"source"|"old"|"low_value";
 export interface Editorial {policyVersion:string;contentKind:"news"|"release"|"research"|"analysis"|"tutorial"|"discussion"|"question"|"promotion"|"metadata";valueScore:number;reason:string;briefEligible:boolean}

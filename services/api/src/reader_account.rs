@@ -45,6 +45,13 @@ pub fn spawn_retention(pool: sqlx::PgPool) {
             {
                 tracing::error!("analytics retention cleanup failed");
             }
+            if sqlx::query("DELETE FROM reader_reading_signals WHERE recorded_at<now()-interval '30 days'")
+                .execute(&pool)
+                .await
+                .is_err()
+            {
+                tracing::error!("reading-interest retention cleanup failed");
+            }
         }
     });
 }
@@ -167,6 +174,8 @@ pub async fn export(
         ("interests", "SELECT profile AS data FROM interest_profiles WHERE user_id=scoutnews_actor()"),
         ("states", "SELECT to_jsonb(s) AS data FROM user_event_states s WHERE user_id=scoutnews_actor()"),
         ("exposures", "SELECT to_jsonb(s) AS data FROM event_exposures s WHERE user_id=scoutnews_actor()"),
+        ("readingPersonalization", "SELECT to_jsonb(s) AS data FROM reader_personalization s WHERE user_id=scoutnews_actor()"),
+        ("readingSignals", "SELECT to_jsonb(s) AS data FROM reader_reading_signals s WHERE user_id=scoutnews_actor() AND recorded_at>=now()-interval '30 days'"),
         ("shares", "SELECT to_jsonb(s) AS data FROM reader_shares s WHERE owner_user_id=scoutnews_actor()"),
         ("sources", "SELECT jsonb_build_object('id',id,'name',name,'endpoint',endpoint,'adapter',adapter_type,
             'contentType',content_type,'tier',tier,'scheduleMinutes',schedule_minutes,'lifecycleStatus',lifecycle_status,

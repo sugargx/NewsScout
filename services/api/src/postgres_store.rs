@@ -652,7 +652,7 @@ impl PostgresStore {
                 novelty_penalty: row.try_get("novelty_penalty")?,
                 facets: row.try_get("facets")?,
                 source_confirmed: row.try_get("confirmed")?,
-                explanation: "editorial-significance-v1：事件重要性35% + 原文价值20% + 显式兴趣15% + 分类型时效15% + 来源质量10% + 主动反馈5%。重要性按发布者角色（第一方/项目/编辑/播客/论文索引/社区）与内容类型给基础分，明确发布动作、旗舰模型版本和多家独立报道加分，人事动态与补丁/预发布版本减分。时效使用最早来源日期；研究/分析/教程96小时、发布48小时、新闻30小时半衰期，周报168小时。曝光最多减3分、打开最多减6分并衰减；周报不扣重复分。重要性和价值都是保守规则估计，不是AI判断或事实核验。默认不感兴趣仅弱调相似类型内容；过时/低价值不降低主题兴趣。".into(),
+                explanation: "editorial-significance-v1：事件重要性35% + 原文价值20% + 显式兴趣15% + 分类型时效15% + 来源质量10% + 个人反馈5%。重要性按发布者角色（第一方/项目/编辑/播客/论文索引/社区）与内容类型给基础分，明确发布动作、旗舰模型版本和多家独立报道加分，人事动态与补丁/预发布版本减分。时效使用最早来源日期；研究/分析/教程96小时、发布48小时、新闻30小时半衰期，周报168小时。曝光最多减3分、打开最多减6分并衰减；周报不扣重复分。另行开启的阅读兴趣学习从最近30天、最多150篇不同材料中寻找主题重复；至少两篇支持，每篇最多2反馈分、14天半衰期，合计最多提高综合分1分。收藏每篇8反馈分且不重复计入阅读；匹配的不感兴趣优先。重要性和价值都是保守规则估计，不是AI判断或事实核验。默认不感兴趣仅弱调相似类型内容；过时/低价值不降低主题兴趣。".into(),
             }),
         };
         (event.personal_relevance, event.personal_reason) = match interests {
@@ -828,21 +828,16 @@ mod coverage_contract_tests {
     #[test]
     fn applied_editorial_migration_keeps_deployed_bytes() {
         let migrator = sqlx::migrate!("./migrations");
-        let migration = migrator
-            .migrations
-            .iter()
-            .find(|migration| migration.version == 31)
-            .unwrap();
-        let checksum: String = migration
-            .checksum
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        // r17 applied these bytes, including CRLF; normalization breaks startup.
-        assert_eq!(
-            checksum,
-            "02b5b04daa1dd9ecd97c2037c5fff048731ea5acf719bf2fcd6985209183dd8408b3d2ad92d78c899610f8ed1fcf7c39"
-        );
+        // Preserve the frozen release bytes, including migration 31's CRLF.
+        for (version, expected) in [
+            (31, "02b5b04daa1dd9ecd97c2037c5fff048731ea5acf719bf2fcd6985209183dd8408b3d2ad92d78c899610f8ed1fcf7c39"),
+            (32, "2febf642d72cab07635979ca70cc6641086f9a314584b2b9a3a09c4b57472962ad1c341b42554842ad40af56f2b55eb0"),
+            (33, "debaab5d207747ad676835289abc3a18c486aea72f235a3f43098681f88508d061177cdb3b61e9eeafc66fa9e3db77be"),
+        ] {
+            let migration = migrator.migrations.iter().find(|migration| migration.version == version).unwrap();
+            let checksum: String = migration.checksum.iter().map(|byte| format!("{byte:02x}")).collect();
+            assert_eq!(checksum, expected, "release migration {version} changed");
+        }
     }
 
     #[tokio::test]

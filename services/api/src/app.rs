@@ -119,6 +119,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/telemetry", post(crate::reader_account::telemetry))
         .route("/api/v1/me/export", post(crate::reader_account::export))
         .route(
+            "/api/v1/me/reading-personalization",
+            get(crate::reading_personalization::get)
+                .put(crate::reading_personalization::update)
+                .delete(crate::reading_personalization::clear),
+        )
+        .route("/api/v1/events/reading-signals", post(crate::reading_personalization::record))
+        .route(
             "/api/v1/ingestion-runs/{id}",
             get(crate::ingestion_jobs::status),
         )

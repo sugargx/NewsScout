@@ -501,12 +501,18 @@ impl AppState {
 }
 
 pub async fn session(ReaderState(state): ReaderState) -> Result<Json<serde_json::Value>, ApiError> {
+    let reading = if state.auth.cloud() && state.identity.is_some() {
+        Some(crate::reading_personalization::settings(&state.reader_db()?).await?)
+    } else {
+        None
+    };
     match &state.identity {
         Some(identity) => Ok(Json(serde_json::json!({
             "user":{"id":identity.id,"displayName":identity.display_name},
             "csrfToken":state.auth.csrf(identity.id),
             "capabilities":{"manageReadingSettings":false},
-            "telemetryConsent":identity.telemetry_consent
+            "telemetryConsent":identity.telemetry_consent,
+            "readingPersonalization":reading
         }))),
         None => {
             let consent = if let Ok(db) = state.reader_db() {
@@ -521,7 +527,8 @@ pub async fn session(ReaderState(state): ReaderState) -> Result<Json<serde_json:
             };
             Ok(Json(serde_json::json!({
                 "user":{"id":LOCAL_USER_ID,"displayName":"Local reader"},
-                "csrfToken":"","capabilities":{"manageReadingSettings":true},"telemetryConsent":consent
+                "csrfToken":"","capabilities":{"manageReadingSettings":true},"telemetryConsent":consent,
+                "readingPersonalization":reading
             })))
         }
     }

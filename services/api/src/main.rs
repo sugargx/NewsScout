@@ -19,6 +19,7 @@ mod publishing;
 mod reader;
 mod reader_account;
 mod reading_context;
+mod reading_personalization;
 mod reddit_comments;
 mod scoped_db;
 mod source_directory;

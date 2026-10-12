@@ -23,6 +23,7 @@ const CSRF: &str = "isolated-test-csrf-secret-32-bytes-minimum";
 
 mod ingestion_regressions;
 mod reader_performance_regressions;
+mod reading_personalization_regressions;
 mod self_service_regressions;
 
 const CUSTOMER_PROVIDER: &str = "newsscout-account";
@@ -263,6 +264,17 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     );
     migrator.run(&pool).await?;
     legacy.verify_quarantine_before_repair(&pool).await?;
+    migrator.migrations = std::borrow::Cow::Owned(
+        all_migrations.iter().filter(|migration| migration.version <= 32).cloned().collect(),
+    );
+    migrator.run(&pool).await?;
+    let before_reading = reading_personalization_regressions::protected_fingerprints(&pool).await?;
+    migrator.migrations = std::borrow::Cow::Owned(
+        all_migrations.iter().filter(|migration| migration.version <= 33).cloned().collect(),
+    );
+    migrator.run(&pool).await?;
+    assert_eq!(reading_personalization_regressions::protected_fingerprints(&pool).await?,before_reading,
+        "reading migration rewrote existing reader or material data");
     migrator.migrations = all_migrations;
     migrator.run(&pool).await?;
     verify_explicit_role_membership(&pool).await?;
@@ -987,6 +999,7 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     legacy.verify_public_reingestion(&pool, &a, &b).await?;
     ingestion_regressions::verify_effective_source_authorization(&pool, &a, &b).await?;
     reader_performance_regressions::verify_reader_performance(&pool, &a, &b).await?;
+    reading_personalization_regressions::verify(&pool, &app).await?;
     eprintln!(
         "Verified A/B authentication, interests/state/exposures, visible graphs/coverage/briefs, source overrides/registry, shares, exports, consent, durable jobs, realm ingestion, reader performance and local settings preservation."
     );

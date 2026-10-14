@@ -1,7 +1,26 @@
 .ns-summary-content{line-height:1.85;font-size:15px;overflow-wrap:anywhere;min-width:0}
-.ns-summary-points{margin:16px 0;padding-left:22px;display:grid;gap:10px}
+.ns-summary-points{margin:16px 0;padding-left:22px;display:grid;gap:10px;scroll-margin-top:88px}
 .ns-summary-points li{padding-left:5px}.ns-summary-points li::marker{color:var(--cp-accent)}
 .ns-summary-points.ns-summary-compact{margin:8px 0 0;gap:4px;font-size:13px;line-height:1.65}.ns-summary-compact{font-size:13px;line-height:1.65;margin:8px 0 0}
 .ns-summary-limits{margin:20px 0 0!important;padding:14px 18px;background:var(--cp-surface-soft);border-left:2px solid var(--cp-border-strong);font-size:13px}
 .ns-summary-limits ul{margin:8px 0 0;padding-left:18px}
 .ns-summary-excerpt{line-height:1.85;white-space:pre-wrap}
+.ns-summary-visual{margin:16px 0 24px;min-width:0;font-family:"Segoe UI",Aptos,Calibri,-apple-system,BlinkMacSystemFont,sans-serif}
+.ns-summary-visual figcaption{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;font-size:13px;color:var(--cp-text-muted)}
+.ns-summary-visual figcaption strong{font-size:15px;color:var(--cp-text)}
+.ns-summary-visual-badge{margin-left:auto;padding:2px 7px;border:1px solid var(--cp-border);border-radius:4px;font-size:11px;line-height:1.5}
+.ns-summary-visual-image{display:block;width:100%;height:auto;overflow:visible}
+.ns-summary-visual-box{fill:var(--cp-surface-soft);stroke:var(--cp-border)}
+.ns-summary-visual-rule{stroke:var(--cp-accent);stroke-width:2}
+.ns-summary-visual-label{fill:var(--cp-text);font-size:14px;font-weight:600}
+.ns-summary-visual-detail{fill:var(--cp-text);font-size:14px;font-weight:400}
+.ns-summary-visual-reference{fill:var(--cp-text-muted);font-size:11px}
+.ns-summary-visual-note,.ns-summary-visual-unavailable{color:var(--cp-text-muted);font-size:12px;line-height:1.7;margin:10px 0 0}
+.ns-summary-visual-skip{display:block;min-height:44px;padding:6px 0;margin:0 0 8px;border:0;background:none;color:var(--cp-link);font:inherit;font-size:13px;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.ns-summary-visual details{font-size:13px;margin-top:8px}
+.ns-summary-visual summary{cursor:pointer;color:var(--cp-accent);width:fit-content}
+.ns-summary-visual summary:focus-visible,.ns-summary-visual-skip:focus-visible{outline:3px solid var(--cp-accent);outline-offset:4px}
+.ns-summary-visual-evidence{margin:10px 0;padding-left:24px}
+.ns-summary-visual-evidence li+li{margin-top:8px}
+.ns-summary-visual-sources{margin:8px 0 0;color:var(--cp-text-muted)}
+.ns-summary-visual-sources a{color:var(--cp-link);text-decoration:underline;text-underline-offset:2px}

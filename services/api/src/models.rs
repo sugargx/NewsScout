@@ -118,6 +118,8 @@ pub struct Event {
     pub summary_material_limit: Option<String>,
     #[serde(default)]
     pub summary_limitations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_visual: Option<SummaryVisual>,
     #[serde(default)]
     pub not_interested: bool,
     #[serde(default)]
@@ -144,6 +146,8 @@ pub struct CoverageMember {
     pub summary_points: Vec<String>,
     pub summary_material_limit: Option<String>,
     pub summary_limitations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_visual: Option<SummaryVisual>,
     pub summary_model: Option<String>,
     pub summarized_at: Option<DateTime<Utc>>,
     pub evidence: Vec<Evidence>,
@@ -419,6 +423,31 @@ pub struct GeneratedSummary {
     pub limitations: Vec<String>,
     pub importance: String,
     pub evidence_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub visual: Option<SummaryVisual>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SummaryVisual {
+    pub version: u8,
+    pub kind: SummaryVisualKind,
+    pub items: Vec<SummaryVisualItem>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryVisualKind {
+    Overview,
+    Comparison,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SummaryVisualItem {
+    pub label: String,
+    pub detail: String,
+    pub point: usize,
 }
 
 #[derive(Debug, Deserialize)]

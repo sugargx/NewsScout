@@ -668,6 +668,7 @@ fn event(
         summary_points: vec![],
         summary_material_limit: None,
         summary_limitations: vec![],
+        summary_visual: None,
         summary_reasoning_effort: None,
         not_interested: false,
         seen: false,

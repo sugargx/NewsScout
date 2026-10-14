@@ -2383,7 +2383,7 @@ async fn refresh_event(
         importance=$6,
         first_seen_at=$4,updated_at=$5,summary_kind='feed',summary_model=NULL,summarized_at=NULL,
         summary_format_version=0,summary_reasoning_effort=NULL,
-        summary_points='[]',summary_material_limit=NULL,summary_limitations='[]',
+        summary_points='[]',summary_material_limit=NULL,summary_limitations='[]',summary_visual=NULL,
         summary_evidence_ids='[]'::jsonb,content_version=content_version+1 WHERE id=$1"#,
     )
     .bind(event_id)

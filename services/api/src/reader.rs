@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::models::{BriefSection, DailyBrief, Event, Evidence, Topic};
 
-pub const DAILY_SELECTION_RULE: &str = "editorial-significance-v1-ranked-v2";
+pub const DAILY_SELECTION_RULE: &str = "editorial-significance-v1-ranked-v3-t1";
 const ESSENTIAL_COUNT: usize = 5;
 const CATCH_UP_LIMIT: usize = 3;
 const STORY_WINDOW_HOURS: i64 = 96;
@@ -312,6 +312,14 @@ pub fn brief_qualified(event: &Event, now: DateTime<Utc>) -> bool {
         })
 }
 
+pub fn daily_source_qualified(event: &Event) -> bool {
+    !event.evidence.is_empty()
+        && event
+            .evidence
+            .iter()
+            .all(|item| matches!(item.source_tier.as_str(), "T1" | "T1.5"))
+}
+
 fn publishers(event: &Event) -> Vec<String> {
     if !event.editorial_publishers.is_empty() {
         return event.editorial_publishers.clone();
@@ -355,7 +363,7 @@ fn select_edition(
 ) -> DailyBrief {
     let start = now - Duration::days(7);
     let main_start = now - Duration::hours(24);
-    events.retain(|event| brief_qualified(event, now));
+    events.retain(|event| brief_qualified(event, now) && (weekly || daily_source_qualified(event)));
     if weekly {
         for event in &mut events {
             // The SQL weekly mode already has zero repetition. This also makes
@@ -679,6 +687,37 @@ mod tests {
         let policy = event.editorial.as_mut().unwrap();
         policy.source_role = Some(role.into());
         policy.significance = Some(significance);
+    }
+
+    #[tokio::test]
+    async fn daily_source_gate_is_not_a_score_or_a_radar_weekly_ban() {
+        let now = Utc::now();
+        let mut trusted = candidate(now, 2, "primary", "research", 90.0).await;
+        trusted.evidence[0].source_tier = "T1".into();
+        let mut author = candidate(now, 3, "author", "analysis", 90.0).await;
+        author.evidence[0].source_tier = "T1.5".into();
+        let mut secondary = candidate(now, 1, "qbit", "news", 100.0).await;
+        secondary.evidence[0].source_tier = "T2".into();
+        secondary.saved = true;
+        role(&mut secondary, "first_party", 100.0);
+        ranked(&mut secondary, 1000.0);
+        let mut catch_up = candidate(now, 72, "aiera", "analysis", 100.0).await;
+        catch_up.evidence[0].source_tier = "T2".into();
+        ranked(&mut catch_up, 999.0);
+        let items = vec![trusted.clone(), author.clone(), secondary.clone(), catch_up.clone()];
+        assert!(items.iter().all(|event| brief_qualified(event, now)));
+        let daily = select_daily(items.clone(), now, 20, &HashSet::new());
+        assert_eq!(daily.items.len(), 2);
+        assert!(daily.items.iter().all(daily_source_qualified));
+        let weekly = select_weekly(items, now, 20);
+        assert!(weekly.items.iter().any(|event| event.id == secondary.id));
+        assert!(weekly.items.iter().any(|event| event.id == catch_up.id));
+        secondary.evidence.push(trusted.evidence[0].clone());
+        assert!(!daily_source_qualified(&secondary), "a T1 reference cannot launder a T2 article");
+        trusted.evidence[0].source_tier = "unknown".into();
+        assert!(!daily_source_qualified(&trusted));
+        trusted.evidence.clear();
+        assert!(!daily_source_qualified(&trusted));
     }
 
     #[test]

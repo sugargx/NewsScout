@@ -22,6 +22,7 @@ const PROXY: &str = "isolated-test-proxy-secret-32-bytes-minimum";
 const CSRF: &str = "isolated-test-csrf-secret-32-bytes-minimum";
 
 mod ingestion_regressions;
+mod brief_visual_regressions;
 mod reader_performance_regressions;
 mod reading_personalization_regressions;
 mod self_service_regressions;
@@ -275,8 +276,10 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     migrator.run(&pool).await?;
     assert_eq!(reading_personalization_regressions::protected_fingerprints(&pool).await?,before_reading,
         "reading migration rewrote existing reader or material data");
+    let visual_upgrade = brief_visual_regressions::seed_upgrade(&pool).await?;
     migrator.migrations = all_migrations;
     migrator.run(&pool).await?;
+    visual_upgrade.verify_and_cleanup(&pool).await?;
     verify_explicit_role_membership(&pool).await?;
     crate::source_directory::import(&pool).await?;
     sqlx::query("UPDATE interest_profiles SET profile=$1 WHERE user_id='local'")
@@ -998,6 +1001,7 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     );
     legacy.verify_public_reingestion(&pool, &a, &b).await?;
     ingestion_regressions::verify_effective_source_authorization(&pool, &a, &b).await?;
+    brief_visual_regressions::verify(&pool, &app).await?;
     reader_performance_regressions::verify_reader_performance(&pool, &a, &b).await?;
     reading_personalization_regressions::verify(&pool, &app).await?;
     eprintln!(

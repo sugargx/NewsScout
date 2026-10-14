@@ -158,7 +158,11 @@ impl AutomationStore {
                 WHERE j.status='pending' AND j.attempts<3 AND j.next_attempt_at<=now()
                   AND e.status='published' AND (e.summary_kind='feed' OR e.summary_format_version<$3)
                   AND j.format_version=$3 AND j.content_version=e.content_version
-                ORDER BY CASE
+                ORDER BY CASE WHEN EXISTS(
+                  SELECT 1 FROM daily_brief_items bi JOIN daily_briefs b ON b.id=bi.brief_id
+                  WHERE bi.event_id=e.id AND b.status='published'
+                    AND b.local_date=(now() AT TIME ZONE 'Asia/Shanghai')::date
+                ) THEN 0 ELSE 1 END,CASE
                   WHEN EXISTS(SELECT 1 FROM event_evidence ee JOIN content_items ci ON ci.id=ee.content_item_id
                     WHERE ee.event_id=e.id
                     AND ci.published_at>=now()-interval '24 hours' AND ci.published_at<=now()) THEN 0

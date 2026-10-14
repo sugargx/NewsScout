@@ -3,7 +3,7 @@ import type { BriefHistory, BriefSection, Editorial, Event, Evidence, Exploratio
 export type PublicEditorial = Pick<Editorial, "policyVersion" | "contentKind" | "reason">;
 export type PublicArticle = Pick<Event,"id"|"title"|"summary"|"importance"|"primaryTopic"|"topics"|"eventType"|
   "publishedAt"|"freshnessAt"|"publicationPrecision"|"summaryKind"|"summaryModel"|"summaryFormatVersion"|
-  "summaryPoints"|"summaryMaterialLimit"|"summaryLimitations"|"summarizedAt"|"coverage"> & {
+  "summaryPoints"|"summaryMaterialLimit"|"summaryLimitations"|"summaryVisual"|"summarizedAt"|"coverage"> & {
     contentVersion?: Event["contentVersion"];
     displayTitle?: Event["displayTitle"];
     editorial?: PublicEditorial;

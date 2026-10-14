@@ -143,6 +143,8 @@ impl PostgresStore {
                         summary_limitations: serde_json::from_value(
                             row.try_get("summary_limitations")?,
                         )?,
+                        summary_visual: row.try_get::<Option<Value>, _>("summary_visual")?
+                            .map(serde_json::from_value).transpose()?,
                         summary_model: row.try_get("summary_model")?,
                         summarized_at: row.try_get("summarized_at")?,
                         evidence,
@@ -219,6 +221,7 @@ impl PostgresStore {
                 AND s.consecutive_failures=0 AND s.adapter_type<>'github_search')))) AS source_eligible
             FROM events e JOIN reader_editorial_recommendations_for_profile($4,$2,false,$6,$5) r ON r.event_id=e.id
             WHERE e.status='published' AND e.event_type<>'repository'
+              AND reader_daily_source_eligible(e.id)
               AND NOT reader_is_opaque_engineering_release(e.event_type,e.canonical_title)
               AND NOT r.not_interested AND (r.editorial->>'briefEligible')::boolean
               AND NOT EXISTS(SELECT 1 FROM event_evidence old JOIN content_items ci ON ci.id=old.content_item_id
@@ -262,7 +265,7 @@ impl PostgresStore {
         let mut events = self
             .hydrate_events(qualified_rows, false, interests)
             .await?;
-        events.retain(|e| reader::brief_qualified(e, cutoff));
+        events.retain(|e| reader::brief_qualified(e, cutoff) && reader::daily_source_qualified(e));
         reader::sort_candidates(&mut events, cutoff);
         // Enrich before selection so a related repository need not be eligible for a news slot.
         // Only original eligible news dates participate in select_brief_limit's freshness window.
@@ -641,6 +644,8 @@ impl PostgresStore {
             summary_points:serde_json::from_value(row.try_get("summary_points")?)?,
             summary_material_limit:row.try_get("summary_material_limit")?,
             summary_limitations:serde_json::from_value(row.try_get("summary_limitations")?)?,
+            summary_visual:row.try_get::<Option<Value>, _>("summary_visual")?
+                .map(serde_json::from_value).transpose()?,
             not_interested: row.try_get("not_interested")?,
             seen: row.try_get("seen")?,
             opened: row.try_get("opened")?,
@@ -1523,7 +1528,15 @@ impl Store for PostgresStore {
         .await?;
         // Same boundary as the original selection: nothing published after it enters.
         let brief = self.build_brief(cutoff, None).await?;
-        let replaced = !brief.items.is_empty();
+        let has_excluded_source: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM daily_brief_items bi
+             WHERE bi.brief_id=$1 AND NOT reader_daily_source_eligible(bi.event_id))",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        // An empty result cannot preserve a saved edition that violates the new hard gate.
+        let replaced = !brief.items.is_empty() || has_excluded_source;
         if replaced {
             sqlx::query(
                 "UPDATE daily_briefs SET rule_version=$2,generated_at=$3,window_start=$4,sections=$5 WHERE id=$1",
@@ -1813,11 +1826,12 @@ impl Store for PostgresStore {
         let Some(before) = row else {
             return Ok(None);
         };
-        sqlx::query("UPDATE events SET summary=$2,importance=$3,summary_kind='copilot',summary_model=$4,summarized_at=now(),summary_evidence_ids=$5,summary_format_version=$6,summary_reasoning_effort=$7,summary_points=$8,summary_material_limit=$9,summary_limitations=$10,display_title=$11 WHERE id=$1")
+        sqlx::query("UPDATE events SET summary=$2,importance=$3,summary_kind='copilot',summary_model=$4,summarized_at=now(),summary_evidence_ids=$5,summary_format_version=$6,summary_reasoning_effort=$7,summary_points=$8,summary_material_limit=$9,summary_limitations=$10,display_title=$11,summary_visual=$12 WHERE id=$1")
             .bind(id).bind(&summary.summary).bind(&summary.importance).bind(model).bind(serde_json::to_value(&summary.evidence_ids)?)
             .bind(crate::summary::FORMAT_VERSION).bind(reasoning_effort)
             .bind(serde_json::to_value(&summary.points)?).bind(&summary.material_limit)
-            .bind(serde_json::to_value(&summary.limitations)?).bind(&summary.display_title).execute(&mut *tx).await?;
+            .bind(serde_json::to_value(&summary.limitations)?).bind(&summary.display_title)
+            .bind(summary.visual.as_ref().map(serde_json::to_value).transpose()?).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO admin_audits(id,actor,action,target_type,target_id,before_value,after_value,reason) VALUES($1,scoutnews_actor(),'summarize','event',$2,$3,$4,'按用户确认的处理策略生成，基于来源证据摘录')")
             .bind(Uuid::new_v4()).bind(id.to_string())
             .bind(serde_json::json!({"summary":before.try_get::<String,_>("summary")?,"importance":before.try_get::<String,_>("importance")?}))

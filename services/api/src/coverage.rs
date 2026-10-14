@@ -91,6 +91,7 @@ impl Record {
                 summary_points: event.summary_points.clone(),
                 summary_material_limit: event.summary_material_limit.clone(),
                 summary_limitations: event.summary_limitations.clone(),
+                summary_visual: event.summary_visual.clone(),
                 summary_model: event.summary_model.clone(),
                 summarized_at: event.summarized_at,
                 evidence: event.evidence.clone(),

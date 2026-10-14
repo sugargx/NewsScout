@@ -297,6 +297,7 @@ impl EditionStore {
                 WHERE ci.published_at BETWEEN $1 AND $2 AND pending.status IN('pending','running','failed')
               )) f ON f.id=e.id WHERE e.status='published'
                AND (f.editorial->>'briefEligible')::boolean AND f.freshness_at BETWEEN $1 AND $2
+              AND reader_daily_source_eligible(e.id)
               AND (e.summary_kind<>'copilot' OR e.summary_format_version<2)
               AND EXISTS(SELECT 1 FROM event_evidence ee JOIN content_items ci ON ci.id=ee.content_item_id
                 WHERE ee.event_id=e.id AND ci.published_at >= $1 AND ci.published_at <= $2)

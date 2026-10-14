@@ -210,7 +210,7 @@ pub(super) async fn verify(pool: &PgPool, app: &Router) -> anyhow::Result<()> {
     assert_eq!(edition_fingerprint(&db).await?, snapshots);
     assert_eq!(
         crate::reader::DAILY_SELECTION_RULE,
-        "editorial-significance-v1-ranked-v2"
+        "editorial-significance-v1-ranked-v3-t1"
     );
 
     let exported = a.ok("POST", "/api/v1/me/export", json!({})).await;

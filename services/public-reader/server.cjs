@@ -109,6 +109,37 @@ function projectEvidence(source) {
   if (source.readingContext != null) projected.readingContext = projectReadingContext(source.readingContext);
   return projected;
 }
+function literalVisualClause(point, text) {
+  const boundary = character => character === undefined || "，。！？；：,.!?;:".includes(character);
+  let start = point.indexOf(text);
+  while (start >= 0) {
+    if (boundary([...point.slice(0,start).trimEnd()].at(-1))
+      && boundary([...point.slice(start+text.length).trimStart()][0])) return true;
+    start = point.indexOf(text,start+text.length);
+  }
+  return false;
+}
+function projectSummaryVisual(value, points) {
+  value = record(value);
+  if (value.version !== 1 || !["overview", "comparison"].includes(value.kind)
+    || !Array.isArray(points) || !points.every(point => typeof point === "string")
+    || !Array.isArray(value.items) || value.items.length < 2 || value.items.length > 4) {
+    throw new Error("Invalid summary visual");
+  }
+  const details = new Set();
+  const items = value.items.map(item => {
+    item = record(item);
+    if (!Number.isSafeInteger(item.point) || item.point < 1 || item.point > points.length
+      || !boundedText(item.label, 32) || [...item.label].length < 2
+      || !boundedText(item.detail, 96) || [...item.detail].length < 4
+      || /[\u0000-\u001f\u007f-\u009f]/u.test(item.label + item.detail)
+      || !item.detail.includes(item.label) || !literalVisualClause(points[item.point - 1],item.detail)
+      || details.has(item.detail)) throw new Error("Unsubstantiated summary visual");
+    details.add(item.detail);
+    return pick(item, ["label", "detail", "point"]);
+  });
+  return { version: 1, kind: value.kind, items };
+}
 function projectArticle(value) {
   value = record(value);
   if (!uuid.test(value.id) || typeof value.title !== "string" || !Array.isArray(value.evidence)) {
@@ -121,6 +152,7 @@ function projectArticle(value) {
   const article = pick(value, articleFields);
   if (value.displayTitle !== undefined) article.displayTitle = projectDisplayTitle(value.displayTitle);
   if (value.editorial != null) article.editorial = projectEditorial(value.editorial);
+  if (value.summaryVisual != null) article.summaryVisual = projectSummaryVisual(value.summaryVisual, value.summaryPoints);
   article.evidence = value.evidence.map(projectEvidence);
   article.facets = Array.isArray(value.recommendation?.facets)
     ? value.recommendation.facets.filter(facet => typeof facet === "string") : [];
@@ -136,6 +168,7 @@ function projectArticle(value) {
         return projected;
       }) };
       if (member.displayTitle !== undefined) projected.displayTitle = projectDisplayTitle(member.displayTitle);
+      if (member.summaryVisual != null) projected.summaryVisual = projectSummaryVisual(member.summaryVisual, member.summaryPoints);
       return projected;
     });
   }

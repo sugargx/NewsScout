@@ -11,6 +11,10 @@ export interface ReadingContext {
 }
 export interface Evidence { id: string; sourceName: string; sourceTier: string; title: string; url: string; isOfficial: boolean; publishedAt: string | null; originalPublishedAt?: string | null; publicationPrecision?: "day" | "time" | null; collectedAt?: string | null; excerpt: string; readingContext?:ReadingContext|null; technicalBasis?:string|null; aggregation?: {name:string;url:string;originalSource:string;expired?:boolean} }
 export interface SummaryPresentation { points:string[];materialLimit:string|null;limitations:string[] }
+export interface SummaryVisual {
+  version:1;kind:"overview"|"comparison";
+  items:{label:string;detail:string;point:number}[];
+}
 export interface Score { sourceQuality: number; corroboration: number; freshness: number; relevance: number; novelty: number; engagement: number; editorialBoost: number; total: number; explanation: string }
 export type SummaryStatus = "pending" | "running" | "completed" | "failed";
 export interface Recommendation { score: number; freshness: number; affinity: number; noveltyPenalty: number; facets: string[]; sourceConfirmed: boolean; explanation: string; materialPenalty?:number }
@@ -18,6 +22,7 @@ export interface CoverageMember {
   eventId:string;contentVersion:number;title:string;displayTitle?:string|null;eventType:string;publishedAt:string|null;
   publicationPrecision:"day"|"time"|null;summaryKind:Event["summaryKind"];summary:string;
   summaryPoints:string[];summaryMaterialLimit:string|null;summaryLimitations:string[];
+  summaryVisual?:SummaryVisual|null;
   summaryModel:string|null;summarizedAt:string|null;evidence:Evidence[];
   relationship:"lead"|"same_named_topic"|"shared_identifier"|"same_event_evidence"|"release_family"|"archived_material";materialKind:"editorial"|"official"|"community";matchesFilters:boolean;
   releaseTarget?:string|null;releaseVersion?:string|null;
@@ -38,6 +43,7 @@ export interface Event {
   publishedAt?: string | null; freshnessAt?:string|null; publicationPrecision?: "day" | "time" | null; collectedAt?: string | null;
   summaryFormatVersion?: number; summaryReasoningEffort?: string | null;
   summaryPoints?:string[]; summaryMaterialLimit?:string|null; summaryLimitations?:string[];
+  summaryVisual?:SummaryVisual|null;
   evidence: Evidence[]; score: Score; personalRelevance: number; personalReason: string;
   saved: boolean; read: boolean; later: boolean; notInterested: boolean; seen: boolean; opened: boolean;
   recommendation?: Recommendation | null; summaryKind: "feed" | "copilot" | "demo"; summaryModel: string | null;

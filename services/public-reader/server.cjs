@@ -121,7 +121,7 @@ function literalVisualClause(point, text) {
 }
 function projectSummaryVisual(value, points) {
   value = record(value);
-  if (value.version !== 1 || !["overview", "comparison"].includes(value.kind)
+  if (![1, 2].includes(value.version) || !["overview", "comparison", ...(value.version === 2 ? ["flow", "timeline"] : [])].includes(value.kind)
     || !Array.isArray(points) || !points.every(point => typeof point === "string")
     || !Array.isArray(value.items) || value.items.length < 2 || value.items.length > 4) {
     throw new Error("Invalid summary visual");
@@ -138,7 +138,33 @@ function projectSummaryVisual(value, points) {
     details.add(item.detail);
     return pick(item, ["label", "detail", "point"]);
   });
-  return { version: 1, kind: value.kind, items };
+  if (value.kind === "timeline" && items.some((item,index) => {
+    const date = new Date(`${item.label}T00:00:00Z`);
+    return !/^\d{4}-\d{2}-\d{2}$/.test(item.label) || item.label.startsWith("0000")
+      || !Number.isFinite(date.getTime()) || date.toISOString().slice(0,10) !== item.label
+      || index > 0 && item.label <= items[index - 1].label;
+  })) throw new Error("Invalid summary visual timeline");
+  if (value.kind !== "flow") {
+    if (value.basis != null) throw new Error("Unexpected summary visual sequence");
+    return { version: value.version, kind: value.kind, items };
+  }
+  const basis = record(value.basis);
+  if (!Number.isSafeInteger(basis.point) || basis.point < 1 || basis.point > points.length
+    || !boundedText(basis.quote, 600) || [...basis.quote].length < 4
+    || /[\u0000-\u001f\u007f-\u009f]/u.test(basis.quote)
+    || points[basis.point - 1] !== basis.quote) throw new Error("Invalid summary visual sequence evidence");
+  let rest = basis.quote;
+  const labels = new Set();
+  for (const [index, item] of items.entries()) {
+    const start = rest.indexOf(item.label);
+    if (start < 0 || labels.has(item.label)
+      || !(index === 0 ? /首先|先/ : /然后|随后|接着|最后|接下来|再/).test(rest.slice(0,start))) {
+      throw new Error("Unsubstantiated summary visual sequence");
+    }
+    labels.add(item.label);
+    rest = rest.slice(start + item.label.length);
+  }
+  return { version: value.version, kind: value.kind, items, basis: pick(basis, ["point", "quote"]) };
 }
 function projectArticle(value) {
   value = record(value);

@@ -11,10 +11,12 @@ export interface ReadingContext {
 }
 export interface Evidence { id: string; sourceName: string; sourceTier: string; title: string; url: string; isOfficial: boolean; publishedAt: string | null; originalPublishedAt?: string | null; publicationPrecision?: "day" | "time" | null; collectedAt?: string | null; excerpt: string; readingContext?:ReadingContext|null; technicalBasis?:string|null; aggregation?: {name:string;url:string;originalSource:string;expired?:boolean} }
 export interface SummaryPresentation { points:string[];materialLimit:string|null;limitations:string[] }
-export interface SummaryVisual {
-  version:1;kind:"overview"|"comparison";
-  items:{label:string;detail:string;point:number}[];
-}
+export interface SummaryVisualItem {label:string;detail:string;point:number}
+export type SummaryVisual = {items:SummaryVisualItem[]} & (
+  {version:1|2;kind:"overview"|"comparison";basis?:null}
+  | {version:2;kind:"timeline";basis?:null}
+  | {version:2;kind:"flow";basis:{point:number;quote:string}}
+);
 export interface Score { sourceQuality: number; corroboration: number; freshness: number; relevance: number; novelty: number; engagement: number; editorialBoost: number; total: number; explanation: string }
 export type SummaryStatus = "pending" | "running" | "completed" | "failed";
 export interface Recommendation { score: number; freshness: number; affinity: number; noveltyPenalty: number; facets: string[]; sourceConfirmed: boolean; explanation: string; materialPenalty?:number }

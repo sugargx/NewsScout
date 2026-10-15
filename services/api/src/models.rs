@@ -433,6 +433,8 @@ pub struct SummaryVisual {
     pub version: u8,
     pub kind: SummaryVisualKind,
     pub items: Vec<SummaryVisualItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis: Option<SummaryVisualBasis>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -440,6 +442,15 @@ pub struct SummaryVisual {
 pub enum SummaryVisualKind {
     Overview,
     Comparison,
+    Flow,
+    Timeline,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SummaryVisualBasis {
+    pub point: usize,
+    pub quote: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

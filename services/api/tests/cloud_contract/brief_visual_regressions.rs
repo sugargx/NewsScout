@@ -189,6 +189,30 @@ pub(super) async fn verify(pool: &PgPool, app: &Router) -> anyhow::Result<()> {
     assert_eq!(detail["summaryPoints"], serde_json::to_value(&saved.summary_points)?);
     let roundtrip: Event = serde_json::from_value(serde_json::to_value(&saved)?)?;
     assert_eq!(serde_json::to_value(roundtrip.summary_visual)?, expected, "snapshots retain the exact diagram");
+    for (points, visual) in [
+        (json!(["系统先检索材料，再生成回答；此顺序不代表效果提升。",
+            "检索材料仅使用公开文档。","生成回答须保留来源。"]),
+         json!({"version":2,"kind":"flow","items":[
+            {"label":"检索材料","detail":"检索材料仅使用公开文档","point":2},
+            {"label":"生成回答","detail":"生成回答须保留来源","point":3}
+         ],"basis":{"point":1,"quote":"系统先检索材料，再生成回答；此顺序不代表效果提升。"}})),
+        (json!(["2026-10-01发布方公布预览。","2026-10-15发布方更新使用说明。"]),
+         json!({"version":2,"kind":"timeline","items":[
+            {"label":"2026-10-01","detail":"2026-10-01发布方公布预览","point":1},
+            {"label":"2026-10-15","detail":"2026-10-15发布方更新使用说明","point":2}
+         ]})),
+    ] {
+        let generated = crate::summary::parse_output(&json!({"points":points,
+            "materialLimit":null,"limitations":[],"importance":"",
+            "evidenceIds":[event.evidence[0].id],"visual":visual}).to_string(), &event)?;
+        let saved = writer.save_summary(primary, generated, "gpt-5.6-terra", event.content_version, Some("low"))
+            .await?.expect("saved version 2 visual");
+        assert_eq!(saved.summary_format_version, 4, "visual version does not reset summary jobs");
+        let detail = reader.ok("GET", &format!("/api/v1/events/{primary}"), Value::Null).await;
+        assert_eq!(detail["summaryVisual"], visual, "API must retain version 2 and sequence evidence");
+        let snapshot: Event = serde_json::from_value(serde_json::to_value(saved)?)?;
+        assert_eq!(serde_json::to_value(snapshot.summary_visual)?, visual);
+    }
     let before_stale: Value = sqlx::query_scalar("SELECT to_jsonb(e) FROM events e WHERE id=$1")
         .bind(primary).fetch_one(pool).await?;
     assert!(writer.save_summary(primary,crate::summary::parse_output(&output,&event)?,

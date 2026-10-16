@@ -24,9 +24,11 @@ export function CoverageBundle({ event, onOpen, snapshot = false, expanded = fal
   const materialCount=matchingOnly||allowedEventIds?scopedMembers.length:bundle.materialCount;
   const family = bundle.relation === "release_family";
   const archive = bundle.relation === "archived_materials";
-  return <details className={`cp-coverage${family ? " cp-release-family" : ""}${archive ? " cp-archived-materials" : ""}`} data-coverage-key={bundle.key} open={expanded || undefined} onToggle={event=>onExpandedChange?.(event.currentTarget.open)}>
-    <summary><strong>{archive ? `历史版 · ${materialCount} 篇独立文章` : `${materialCount} ${family ? "个更新" : "份相关材料"}`}</strong><span>{archive ? bundle.topic : family ? "查看各目标与版本" : "查看来源与标题"}</span></summary>
+  const batch = bundle.relation === "bulk_publication";
+  return <details className={`cp-coverage${family ? " cp-release-family" : ""}${archive ? " cp-archived-materials" : ""}${batch ? " cp-bulk-publication" : ""}`} data-coverage-key={bundle.key} open={expanded || undefined} onToggle={event=>onExpandedChange?.(event.currentTarget.open)}>
+    <summary><strong>{archive ? `历史版 · ${materialCount} 篇独立文章` : `${materialCount} ${family ? "个更新" : batch ? "个同模板条目" : "份相关材料"}`}</strong><span>{archive ? bundle.topic : family ? "查看各目标与版本" : batch ? "同一账号同期批量发布，逐条查看" : "查看来源与标题"}</span></summary>
     <div className="cp-coverage-body">
+      {batch&&<p className="cp-coverage-note">同一账号在 {bundle.windowHours} 小时内批量发布的同模板条目，合并为一条展示；它们不构成多来源互证，也不提升热度。</p>}
       {(matchingOnly||allowedEventIds)&&<p className="cp-coverage-note">仅列出符合当前筛选的材料。</p>}
       {snapshot && <p className="cp-coverage-note">这是保存版本中收录的材料。</p>}
       {hiddenCount > 0 && <p className="cp-coverage-note">已隐藏 {hiddenCount} 个不感兴趣的条目。</p>}

@@ -21,6 +21,7 @@ test.beforeEach(()=>{
 function seed() {
   const tag=`radar-fixture-${randomUUID()}`;
   const company=randomUUID(),author=randomUUID(),officialSource=randomUUID(),authorSource=randomUUID();
+  const account=randomUUID(),accountSource=randomUUID();
   const definitions=[
     {key:"launch",title:"Introducing Claude Haiku 5.5",url:"https://www.anthropic.com/claude-haiku-5-5",hours:23,type:"blog",official:true},
     {key:"analysis",title:"Claude Haiku 5.5",url:"https://simonwillison.net/2026/Oct/7/claude-haiku-5-5/",hours:3,type:"blog",official:false},
@@ -31,18 +32,25 @@ function seed() {
     {key:"comparison",title:"Claude Haiku 5.5 vs GPT-6 Luna",url:"https://writer.example/comparison",hours:6,type:"blog",official:false},
     {key:"fork",title:"dotnet-1.24.0",url:"https://github.com/another-owner/agent-framework/releases/tag/dotnet-1.24.0",hours:7,type:"release",official:true,notes:"Independent fork change (#9500)."},
     {key:"previous-python",title:"python-1.20.0",url:"https://github.com/microsoft/agent-framework/releases/tag/python-1.20.0",hours:27,type:"release",official:true,notes:"Previous Python change (#8600)."},
+    {key:"batch-first",title:"Ukraine-Territorial-MCP/UA61020150010042611",url:"https://github.com/Ukraine-Territorial-MCP/UA61020150010042611",
+      hours:2,type:"repository",official:false,community:true,notes:"Шумськ | Ukraine Territorial MCP Server | KATOTTG UA61020150010042611."},
+    {key:"batch-second",title:"Ukraine-Territorial-MCP/UA61020130010032621",url:"https://github.com/Ukraine-Territorial-MCP/UA61020130010032621",
+      hours:3,type:"repository",official:false,community:true,notes:"Почаїв | Ukraine Territorial MCP Server | KATOTTG UA61020130010032621."},
   ];
   const fixtures=definitions.map(item=>({...item,id:randomUUID(),content:randomUUID(),
-    source:item.official?officialSource:authorSource}));
+    source:item.community?accountSource:item.official?officialSource:authorSource}));
   databaseQuery(`BEGIN;
     INSERT INTO publishers(id,name,entity_type) VALUES
       (${literal(company)},${literal(`${tag} official`)},'company'),
-      (${literal(author)},${literal(`${tag} author`)},'author');
+      (${literal(author)},${literal(`${tag} author`)},'author'),
+      (${literal(account)},${literal(`${tag} account`)},'community');
     INSERT INTO sources(id,publisher_id,name,endpoint,content_type,adapter_type,tier,lifecycle_status,last_success_at)
     VALUES (${literal(officialSource)},${literal(company)},${literal(`${tag} official`)},
         ${literal(`https://${tag}.example/official`)},'blog','rss','T1','stable',now()),
       (${literal(authorSource)},${literal(author)},${literal(`${tag} author`)},
-        ${literal(`https://${tag}.example/author`)},'blog','rss','T2','stable',now());
+        ${literal(`https://${tag}.example/author`)},'blog','rss','T2','stable',now()),
+      (${literal(accountSource)},${literal(account)},${literal(`${tag} candidates`)},
+        ${literal(`https://${tag}.example/candidates`)},'repository','github_search','T2','stable',now());
     INSERT INTO events(id,canonical_title,summary,importance,primary_topic,event_type,
       first_seen_at,updated_at,summary_kind,summary_format_version,summary_points,summary_model,content_version)
     VALUES ${fixtures.map(item=>`(${literal(item.id)},${literal(item.title)},
@@ -57,16 +65,17 @@ function seed() {
         sourceMetadata:{datePrecision:item.key==="launch"?"day":"time"},
       }))}::jsonb)`).join(",")};
     INSERT INTO event_evidence(event_id,content_item_id,is_official)
-      VALUES ${fixtures.map(item=>`(${literal(item.id)},${literal(item.content)},true)`).join(",")};
+      VALUES ${fixtures.map(item=>`(${literal(item.id)},${literal(item.content)},${item.community?"false":"true"})`).join(",")};
     COMMIT;`);
   const ids=fixtures.map(item=>literal(item.id)).join(",");
-  return {tag,fixtures,officialSource,authorSource,cleanup:()=>{
+  const sources=[officialSource,authorSource,accountSource].map(literal).join(",");
+  return {tag,fixtures,officialSource,authorSource,accountSource,cleanup:()=>{
     databaseQuery(`DELETE FROM user_event_states WHERE event_id IN(${ids});
       DELETE FROM event_evidence WHERE event_id IN(${ids});
       DELETE FROM events WHERE id IN(${ids});
-      DELETE FROM content_items WHERE source_id IN(${literal(officialSource)},${literal(authorSource)});
-      DELETE FROM sources WHERE id IN(${literal(officialSource)},${literal(authorSource)});
-      DELETE FROM publishers WHERE id IN(${literal(company)},${literal(author)});`);
+      DELETE FROM content_items WHERE source_id IN(${sources});
+      DELETE FROM sources WHERE id IN(${sources});
+      DELETE FROM publishers WHERE id IN(${literal(company)},${literal(author)},${literal(account)});`);
   }};
 }
 
@@ -93,16 +102,26 @@ test("radar grouping joins launch commentary and language releases across databa
   const before=preserved(),fixture=seed();
   const byKey=new Map(fixture.fixtures.map(item=>[item.key,item]));
   const launch=byKey.get("launch")!,analysis=byKey.get("analysis")!,python=byKey.get("python")!,dotnet=byKey.get("dotnet")!;
+  const batchFirst=byKey.get("batch-first")!,batchSecond=byKey.get("batch-second")!;
   const parameters={q:fixture.tag,hours:"0",sort:"newest",asOf:new Date().toISOString(),limit:"100",includeEngineering:"true"};
   try {
     const originals=await events(request,parameters);
-    expect(originals.items).toHaveLength(9);
+    expect(originals.items).toHaveLength(11);
     const grouped=await events(request,{...parameters,coverage:"true"});
-    expect(grouped.items).toHaveLength(7);
-    expect(grouped.returnedEventCount).toBe(9);
+    expect(grouped.items).toHaveLength(8);
+    expect(grouped.returnedEventCount).toBe(11);
     expect(grouped.items.flatMap(members).sort()).toEqual(originals.items.map(item=>item.id).sort());
     const announcement=grouped.items.find(item=>members(item).includes(launch.id))!;
     const releases=grouped.items.find(item=>members(item).includes(python.id))!;
+    const batch=grouped.items.find(item=>members(item).includes(batchFirst.id))!;
+    expect(batch.coverage?.relation).toBe("bulk_publication");
+    expect(batch.coverage?.method).toBe("bulk-template-v1");
+    expect(batch.coverage?.windowHours).toBe(24);
+    expect(batch.coverage?.topic).toBe("Ukraine-Territorial-MCP：同一账号同期发布的 2 个同模板条目");
+    expect(members(batch).sort()).toEqual([batchFirst.id,batchSecond.id].sort());
+    expect(batch.coverage?.popularityBoost).toBe(0);
+    expect(batch.coverage?.newsMaterialCount).toBe(0);
+    expect(batch.coverage?.communityMaterialCount).toBe(2);
     expect(announcement.coverage?.method).toBe("official-announcement-v1");
     expect(announcement.coverage?.topic).toBe("Introducing Claude Haiku 5.5");
     expect(members(announcement).sort()).toEqual([launch.id,analysis.id].sort());
@@ -129,7 +148,7 @@ test("radar grouping joins launch commentary and language releases across databa
       paged.push(...result.items.map(item=>item.id));
       if(result.nextOffset===null)break;
       expect(result.nextOffset).toBe(offset+1);
-      expect(offset).toBeLessThan(9);
+      expect(offset).toBeLessThan(11);
     }
     expect(paged).toEqual(grouped.items.map(item=>item.id));
     const recommended=await events(request,{...parameters,coverage:"true",sort:"recommended"});
@@ -141,16 +160,23 @@ test("radar grouping joins launch commentary and language releases across databa
     expect(pythonOnly.items).toHaveLength(1);
     expect(pythonOnly.items[0].coverage).toBeUndefined();
     for(const [id,expected] of [[launch.id,[launch.id,analysis.id]],[analysis.id,[launch.id,analysis.id]],
-      [python.id,[python.id,dotnet.id]],[dotnet.id,[python.id,dotnet.id]]] as const) {
+      [python.id,[python.id,dotnet.id]],[dotnet.id,[python.id,dotnet.id]],
+      [batchFirst.id,[batchFirst.id,batchSecond.id]],[batchSecond.id,[batchFirst.id,batchSecond.id]]] as const) {
       const result=await detail(request,id);
       expect(members(result).sort()).toEqual([...expected].sort());
       expect(result.coverage!.members.find(member=>member.eventId===id)?.matchesFilters).toBe(true);
     }
 
     await page.goto(`/radar?q=${encodeURIComponent(fixture.tag)}&hours=0&sort=newest&includeEngineering=true`);
-    await expect(page.locator("article[data-event-id]")).toHaveCount(7);
+    await expect(page.locator("article[data-event-id]")).toHaveCount(8);
     const announcementRow=page.locator(`article[data-event-id="${announcement.id}"]`);
     const releaseRow=page.locator(`article[data-event-id="${releases.id}"]`);
+    const batchRow=page.locator(`article[data-event-id="${batch.id}"]`);
+    await expect(batchRow.getByRole("heading",{name:batch.coverage!.topic,exact:true})).toBeVisible();
+    await batchRow.locator(".cp-coverage > summary").click();
+    await expect(batchRow.locator("[data-coverage-member]")).toHaveCount(2);
+    for(const item of [batchFirst,batchSecond])
+      await expect(batchRow.getByRole("button",{name:item.title,exact:true})).toBeVisible();
     await expect(announcementRow.getByRole("heading",{name:announcement.coverage!.topic,exact:true})).toBeVisible();
     await announcementRow.locator(".cp-coverage > summary").click();
     await expect(announcementRow.locator("[data-coverage-member]")).toHaveCount(2);
@@ -182,7 +208,7 @@ test("radar grouping joins launch commentary and language releases across databa
       const publicPage=await events(request,{...parameters,limit:"40",interests:"agents:100"},`http://127.0.0.1:${address.port}`,"/beta/api/events");
       expect(publicPage.items.flatMap(members).sort()).toEqual(originals.items.map(item=>item.id).sort());
       expect(publicPage.items.filter(item=>item.coverage).map(item=>item.coverage!.method).sort())
-        .toEqual(["official-announcement-v1","project-release-window-v1"]);
+        .toEqual(["bulk-template-v1","official-announcement-v1","project-release-window-v1"]);
     } finally {
       await new Promise<void>((done,reject)=>{
         server.close((error?:Error)=>error?reject(error):done());

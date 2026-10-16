@@ -85,7 +85,7 @@ export function updateReaderState(client:QueryClient,event:Event) {
     if(!updated.coverage?.members.some(member=>member.eventId===event.id))return updated;
     const members=updated.coverage.members.map(member=>
       member.eventId===event.id?{...member,hidden:event.notInterested}:member);
-    return {...updated,notInterested:grouped&&["release_family","same_event_evidence"].includes(updated.coverage.relation)
+    return {...updated,notInterested:grouped&&["release_family","same_event_evidence","bulk_publication"].includes(updated.coverage.relation)
       ?members.every(member=>member.hidden):updated.notInterested,coverage:{...updated.coverage,members}};
   };
   const patchGroup=(item:Event)=>patch(item,true);

@@ -147,6 +147,8 @@ npm.cmd run test:e2e:live
 
 组件发布分组使用 Rust 的 `coverage::tests` 与隔离启动器的 `-TestPattern 'component release groups'`。`release-families.spec.ts` 不再依赖实时 RSS 永远保留某几个旧版本：第一项创建明确标为合成的九条组件材料，覆盖三个分组、CLI/SDK/Provider 身份、过滤、分页、访客读取和独立隐藏/撤销，结束后清理；scoped npm 用例按截图形态创建四条 `@modelcontextprotocol/*@2.2.0`，让各包引用不同变更编号，断言API只返回一组、官方来源数为1、热度为0，页面展开保留server/core/codemod/client四个目标与版本；最后一项只读恢复语料中的2026年9月18日实际版本，并采集1440/1024/768/390的列表布局（r10 已移除卡片视图，旧记录中的卡片截图不再生成）。
 
+同账号批量条目收拢由 Rust 的 `coverage::bulk::tests`（账号路径、公共集合前缀、编号模板）、`coverage::tests` 的正反用例（同组一行且热度为0、输入顺序无关、换账号/换用词/换站点/短编号/社区前缀/含官方材料/超24小时均不合并）与隔离启动器的 `-TestPattern 'radar grouping'` 覆盖。该 spec 另创建两条明确标为合成的 GitHub 搜索候选仓库，断言API只返回一组、`bulk-template-v1`、窗口24小时、互证与热度为零、两条详情互相包含，并在页面上展开出两个成员标题，结束后清理。这些用例不证明线上已出现该形态的批量账号。
+
 真实语料截图需要 `-DatabaseBackup`，且备份必须确实包含该批 Mem0 发布；没有对应版本应更新回放语料，而不是在线补抓或伪造为真实新闻。合成截图以 `synthetic-` 命名，真实恢复材料以 `retained-` 命名。Rust 反例覆盖非官方/fork、不同项目或改动、错误标签、同组件连续版本、日期精度、24小时跨度、无引用桥接、排序变化下批次稳定，以及旧 `v1` 快照标题不被改写。
 
 ## 7. 截图、比较与结果保留

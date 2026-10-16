@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::models::{CoverageBundle, CoverageMember, Event};
 
 mod announcement;
+mod bulk;
 mod release_family;
 
 pub const WINDOW_HOURS: i64 = 168;
@@ -26,12 +27,14 @@ pub struct Record {
     event_references: BTreeSet<String>,
     release: Option<release_family::Release>,
     announcement: Option<announcement::Announcement>,
+    batch: Option<bulk::Batch>,
 }
 
 impl Record {
     pub fn new(mut member: CoverageMember, sources: Vec<SourceIdentity>) -> Self {
         let release = release_family::parse(&member);
         let announcement = announcement::parse(&member, &sources);
+        let batch = bulk::parse(&member, &sources);
         member.release_target = release.as_ref().map(|r| r.target.clone());
         member.release_version = release.as_ref().map(|r| r.version.clone());
         // Artifact references stay separate from official announcement identities;
@@ -54,6 +57,7 @@ impl Record {
             event_references,
             release,
             announcement,
+            batch,
         }
     }
 
@@ -165,9 +169,11 @@ pub(crate) fn event_reference(value: &str) -> Option<String> {
 /// Cheap candidate discovery only; grouping still verifies an official anchor
 /// or immutable artifact before collapsing any records.
 pub(crate) fn candidate_reference(title: &str, url: &str) -> Option<String> {
-    event_reference(url).or_else(|| {
-        announcement::subject(title).map(|subject| format!("announcement-subject:{subject}"))
-    })
+    event_reference(url)
+        .or_else(|| {
+            announcement::subject(title).map(|subject| format!("announcement-subject:{subject}"))
+        })
+        .or_else(|| bulk::candidate(title, url))
 }
 
 fn source_title(record: &Record) -> String {
@@ -235,6 +241,17 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
                 .map(move |record| (record.member.event_id, index))
         })
         .collect();
+    let batch_cohorts = bulk::cohorts(records, cutoff);
+    let batch_membership: HashMap<_, _> = batch_cohorts
+        .iter()
+        .enumerate()
+        .flat_map(|(index, cohort)| {
+            cohort
+                .members
+                .iter()
+                .map(move |record| (record.member.event_id, index))
+        })
+        .collect();
     let announcement_cohorts = announcement::cohorts(records, cutoff);
     let announcement_membership: HashMap<_, _> = announcement_cohorts
         .iter()
@@ -266,12 +283,6 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
                 bundle: None,
             });
             continue;
-        };
-        let is_release = lead.release.is_some();
-        let window_hours = if is_release {
-            release_family::WINDOW_HOURS
-        } else {
-            WINDOW_HOURS
         };
         let mut choices: Vec<(String, String, Vec<&Record>, String, String)> =
             if let Some(release) = &lead.release {
@@ -327,6 +338,30 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
                     })
                     .collect()
             };
+        // Weakest identity last: a batch only explains items that no release,
+        // announcement or exact upstream event already accounts for.
+        if choices.is_empty() {
+            if let Some(cohort) = batch_membership.get(id).map(|index| &batch_cohorts[*index]) {
+                let members: Vec<_> = cohort
+                    .members
+                    .iter()
+                    .copied()
+                    .filter(|record| {
+                        record.member.event_id == *id
+                            || !assigned.contains(&record.member.event_id)
+                    })
+                    .collect();
+                if members.len() > 1 {
+                    choices.push((
+                        cohort.key.clone(),
+                        cohort.label.clone(),
+                        members,
+                        "bulk_publication".into(),
+                        "bulk-template-v1".into(),
+                    ));
+                }
+            }
+        }
         choices.sort_by(|a, b| b.2.len().cmp(&a.2.len()).then(a.0.cmp(&b.0)));
         let Some((key, label, mut members, relation, method)) = choices.into_iter().next() else {
             assigned.insert(*id);
@@ -335,6 +370,11 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
                 bundle: None,
             });
             continue;
+        };
+        let window_hours = match relation.as_str() {
+            "release_family" => release_family::WINDOW_HOURS,
+            "bulk_publication" => bulk::WINDOW_HOURS,
+            _ => WINDOW_HOURS,
         };
         members.sort_by(|a, b| {
             (a.member.event_id != *id)
@@ -435,6 +475,8 @@ pub fn apply(event: &mut Event, bundle: Option<CoverageBundle>) {
                 }
             } else if bundle.method=="official-announcement-v1" {
                 " 原始标题中的完整模型版本主体一致，并有唯一官方发布作为依据；公告与解读合并展示，保留各自内容，不表示观点已获互证。".into()
+            } else if bundle.relation=="bulk_publication" {
+                format!(" 同一账号24小时内批量发布的{}个同模板条目按一组展示；各条目保留自己的标题与内容，不表示同一事件或多来源互证，也不增加热度。",bundle.members.len())
             } else if event.editorial.is_some() {
                 " 精确上游事件引用一致，按一组展示；独立覆盖已在5%上限内计分，分组不再叠加热度。".into()
             } else { format!(
@@ -476,6 +518,7 @@ fn bundle_is_current_or_archived(bundle: &CoverageBundle) -> bool {
             | ("release_family", "project-release-window-v1")
             | ("same_event_evidence", "exact-event-reference-v1")
             | ("same_event_evidence", "official-announcement-v1")
+            | ("bulk_publication", "bulk-template-v1")
             | ("archived_materials", "archived-materials-v1")
     )
 }
@@ -617,6 +660,134 @@ mod tests {
         assert_eq!(result[0].evidence.len(), original.evidence.len());
         assert_eq!(result[0].summary, original.summary);
         assert_eq!(result[0].content_version, original.content_version);
+    }
+
+    async fn batch_fixtures() -> (Vec<Event>, DateTime<Utc>) {
+        let (mut events, now) = fixtures().await;
+        events.truncate(2);
+        for (index, event) in events.iter_mut().enumerate() {
+            let name = format!("Ukraine-Territorial-MCP/UA6102015001004261{index}");
+            event.event_type = "repository".into();
+            event.title = name.clone();
+            event.freshness_at = Some(now - Duration::minutes(index as i64));
+            event.published_at = event.freshness_at;
+            event.evidence.truncate(1);
+            for evidence in &mut event.evidence {
+                evidence.title = name.clone();
+                evidence.url = format!("https://github.com/{name}");
+                evidence.original_published_at = event.freshness_at;
+            }
+        }
+        (events, now)
+    }
+
+    #[tokio::test]
+    async fn one_accounts_templated_batch_becomes_a_single_row_without_popularity() {
+        let (events, now) = batch_fixtures().await;
+        let members: BTreeSet<_> = events.iter().map(|event| event.id).collect();
+        let result = rollup_events(events.clone(), now);
+        assert_eq!(result.len(), 1);
+        let bundle = result[0].coverage.as_ref().unwrap();
+        assert_eq!(bundle.relation, "bulk_publication");
+        assert_eq!(bundle.method, "bulk-template-v1");
+        assert_eq!(bundle.window_hours, bulk::WINDOW_HOURS);
+        assert_eq!(bundle.popularity_boost, 0.0);
+        assert_eq!(bundle.news_material_count, 0);
+        assert_eq!(bundle.community_material_count, 2);
+        assert!(bundle.topic.contains("Ukraine-Territorial-MCP"), "{}", bundle.topic);
+        assert_eq!(bundle.members[0].relationship, "lead");
+        assert_eq!(bundle.members[1].relationship, "bulk_publication");
+        // Each item keeps its own title and material; nothing is merged away.
+        assert_eq!(
+            bundle
+                .members
+                .iter()
+                .map(|member| member.event_id)
+                .collect::<BTreeSet<_>>(),
+            members
+        );
+        assert!(bundle.members.iter().all(|member| member.title.starts_with(
+            "Ukraine-Territorial-MCP/UA"
+        )));
+        let reversed = rollup_events(events.into_iter().rev().collect(), now);
+        assert_eq!(reversed.len(), 1);
+        assert_eq!(
+            reversed[0]
+                .coverage
+                .as_ref()
+                .unwrap()
+                .members
+                .iter()
+                .map(|member| member.event_id)
+                .collect::<BTreeSet<_>>(),
+            members
+        );
+    }
+
+    #[tokio::test]
+    async fn batches_need_one_account_a_shared_template_and_community_material() {
+        let (events, now) = batch_fixtures().await;
+        assert_eq!(rollup_events(events.clone(), now).len(), 1);
+        let retitled = |mut events: Vec<Event>, title: &str, url: &str| {
+            events[1].title = title.into();
+            events[1].evidence[0].title = title.into();
+            events[1].evidence[0].url = url.into();
+            events
+        };
+        for (case, pair) in [
+            (
+                "another account",
+                retitled(
+                    events.clone(),
+                    "Other-Territorial-MCP/UA61020130010032621",
+                    "https://github.com/Other-Territorial-MCP/UA61020130010032621",
+                ),
+            ),
+            (
+                "another template",
+                retitled(
+                    events.clone(),
+                    "Ukraine-Territorial-MCP/katottg-61020130010032621",
+                    "https://github.com/Ukraine-Territorial-MCP/katottg-61020130010032621",
+                ),
+            ),
+            (
+                "another host",
+                retitled(
+                    events.clone(),
+                    "Ukraine-Territorial-MCP/UA61020130010032621",
+                    "https://gitlab.example/Ukraine-Territorial-MCP/UA61020130010032621",
+                ),
+            ),
+        ] {
+            assert_eq!(rollup_events(pair, now).len(), 2, "{case}");
+        }
+        let mut versions = events.clone();
+        for (event, name) in versions.iter_mut().zip(["openai/gpt-4", "openai/gpt-5"]) {
+            event.title = name.into();
+            event.evidence[0].title = name.into();
+            event.evidence[0].url = format!("https://github.com/{name}");
+        }
+        assert_eq!(rollup_events(versions, now).len(), 2);
+        let mut community_prefix = events.clone();
+        for (event, path) in community_prefix
+            .iter_mut()
+            .zip(["1ab2cd3", "1ab2cd4"])
+        {
+            event.evidence[0].url =
+                format!("https://www.reddit.com/r/LocalLLaMA/comments/{path}/ua61020150010042611/");
+        }
+        assert_eq!(rollup_events(community_prefix, now).len(), 2);
+        let mut editorial = events.clone();
+        editorial[1].event_type = "blog".into();
+        editorial[1].evidence[0].is_official = true;
+        editorial[1].evidence[0].source_tier = "T1".into();
+        assert_eq!(rollup_events(editorial, now).len(), 2);
+        let mut older = events.clone();
+        older[1].freshness_at = Some(now - Duration::hours(bulk::WINDOW_HOURS) - Duration::minutes(1));
+        older[1].published_at = older[1].freshness_at;
+        older[1].evidence[0].original_published_at = older[1].freshness_at;
+        assert_eq!(rollup_events(older, now).len(), 2);
     }
 
     #[tokio::test]

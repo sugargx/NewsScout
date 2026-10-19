@@ -6,7 +6,23 @@
 
 本仓库公开，ACR登录服务器和应用地址只保存在私有记录 `tmp\azure-preview-20260920`（不入库），文中分别写作 `<ACR>` 和 `<应用FQDN>`。
 
-**最新发布（2026-10-19）：r25已部署，Ready revision为 `newsscout--0000025`，Single/min=max=1，schema由34升至35。** ACR `ck10` 成功，唯一tag为 `preview-20261019-r25-candidate-173921`，镜像digest为 `sha256:12b1edfa365b0b6ba53c05c8529f7fdcaa640b638eed57020c26734a4729ebc3`，来自干净工作树的已推送提交 `bc01494`。184项生产输入冻结并核对：相对r24只新增迁移 `0035_ai_infra_sources.sql`，另改 `services\api\src\reader.rs` 一处主题别名，无删除。
+**最新发布（2026-10-19）：r26已部署，Ready revision为 `newsscout--0000026`，Single/min=max=1，schema由35升至36。** ACR `ck11` 成功，唯一tag为 `preview-20261019-r26-candidate-190145`，镜像digest为 `sha256:54ad2551c1aed83576c573d3ac8fe04688e4951a0f5af8b8d5393e1884481569`，来自干净工作树的已推送提交 `4cc4f80`。185项生产输入冻结并核对：相对r25只新增迁移 `0036_ai_infra_topic_label.sql`，另改 `services\api\src\reader.rs` 一处别名；35份既有迁移（含r25的0035）字节逐一核对一致。
+
+迁移0036把阅读分类名统一为 `AI Infra`，并为缺少 `ai-infra` 的兴趣档案补一条（权重50、长期兴趣、启用）。**只补这一个新主题**：既有条目、权重、开关与自定义项逐字节不变，档案数不增不减，用户自己删掉的公共主题不会回来。19:14:59确认r25实际0副本，19:16:29确认r26健康，约90秒为观察到的维护区间。
+
+| 范围 | r26结果与证据边界 |
+| --- | --- |
+| 配置及权限 | 仅修改image与 `SCOUTNEWS_RELEASE_ID`；认证、secret引用、身份、网络、资源、Terra/low/5000和学习设置保持 |
+| 读者数据守卫 | 原整表指纹会把有意的补档误报为改写，已改为逐条断言：档案数不变、既有条目逐字节保留、新增条目必须是启用中的公共主题并使用新读者的同一默认值 |
+| 实际数据 | **本轮未做云端数据库探针**；迁移正确性由全新库上通过的隔离云端契约与线上启动迁移成功佐证 |
+| 前门与资源 | `/health` 200且ready；匿名 `session`、`reading-personalization` 与 `events?coverage=true` 均401；40份部署资源与本地构建逐字节一致（本次未改前端源码） |
+| 回退 | r25镜像仍可服务schema36，本次未使用；**迁移本身不回退** |
+
+证据在 `tmp\ai-infra-label-20261019`，私有交接为 `tmp\azure-preview-20260920\release-r26-20261019.json`、`runtime-parameters-r26.json`，r25状态备份为 `release-status-r25-20261019.json`。
+
+### 2026-10-19：r25记录（历史）
+
+**r25当日部署为Ready `newsscout--0000025`，Single/min=max=1，schema35，现已由r26替代。** ACR `ck10` 成功，唯一tag为 `preview-20261019-r25-candidate-173921`，镜像digest为 `sha256:12b1edfa365b0b6ba53c05c8529f7fdcaa640b638eed57020c26734a4729ebc3`，来自干净工作树的已推送提交 `bc01494`。184项生产输入冻结并核对：相对r24只新增迁移 `0035_ai_infra_sources.sql`，另改 `services\api\src\reader.rs` 一处主题别名，无删除。
 
 **迁移0035是本预览首次在r23之后再次变更schema，为纯增量**：新增一个 `ai-infra` 主题节点、替换 `news_topic_alias` / `news_facets` / `reader_is_opaque_engineering_release` 三个读取期函数、登记12个发布者与16个来源。不改写或删除任何既有来源、事件、摘要、快照与阅读状态；34份既有迁移字节在构建输入中逐一核对一致。18:28:44确认r24实际0副本，18:29:48确认r25健康，约64秒为观察到的维护区间。
 

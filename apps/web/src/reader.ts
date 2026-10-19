@@ -47,6 +47,18 @@ export function processingBlocker(reason: Processing["blockedReason"]): string {
   }
 }
 
+/// Deployment mode and limits are fixed for the running build, so every surface
+/// shares one read instead of refetching the same configuration while navigating.
+export function useRuntime() {
+  return useQuery({
+    queryKey: ["runtime"],
+    queryFn: api.runtime,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
 export function useProcessing() {
   const client = useQueryClient();
   const query = useQuery({

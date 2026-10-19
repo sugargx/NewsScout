@@ -12,6 +12,14 @@ let upstream: Server;
 let external: Server;
 let base: string;
 let externalUrl: string;
+const themeBootstrap = `
+      (() => {
+        const param = new URLSearchParams(window.location.search).get("clawpilotTheme");
+        const theme =
+          param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    `;
 const browserRequests: { method?: string; url?: string; headers: IncomingHttpHeaders }[] = [];
 const forwarded: IncomingHttpHeaders[] = [];
 const externalRequests: IncomingHttpHeaders[] = [];
@@ -29,7 +37,8 @@ test.beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "newsscout-origin-test-"));
   const site = join(directory, "site");
   await mkdir(site);
-  await writeFile(join(site, "index.html"), "<!doctype html><html><body>Origin contract fixture</body></html>");
+  // Mirrors the real document: the theme must be applied before first paint.
+  await writeFile(join(site, "index.html"), `<!doctype html><html><head><script>${themeBootstrap}</script></head><body>Origin contract fixture</body></html>`);
   upstream = createServer(async (request, response) => {
     for await (const _ of request) { /* Drain the controlled fixture body. */ }
     forwarded.push(request.headers);
@@ -61,6 +70,24 @@ test.afterAll(async () => {
   if (directory) await rm(directory, { recursive: true });
 });
 
+test("first-paint theme setup runs under the unchanged script-src policy",async({page})=>{
+  const errors:string[]=[];
+  page.on("console",message=>{if(message.type()==="error")errors.push(message.text());});
+  page.on("pageerror",error=>errors.push(error.message));
+  await page.emulateMedia({colorScheme:"dark"});
+  const response=await page.goto(base+"/");
+  const policy=String(response?.headers()["content-security-policy"]);
+  const scriptSrc=policy.split(";").map(part=>part.trim()).find(part=>part.startsWith("script-src"))??"";
+  expect(scriptSrc).toMatch(/^script-src 'self' 'sha256-[A-Za-z0-9+/=]+'$/);
+  // Scripts stay hash-pinned; only the pre-existing style directive allows inline.
+  expect(scriptSrc).not.toContain("unsafe-inline");
+  // The document must already be dark before React runs; a blocked script would leave it unset.
+  expect(await page.evaluate(()=>document.documentElement.dataset.theme)).toBe("dark");
+  await page.emulateMedia({colorScheme:"light"});
+  await page.goto(base+"/radar");
+  expect(await page.evaluate(()=>document.documentElement.dataset.theme)).toBe("light");
+  expect(errors.filter(text=>/content security policy/i.test(text))).toEqual([]);
+});
 test("private browser POSTs retain Origin and CSRF without disclosing the page URL", async ({ page, context }) => {
   await context.addCookies([{ name: "AppServiceAuthSession", value: "controlled-cookie", url: base }]);
   const documentUrl = base + "/radar?private=controlled-referrer-sentinel";

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { DEFAULT_SUMMARY_MODEL, formatDate, invalidateReader, processingBlocker, summaryModel } from "../reader";
+import { DEFAULT_SUMMARY_MODEL, formatDate, invalidateReader, processingBlocker, summaryModel, useRuntime } from "../reader";
 import { useStyles } from "../styles";
 import type { Processing, SummaryStatus } from "../types";
 import { ErrorNotice, Notice } from "./Feedback";
@@ -11,7 +11,7 @@ import { ErrorNotice, Notice } from "./Feedback";
 export function SummaryAction({ eventId, summaryStatus, processing }: { eventId: string; summaryStatus?: SummaryStatus | null; processing?: Processing }) {
   const styles = useStyles(), client = useQueryClient();
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providers });
-  const runtime = useQuery({ queryKey: ["runtime"], queryFn: api.runtime });
+  const runtime = useRuntime();
   const [selectedModel, setSelectedModel] = useState("");
   const provider = providers.data?.items.find(item => item.provider === "github-copilot");
   const models = provider?.models ?? [];

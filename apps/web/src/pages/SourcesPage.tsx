@@ -8,7 +8,7 @@ import { FormField, Toggle } from "../components/FormControls";
 import { PageHeader } from "../components/PageHeader";
 import { ReaderButton, ReaderTabs } from "../components/ReaderControls";
 import { LoadingStatus } from "../components/ReaderLoading";
-import { formatDate, httpsUrl, invalidateIngestion } from "../reader";
+import { formatDate, httpsUrl, invalidateIngestion, useRuntime } from "../reader";
 import type { IngestionResult, NewSource, Source } from "../types";
 import { watchPlatforms, watchStatuses, watchStatus, watchStatusLabel } from "../source-watchlist";
 import "../tool-pages.css";
@@ -236,7 +236,7 @@ export function SourcesPage() {
   const query = useQuery({ queryKey: ["sources"], queryFn: api.sources });
   const coverage = useQuery({ queryKey: ["source-coverage"], queryFn: api.sourceCoverage });
   const watchlist = useQuery({ queryKey: ["source-watchlist"], queryFn: api.sourceWatchlist });
-  const runtime = useQuery({ queryKey: ["runtime"], queryFn: api.runtime });
+  const runtime = useRuntime();
   const refresh = useMutation({ mutationFn: api.refreshSources, onSuccess: () => invalidateIngestion(client), onError: () => { void invalidateIngestion(client); } });
   const readOnly = runtime.data?.mode !== "postgres" || !!runtime.error;
   const sources = query.data?.items ?? [];

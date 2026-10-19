@@ -8,7 +8,7 @@ import { PageHeader } from "../components/PageHeader";
 import { ProcessingSettings } from "../components/ProcessingSettings";
 import { ReaderButton } from "../components/ReaderControls";
 import { LoadingStatus } from "../components/ReaderLoading";
-import { formatDate, useProcessing } from "../reader";
+import { formatDate, useProcessing, useRuntime } from "../reader";
 import type { Provider, ReaderSettings, ReaderStatus } from "../types";
 import "../tool-pages.css";
 
@@ -75,7 +75,7 @@ function providerState(provider: Provider) {
 export function SettingsPage() {
   const client = useQueryClient();
   const query = useQuery({ queryKey: ["providers"], queryFn: api.providers });
-  const runtime = useQuery({ queryKey: ["runtime"], queryFn: api.runtime });
+  const runtime = useRuntime();
   const processing = useProcessing();
   const invalidate = () => Promise.all(["providers", "processing"].map(key => client.invalidateQueries({ queryKey: [key] })));
   const connectLocal = useMutation({ mutationFn: api.connectLocalCopilot, onSettled: invalidate });

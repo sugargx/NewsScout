@@ -2,8 +2,7 @@ import { BookmarkRegular, BookOpenRegular, CalendarRegular, HomeRegular, Options
 import { Outlet, useLocation } from "react-router-dom";
 import { Badge } from "@fluentui/react-components";
 import { Suspense } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "../api";
+import { useRuntime } from "../reader";
 import { AccountControls, useReaderSession } from "../auth";
 import { ErrorNotice, Notice } from "./Feedback";
 import { FeedbackUndo } from "./FeedbackUndo";
@@ -38,7 +37,7 @@ export function Layout() {
   const { pathname } = useLocation();
   const { capabilities } = useReaderSession();
   const visibleTools = toolLinks.filter(({ to }) => to !== "/settings" || capabilities.manageReadingSettings);
-  const runtime = useQuery({ queryKey: ["runtime"], queryFn: api.runtime });
+  const runtime = useRuntime();
   return <QuickInterestProvider><ReaderShell
     navigation={<ReaderNavigation label="主导航" items={readingLinks.map(({ to, label, icon: Icon }) => ({ key: to, href: to, label, shortLabel: label, icon: <Icon/> }))}/>}
     tools={<ReaderNavigation label="工具"

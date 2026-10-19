@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { resolve, sep, extname, join } from "node:path";
@@ -73,13 +74,22 @@ class RequestError extends Error {
 function errorCode(error: unknown): string {
   return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "internal_error";
 }
-function secureHeaders(response: ServerResponse) {
+/// Hash the exact inline scripts of the served document so first-paint setup runs
+/// without relaxing the policy. Nothing else may execute inline.
+function inlineScriptHashes(html: string): string {
+  return [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
+    .filter(match => match[1].trim())
+    .map(match => `'sha256-${createHash("sha256").update(match[1]).digest("base64")}'`)
+    .join(" ");
+}
+
+function secureHeaders(response: ServerResponse, scriptHashes: string) {
   response.setHeader("Cache-Control", "no-store");
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Frame-Options", "DENY");
   response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  response.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'${scriptHashes ? ` ${scriptHashes}` : ""}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
 }
 function json(response: ServerResponse, status: number, value: unknown) {
   response.removeHeader("Content-Encoding");
@@ -119,6 +129,7 @@ export async function createCloudServer(options: CloudHostOptions) {
   const index = source.replace(/<html\b([^>]*)>/i, (_, attributes: string) =>
     `<html${attributes.replace(/\sdata-(?:deployment|public-reader)\s*=\s*["'][^"']*["']/gi, "")} data-deployment="azure">`);
   const indexVariant = await staticVariant(Buffer.from(index, "utf8"), true);
+  const scriptHashes = inlineScriptHashes(index);
   const assets = new Map<string, Promise<StaticVariant>>();
   const asset = (file: string, size: number, modified: number) => {
     const key = `${file}\0${size}\0${modified}`;
@@ -141,7 +152,7 @@ export async function createCloudServer(options: CloudHostOptions) {
     .catch(() => undefined);
 
   async function handle(request: IncomingMessage, response: ServerResponse) {
-    secureHeaders(response);
+    secureHeaders(response, scriptHashes);
     if (!request.url?.startsWith("/") || request.url.startsWith("//")) throw new RequestError(400, "请求地址无效。");
     const url = new URL(request.url, "http://localhost");
     if (url.pathname === "/health") {

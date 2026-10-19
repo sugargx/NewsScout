@@ -97,7 +97,7 @@ export function RadarPage({ savedOnly = false }: { savedOnly?: boolean }) {
       {!query.isLoading && !query.error && !items.length && (savedOnly
         ? <EmptyState icon={<BookmarkRegular/>} title={library==="saved"?"还没有收藏":"没有标记为不感兴趣的内容"}>{library==="saved"?"在文章列表或阅读器中点击收藏，稍后从这里继续。":"标记为不感兴趣的内容会出现在这里，可随时撤销。"}</EmptyState>
         : <EmptyState icon={<SearchRegular/>} title="没有符合条件的内容" actions={<ReaderButton onClick={reset}>清除筛选</ReaderButton>}>清除搜索或放宽筛选条件；不会用旧新闻伪装今日更新。</EmptyState>)}
-      {query.hasNextPage && <div className="ns-load-more"><ReaderButton disabled={query.isFetching} onClick={()=>void query.fetchNextPage()}>{query.isFetchingNextPage?"正在加载…":"加载更多"}</ReaderButton></div>}
+      {query.hasNextPage && <div className="ns-load-more"><ReaderButton disabled={query.isFetchingNextPage} onClick={()=>void query.fetchNextPage()}>{query.isFetchingNextPage?"正在加载…":"加载更多"}</ReaderButton></div>}
     </>}
     </div>
   </div>;

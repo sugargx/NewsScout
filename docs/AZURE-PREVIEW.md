@@ -6,7 +6,24 @@
 
 本仓库公开，ACR登录服务器和应用地址只保存在私有记录 `tmp\azure-preview-20260920`（不入库），文中分别写作 `<ACR>` 和 `<应用FQDN>`。
 
-**最新发布（2026-10-16）：r24已部署，Ready revision为 `newsscout--0000024`，Single/min=max=1，实际仍为schema34。** ACR `cky` 成功，唯一tag为 `preview-20261016-r24-candidate-175436`，镜像digest为 `sha256:ef6a3aec170096d98f51cf8296a686e497aed54825f90e619be894384c27c14b`，来自干净工作树的已推送提交 `4d14c1c`。183项生产输入冻结并核对：相对r23只新增 `services\api\src\coverage\bulk.rs`，另有4个文件改动，无删除。
+**最新发布（2026-10-19）：r25已部署，Ready revision为 `newsscout--0000025`，Single/min=max=1，schema由34升至35。** ACR `ck10` 成功，唯一tag为 `preview-20261019-r25-candidate-173921`，镜像digest为 `sha256:12b1edfa365b0b6ba53c05c8529f7fdcaa640b638eed57020c26734a4729ebc3`，来自干净工作树的已推送提交 `bc01494`。184项生产输入冻结并核对：相对r24只新增迁移 `0035_ai_infra_sources.sql`，另改 `services\api\src\reader.rs` 一处主题别名，无删除。
+
+**迁移0035是本预览首次在r23之后再次变更schema，为纯增量**：新增一个 `ai-infra` 主题节点、替换 `news_topic_alias` / `news_facets` / `reader_is_opaque_engineering_release` 三个读取期函数、登记12个发布者与16个来源。不改写或删除任何既有来源、事件、摘要、快照与阅读状态；34份既有迁移字节在构建输入中逐一核对一致。18:28:44确认r24实际0副本，18:29:48确认r25健康，约64秒为观察到的维护区间。
+
+| 范围 | r25结果与证据边界 |
+| --- | --- |
+| 配置及权限 | 仅修改image与 `SCOUTNEWS_RELEASE_ID`；认证、secret引用、身份、网络、资源、Terra/low/5000和学习设置保持 |
+| 实际数据 | **本轮未做云端数据库探针**。迁移正确性由全新库上通过的隔离云端契约（按序应用全部35份迁移并在已有数据上验证增量）与线上启动迁移成功佐证，不得据此宣称已现场核对保护指纹 |
+| 前门与资源 | `/health` 200且ready；匿名 `session`、`reading-personalization` 与 `events?coverage=true` 均401；40份部署资源SHA-256与本次提交的本地构建逐字节一致（本次未改前端源码） |
+| 目录登记 | 16条来源与新主题的登记、分类与「开发构建」过滤由隔离契约断言，**未在云端读回目录，也未观察到这些来源的实际采集或摘要结果** |
+| 额度影响 | 共享每日模型额度上限未改；订阅面变大后，发布标签类条目会占用更多额度 |
+| 回退 | 迁移只做增量且新分类函数可被旧代码直接使用，r24镜像仍是有效回退目标，本次未使用；**迁移本身不回退** |
+
+证据在 `tmp\ai-infra-20261019`，私有交接为 `tmp\azure-preview-20260920\release-r25-20261019.json`、`runtime-parameters-r25.json`，r24状态备份为 `release-status-r24-20261019.json`。
+
+### 2026-10-16：r24记录（历史）
+
+**r24当日部署为Ready `newsscout--0000024`，Single/min=max=1，schema34，现已由r25替代。** ACR `cky` 成功，唯一tag为 `preview-20261016-r24-candidate-175436`，镜像digest为 `sha256:ef6a3aec170096d98f51cf8296a686e497aed54825f90e619be894384c27c14b`，来自干净工作树的已推送提交 `4d14c1c`。183项生产输入冻结并核对：相对r23只新增 `services\api\src\coverage\bulk.rs`，另有4个文件改动，无删除。
 
 本次新增同账号模板化批量条目的阅读收拢（`bulk-template-v1`）。**未新增迁移、未改存储格式、提示词或排序权重**，34份迁移校验和在构建输入中逐一核对一致。18:09:10确认r23实际0副本，18:10:36确认r24健康，随后完成Single/唯一1副本、运行不变量与AuthConfig核对；约86秒为“旧副本已零至新健康”的观察区间，不是零停机。
 

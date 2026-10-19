@@ -6,7 +6,23 @@
 
 本仓库公开，ACR登录服务器和应用地址只保存在私有记录 `tmp\azure-preview-20260920`（不入库），文中分别写作 `<ACR>` 和 `<应用FQDN>`。
 
-**最新发布（2026-10-19）：r26已部署，Ready revision为 `newsscout--0000026`，Single/min=max=1，schema由35升至36。** ACR `ck11` 成功，唯一tag为 `preview-20261019-r26-candidate-190145`，镜像digest为 `sha256:54ad2551c1aed83576c573d3ac8fe04688e4951a0f5af8b8d5393e1884481569`，来自干净工作树的已推送提交 `4cc4f80`。185项生产输入冻结并核对：相对r25只新增迁移 `0036_ai_infra_topic_label.sql`，另改 `services\api\src\reader.rs` 一处别名；35份既有迁移（含r25的0035）字节逐一核对一致。
+**最新发布（2026-10-19）：r27已部署，Ready revision为 `newsscout--0000027`，Single/min=max=1，仍为schema36且无迁移。** ACR `ck12` 成功，唯一tag为 `preview-20261019-r27-candidate-220658`，镜像digest为 `sha256:9a15c2e5093ff44d14f83cb727e20abbb67fcd007a0f4120d6f95831ae1656f5`，来自干净工作树的已推送提交 `6865b84`。185项输入冻结：8个文件改动、无新增无删除，36份已应用迁移字节逐一核对一致。
+
+本次为门户复查后的四项修复。其中**云端深色模式此前始终失效**：首屏主题初始化是 `index.html` 的内联脚本，而 cloud-host 的 `script-src 'self'` 不含任何 hash，必然被拦截——此前记录的「390 深色实际显示浅色、每档 1 次内联脚本 CSP 拒绝」即此因。现由 cloud-host 启动时对所服务文档的内联脚本计算 sha256 并写入 `script-src`，与公开阅读器既有做法一致，不放宽 CSP 也不新增阻塞请求。22:22:04确认r26实际0副本，22:23:38确认r27健康，约94秒为观察到的维护区间。
+
+| 范围 | r27结果与证据边界 |
+| --- | --- |
+| 配置及权限 | 仅修改image与 `SCOUTNEWS_RELEASE_ID`；认证、secret引用、身份、网络、资源、Terra/low/5000和学习设置保持 |
+| 文档策略 | 部署后直接断言线上 `script-src` 恰为 `'self'` 加一个 sha256 且不含 `unsafe-inline`；这是深色模式恢复的线上证据，不是对视觉效果的验收 |
+| 前门与资源 | `/health` 200且ready；匿名 `session`、`reading-personalization` 与 `events?coverage=true` 均401；41份部署资源与本地构建逐字节一致（较r26多1份，来自拆出的框架分包），两个框架分包确认已投放 |
+| 实际数据 | 无迁移、无数据路径改动，**未做云端数据库探针**；36份迁移字节在构建输入中核对 |
+| 回退 | 仅前端包与文档CSP头变化，r26镜像可直接回退且无需数据库动作，本次未使用 |
+
+证据在 `tmp\portal-refine-20261019`，私有交接为 `tmp\azure-preview-20260920\release-r27-20261019.json`、`runtime-parameters-r27.json`，r26状态备份为 `release-status-r26-20261019.json`。
+
+### 2026-10-19：r26记录（历史）
+
+**r26当日部署为Ready `newsscout--0000026`，Single/min=max=1，schema36，现已由r27替代。** ACR `ck11` 成功，唯一tag为 `preview-20261019-r26-candidate-190145`，镜像digest为 `sha256:54ad2551c1aed83576c573d3ac8fe04688e4951a0f5af8b8d5393e1884481569`，来自干净工作树的已推送提交 `4cc4f80`。185项生产输入冻结并核对：相对r25只新增迁移 `0036_ai_infra_topic_label.sql`，另改 `services\api\src\reader.rs` 一处别名；35份既有迁移（含r25的0035）字节逐一核对一致。
 
 迁移0036把阅读分类名统一为 `AI Infra`，并为缺少 `ai-infra` 的兴趣档案补一条（权重50、长期兴趣、启用）。**只补这一个新主题**：既有条目、权重、开关与自定义项逐字节不变，档案数不增不减，用户自己删掉的公共主题不会回来。19:14:59确认r25实际0副本，19:16:29确认r26健康，约90秒为观察到的维护区间。
 

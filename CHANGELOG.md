@@ -2,6 +2,14 @@
 
 本文件记录 ScoutNews 的已实现变更与文档范围，不是实时运行状态。当前包版本为 `0.2.0`；以下日期不代表新增 Git tag、包版本或完成整个 V0。
 
+## 2026-10-19：AI Infra 信源与主题
+
+- 新增 `AI Infra` 主题与 `AI 基础设施` 分类：覆盖推理服务、训练并行、算子与编译、集群调度这一层。规则刻意不匹配裸 `gpu`/`nvidia`，硬件产品新闻仍归「芯片与硬件」，不被吸走。
+- 登记16个实际拨测过的直接来源：PyTorch Blog、NVIDIA Developer Blog、Meta Engineering、The Chip Letter、Interconnects、arXiv `cs.DC`，以及 vLLM、SGLang、TensorRT-LLM、PyTorch、DeepSpeed、Ray、Triton、CUTLASS、llama.cpp、JAX 的发布 Atom。每条都记录抓取当天的真实首条标题作为样本，不编造。
+- 未收录 SemiAnalysis（公开 feed 基本只给摘要，正文付费）与 Chip Huyen（最新一篇停在2025-01），避免把付费墙或停更源当作可订阅信源。
+- 上游标签源同时发布 CI、nightly 和构建计数（`viable/strict/1792399349`、`b11727`、`nightly-last-green: …`）。扩展「开发构建」判定覆盖这些机器标签，默认不进精选与雷达，打开“包含开发构建”仍可查看；`v0.32.1rc0`、`Ray-2.59.0`、`CUTLASS 4.8.0` 等具名版本不受影响。
+- 新增迁移0035，只做增量：新主题节点、三个分类函数的替换和目录登记，不改已有来源、事件、摘要、快照与阅读状态；没有回填或重跑历史。
+
 ## 2026-10-16：同账号批量条目收拢
 
 - 复查阅读端聚类与排序后补上缺口：此前只有精确上游事件引用、唯一官方依据的版本公告和官方发布家族三种强身份能分组，同一账号按编号批量产出的条目只能逐条占位，雷达中因此出现几乎相同的相邻行。

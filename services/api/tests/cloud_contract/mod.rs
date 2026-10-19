@@ -21,6 +21,7 @@ const ORIGIN: &str = "https://cloud.example.com";
 const PROXY: &str = "isolated-test-proxy-secret-32-bytes-minimum";
 const CSRF: &str = "isolated-test-csrf-secret-32-bytes-minimum";
 
+mod ai_infra_regressions;
 mod ingestion_regressions;
 mod brief_visual_regressions;
 mod reader_performance_regressions;
@@ -281,6 +282,7 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     migrator.run(&pool).await?;
     visual_upgrade.verify_and_cleanup(&pool).await?;
     verify_explicit_role_membership(&pool).await?;
+    ai_infra_regressions::verify_ai_infra_catalog(&pool).await?;
     crate::source_directory::import(&pool).await?;
     sqlx::query("UPDATE interest_profiles SET profile=$1 WHERE user_id='local'")
         .bind(json!({"topics":[{"id":"local","label":"LOCAL_OWNER_SENTINEL","group":"local","context":"work","weight":99,"enabled":true}]}))

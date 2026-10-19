@@ -7,10 +7,18 @@ pub(super) struct VisualUpgrade {
     events: Vec<Uuid>,
     brief: Uuid,
     protected: Vec<(String, String)>,
+    captured_at: chrono::DateTime<Utc>,
+    registered_before: i64,
     unfinished: Vec<(Uuid, Value)>,
 }
 
-async fn protected_migration_data(pool: &PgPool) -> anyhow::Result<Vec<(String, String)>> {
+/// Rows that already existed must stay byte-identical. A later migration may still
+/// register new catalog entries, so `sources` is fingerprinted over the existing
+/// rows only and growth is asserted separately.
+async fn protected_migration_data(
+    pool: &PgPool,
+    captured_at: chrono::DateTime<Utc>,
+) -> anyhow::Result<Vec<(String, String)>> {
     let mut fingerprints = Vec::new();
     for table in [
         "app_users", "app_settings", "interest_profiles", "user_event_states", "event_exposures",
@@ -18,9 +26,15 @@ async fn protected_migration_data(pool: &PgPool) -> anyhow::Result<Vec<(String, 
         "events", "content_items", "reader_personalization", "reader_reading_signals",
     ] {
         let value = if table == "events" { "(to_jsonb(t)-'summary_visual')" } else { "to_jsonb(t)" };
-        let fingerprint: String = sqlx::query_scalar(&format!(
-            "SELECT md5(COALESCE(string_agg({value}::text,E'\\n' ORDER BY {value}::text),'')) FROM {table} t"
-        )).fetch_one(pool).await?;
+        let scope = if table == "sources" { "WHERE t.created_at<=$1" } else { "" };
+        let sql = format!(
+            "SELECT md5(COALESCE(string_agg({value}::text,E'\\n' ORDER BY {value}::text),'')) FROM {table} t {scope}"
+        );
+        let fingerprint: String = if table == "sources" {
+            sqlx::query_scalar(&sql).bind(captured_at).fetch_one(pool).await?
+        } else {
+            sqlx::query_scalar(&sql).fetch_one(pool).await?
+        };
         fingerprints.push((table.to_owned(), fingerprint));
     }
     Ok(fingerprints)
@@ -85,13 +99,30 @@ pub(super) async fn seed_upgrade(pool: &PgPool) -> anyhow::Result<VisualUpgrade>
     for index in [103,106,107] {
         unfinished.push((events[index],unfinished_job(pool,events[index]).await?));
     }
-    Ok(VisualUpgrade { sources, events, brief, protected:protected_migration_data(pool).await?, unfinished })
+    let captured_at: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT now()").fetch_one(pool).await?;
+    let registered_before: i64 = sqlx::query_scalar("SELECT count(*) FROM sources WHERE created_at<=$1")
+        .bind(captured_at).fetch_one(pool).await?;
+    Ok(VisualUpgrade { sources, events, brief,
+        protected:protected_migration_data(pool,captured_at).await?, captured_at, registered_before, unfinished })
 }
 
 impl VisualUpgrade {
     pub(super) async fn verify_and_cleanup(mut self, pool: &PgPool) -> anyhow::Result<()> {
-        assert_eq!(protected_migration_data(pool).await?,self.protected,
+        assert_eq!(protected_migration_data(pool,self.captured_at).await?,self.protected,
             "visual migration must retain summary text, edition snapshots, sources and reader data");
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM sources WHERE created_at<=$1")
+            .bind(self.captured_at).fetch_one(pool).await?,self.registered_before,
+            "a migration must not delete an existing source");
+        // Later catalog registrations may only add explicitly verified public entries.
+        let registered: Vec<(String,String,Value)> = sqlx::query_as(
+            "SELECT name,endpoint,compliance FROM sources
+             WHERE created_at>$1 AND owner_user_id IS NULL ORDER BY endpoint",
+        ).bind(self.captured_at).fetch_all(pool).await?;
+        for (name,endpoint,compliance) in &registered {
+            assert!(endpoint.starts_with("https://"),"{name}");
+            assert_eq!(compliance["provenance"],json!("direct_publisher"),"{name}");
+            assert!(compliance["verifiedAt"].is_string(),"{name}");
+        }
         assert_eq!(sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM summary_jobs WHERE event_id=ANY($1) AND format_version=4 AND status='pending'",
         ).bind(&self.events[..103]).fetch_one(pool).await?,100,"recent upgrades are capped at 100");

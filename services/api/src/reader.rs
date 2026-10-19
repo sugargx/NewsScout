@@ -20,6 +20,7 @@ pub fn topic_alias(label: &str) -> &str {
         "memory" | "rag" => "记忆与检索",
         "ai coding" => "AI 编程",
         "rust" | "推理" => "工程与开源",
+        "ai infra" | "ai-infra" => "AI 基础设施",
         "开源模型" => "模型与多模态",
         "hardware" => "芯片与硬件",
         "industry" => "产业与商业",
@@ -718,6 +719,17 @@ mod tests {
         assert!(!daily_source_qualified(&trusted));
         trusted.evidence.clear();
         assert!(!daily_source_qualified(&trusted));
+    }
+
+    #[test]
+    fn ai_infra_topic_shares_one_label_without_absorbing_hardware() {
+        for label in ["AI Infra", "ai infra", "ai-infra"] {
+            assert_eq!(topic_alias(label), "AI 基础设施", "{label}");
+        }
+        assert_eq!(topic_alias("hardware"), "芯片与硬件");
+        assert_eq!(topic_alias("Agent"), "Agent 与工具");
+        // Unknown labels stay untouched rather than collapsing into the new topic.
+        assert_eq!(topic_alias("AI Infrastructure"), "AI Infrastructure");
     }
 
     #[test]

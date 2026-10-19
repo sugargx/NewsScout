@@ -669,3 +669,19 @@ r22的雷达渲染验收没有覆盖“首页长列表 + 长摘要、展开依�
 | 部署后 | 40份线上资源与本次提交的本地构建逐字节一致，`/health` 200且ready，匿名 `session` / `reading-personalization` / `events?coverage=true` 均401，线上包内含新分组标识并保留原有关系类型 |
 
 本轮**未做云端数据库探针，也未真人登录读取私有内容**：没有迁移、存储格式或提示词改动，34份迁移字节在构建输入中逐一核对。分组行为的证据来自上述本地与隔离用例，不能据此宣称已在云端私有数据上观察到实际批量分组。证据在 `tmp\batch-grouping-20261016`，基线与对照运行日志保留在 `tmp\e2e-runs` 对应目录。
+
+## 28. AI Infra 信源与主题（2026-10-19）
+
+用户表示尚未入门 AI Infra、平常没有该领域信源。先按六层版图（推理服务 / 训练并行 / 编译与算子 / 硬件与互联 / 编排调度 / 数据与观测）选型，再逐条实际拨测，只登记真正可订阅且在更新的源。
+
+| 范围 | 结果 |
+| --- | --- |
+| 端点拨测 | 16条全部200且解析出首条目：PyTorch Blog、NVIDIA Developer Blog、Meta Engineering、The Chip Letter、Interconnects、arXiv `cs.DC`，以及 vLLM、SGLang、TensorRT-LLM、PyTorch、DeepSpeed、Ray、Triton、CUTLASS、llama.cpp、JAX 的发布 Atom。样本标题取自抓取当天实际首条，不编造 |
+| 明确排除 | `blog.vllm.ai` 与 `lmsys.org` 无可用 RSS 路径（feed/atom/index 均404）；Anyscale 的 `.xml` 实际返回HTML；SemiAnalysis 正文付费；Chip Huyen 最新一篇停在2025-01。这些不登记为可订阅源 |
+| 分类正确性 | `news_facets` 新增「AI 基础设施」并置于「芯片与硬件」之前，但刻意不匹配裸 `gpu`/`nvidia`：vLLM 连续批处理、中文分布式训练文本都归入新主题，消费级显卡发布仍归「芯片与硬件」；无关键词命中时回落到来源主题标签 |
+| 开发构建过滤 | 上游标签源混有 `viable/strict/1792399349`、`b11727`、`nightly-last-green: …`，扩展 `reader_is_opaque_engineering_release` 后默认隐藏；`v0.32.1rc0`、`Ray-2.59.0`、`CUTLASS 4.8.0`、`JAX v0.11.2`、`gfx950-tutorial-v3.1` 等具名版本仍可见，blog 类型不受该过滤影响 |
+| Rust | `reader::` 22项通过，含新别名用例（`AI Infra`/`ai infra`/`ai-infra` 同义，`AI Infrastructure` 不被归并） |
+| 隔离云端契约 | 全新库按序应用全部35份迁移后通过：新主题节点、16条登记、样本与 `provenance` 完整、未引入聚合平台端点、分类与过滤断言全绿 |
+| 受保护数据守卫 | 原断言对整张 `sources` 取指纹，增量登记会误报。改为按捕获时刻切分：既有行必须逐字节不变、不得删除，新增行必须是带 `verifiedAt` 的 `direct_publisher` 公共条目。其余13张表的比较维持原样 |
+
+该轮只验证登记与分类，**未在云端对这些源做实际采集或摘要**；订阅数量上升会占用共享的每日模型额度，额度上限本身未改。

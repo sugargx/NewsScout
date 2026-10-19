@@ -9,10 +9,31 @@ pub(super) async fn verify_ai_infra_catalog(pool: &PgPool) -> anyhow::Result<()>
             .fetch_one(pool)
             .await?;
     assert_eq!(topic, ("AI Infra".into(), "Developer".into(), true));
-    let alias: String = sqlx::query_scalar("SELECT news_topic_alias('AI Infra')")
-        .fetch_one(pool)
-        .await?;
-    assert_eq!(alias, "AI 基础设施");
+    for label in ["AI Infra", "ai-infra", "AI 基础设施"] {
+        let alias: String = sqlx::query_scalar("SELECT news_topic_alias($1)")
+            .bind(label)
+            .fetch_one(pool)
+            .await?;
+        assert_eq!(alias, "AI Infra", "{label}");
+    }
+    // Every profile can weight the topic, including ones created before it existed.
+    let missing: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM interest_profiles ip WHERE NOT EXISTS (
+           SELECT 1 FROM jsonb_array_elements(ip.profile->'topics') topic
+           WHERE topic->>'id'='ai-infra')",
+    )
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(missing, 0, "the topic must be weightable in every profile");
+    let entry: (String, i64, bool) = sqlx::query_as(
+        "SELECT topic->>'label',(topic->>'weight')::bigint,(topic->>'enabled')::boolean
+         FROM interest_profiles ip CROSS JOIN LATERAL
+           jsonb_array_elements(ip.profile->'topics') topic
+         WHERE ip.user_id='local' AND topic->>'id'='ai-infra'",
+    )
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(entry, ("AI Infra".into(), 50, true));
 
     let registered: Vec<(String, String, String, String, String)> = sqlx::query_as(
         "SELECT s.name,s.endpoint,s.adapter_type,s.tier,s.content_type FROM sources s
@@ -56,12 +77,12 @@ pub(super) async fn verify_ai_infra_catalog(pool: &PgPool) -> anyhow::Result<()>
         (
             "vLLM v0.32.1rc0",
             "Continuous batching and paged attention improvements for the inference engine.",
-            "AI 基础设施",
+            "AI Infra",
         ),
         (
             "分布式训练中的张量并行实践",
             "介绍流水线并行与算子优化带来的吞吐量变化。",
-            "AI 基础设施",
+            "AI Infra",
         ),
         (
             "NVIDIA announces a new GeForce graphics card",
@@ -82,7 +103,7 @@ pub(super) async fn verify_ai_infra_catalog(pool: &PgPool) -> anyhow::Result<()>
         sqlx::query_scalar("SELECT unnest(news_facets('b11727','','release','AI Infra'))")
             .fetch_all(pool)
             .await?;
-    assert_eq!(fallback, vec!["AI 基础设施".to_owned()]);
+    assert_eq!(fallback, vec!["AI Infra".to_owned()]);
 
     for tag in [
         "viable/strict/1792399349",

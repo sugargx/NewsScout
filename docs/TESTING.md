@@ -678,7 +678,7 @@ r22的雷达渲染验收没有覆盖“首页长列表 + 长摘要、展开依�
 | --- | --- |
 | 端点拨测 | 16条全部200且解析出首条目：PyTorch Blog、NVIDIA Developer Blog、Meta Engineering、The Chip Letter、Interconnects、arXiv `cs.DC`，以及 vLLM、SGLang、TensorRT-LLM、PyTorch、DeepSpeed、Ray、Triton、CUTLASS、llama.cpp、JAX 的发布 Atom。样本标题取自抓取当天实际首条，不编造 |
 | 明确排除 | `blog.vllm.ai` 与 `lmsys.org` 无可用 RSS 路径（feed/atom/index 均404）；Anyscale 的 `.xml` 实际返回HTML；SemiAnalysis 正文付费；Chip Huyen 最新一篇停在2025-01。这些不登记为可订阅源 |
-| 分类正确性 | `news_facets` 新增「AI 基础设施」并置于「芯片与硬件」之前，但刻意不匹配裸 `gpu`/`nvidia`：vLLM 连续批处理、中文分布式训练文本都归入新主题，消费级显卡发布仍归「芯片与硬件」；无关键词命中时回落到来源主题标签 |
+| 分类正确性 | `news_facets` 新增「AI Infra」并置于「芯片与硬件」之前，但刻意不匹配裸 `gpu`/`nvidia`：vLLM 连续批处理、中文分布式训练文本都归入新主题，消费级显卡发布仍归「芯片与硬件」；无关键词命中时回落到来源主题标签 |
 | 开发构建过滤 | 上游标签源混有 `viable/strict/1792399349`、`b11727`、`nightly-last-green: …`，扩展 `reader_is_opaque_engineering_release` 后默认隐藏；`v0.32.1rc0`、`Ray-2.59.0`、`CUTLASS 4.8.0`、`JAX v0.11.2`、`gfx950-tutorial-v3.1` 等具名版本仍可见，blog 类型不受该过滤影响 |
 | Rust | `reader::` 22项通过，含新别名用例（`AI Infra`/`ai infra`/`ai-infra` 同义，`AI Infrastructure` 不被归并） |
 | 隔离云端契约 | 全新库按序应用全部35份迁移后通过：新主题节点、16条登记、样本与 `provenance` 完整、未引入聚合平台端点、分类与过滤断言全绿 |

@@ -2,7 +2,7 @@
 
 本地优先、可追溯的跨领域热点雷达。**0.2 保留可信本地单用户模式，并已开放完整应用的 Azure 认证开放预览**：阅读、兴趣主题、来源与采集、每日分享及账号隐私/导出共用产品能力；云端不开放阅读与模型管理设置。旧Dev Tunnel已退役，代码和历史只读契约保留，不另做缩水公开版。
 
-**当前发布状态（2026-10-19）：r25 revision `newsscout--0000025` Ready，云端schema由34升至35。** 新增 `AI Infra` 主题与16条实际拨测过的 AI 基础设施来源；迁移0035为纯增量，不改写既有来源、事件、摘要、快照与阅读状态。40份线上资源与本地构建逐字节一致，健康200、匿名私有路由401；本轮未做云端数据库探针，也未真人登录读取私有内容，尚未观察到这些来源在云端的实际采集结果。以下为上一版 r24 的说明，功能仍然适用。
+**当前发布状态（2026-10-19）：r25 revision `newsscout--0000025` Ready，云端schema由34升至35。** 新增 `AI Infra` 主题与16条实际拨测过的 AI Infra来源；迁移0035为纯增量，不改写既有来源、事件、摘要、快照与阅读状态。40份线上资源与本地构建逐字节一致，健康200、匿名私有路由401；本轮未做云端数据库探针，也未真人登录读取私有内容，尚未观察到这些来源在云端的实际采集结果。以下为上一版 r24 的说明，功能仍然适用。
 
 **上一版（2026-10-16）：r24 revision `newsscout--0000024`，schema34。** 新增同账号模板化批量条目收拢：雷达中按编号批量产出、彼此只差数字的条目合并为一条，可展开逐条阅读；不计入多来源互证、不加热度，排序权重与数据库均未改。40份线上资源与本次提交的本地构建逐字节一致，健康200、匿名私有路由401；本轮未做云端数据库探针，也未真人登录读取私有内容。以下为上一版 r23 的说明，功能仍然适用。
 
@@ -286,7 +286,7 @@ Reddit 评论补充使用原站单帖 Atom 的有界解析与策略检查，只�
 这里记录当前来源和处理边界，不是全部 V0 已完成。整体能力、阻塞项和最近交付范围见 [项目状态](docs/PROJECT-STATUS.md)。
 
 - 公开来源目录：在原有四个初始源上，增量登记 22 个经公开端点核验的来源，涵盖公司/研究 Blog、心理学、HCI、Design、Agent/Memory/MCP/Rust、arXiv、精选 Hugging Face 模型、GitHub 元数据和中英文 Podcast（含张小珺）。新增来源先观察，不自动宣称已获用户确认。
-- **AI Infra（2026-10-19 新增）**：新增 `AI Infra` 主题与 `AI 基础设施` 分类，覆盖推理服务、训练并行、算子与编译、集群调度这一层；分类规则不匹配裸 `gpu`/`nvidia`，硬件产品新闻仍归「芯片与硬件」。登记16个当日实际拨测过的直接来源：PyTorch Blog、NVIDIA Developer Blog、Meta Engineering、The Chip Letter、Interconnects、arXiv `cs.DC`，以及 vLLM、SGLang、TensorRT-LLM、PyTorch、DeepSpeed、Ray、Triton、CUTLASS、llama.cpp、JAX 的发布 Atom，每条记录当天真实首条标题作为样本。未收录 SemiAnalysis（正文付费）与 Chip Huyen（2025-01 起停更）。这些上游标签源同时发布 CI、nightly 与构建计数，已归入「开发构建」默认隐藏，具名版本不受影响。
+- **AI Infra（2026-10-19 新增）**：新增 `AI Infra` 主题与 `AI Infra` 分类，覆盖推理服务、训练并行、算子与编译、集群调度这一层；分类规则不匹配裸 `gpu`/`nvidia`，硬件产品新闻仍归「芯片与硬件」。登记16个当日实际拨测过的直接来源：PyTorch Blog、NVIDIA Developer Blog、Meta Engineering、The Chip Letter、Interconnects、arXiv `cs.DC`，以及 vLLM、SGLang、TensorRT-LLM、PyTorch、DeepSpeed、Ray、Triton、CUTLASS、llama.cpp、JAX 的发布 Atom，每条记录当天真实首条标题作为样本。未收录 SemiAnalysis（正文付费）与 Chip Huyen（2025-01 起停更）。这些上游标签源同时发布 CI、nightly 与构建计数，已归入「开发构建」默认隐藏，具名版本不受影响。
 - 直接发布者补充：量子位官网 RSS、新智元官网 RSS（`https://aiera.com.cn/feed/`）、Mistral 官方新闻、GitHub Blog AI & ML 与 Engineering、Simon Willison 作者长文及 Andrej Karpathy 作者博客。GitHub 的两个栏目分别订阅，共用同一官方发布者身份；Engineering 使用 `https://github.blog/engineering/feed/`，只覆盖当前 Feed，不承诺完整历史。新智元读取其自有发布内容，不采集站内自动聚合面板，不冒称获得微信公众号接口。
 - AIHOT 适配器与订阅已移除，旧聚合正文经增量迁移清理，不再用二次聚合摘要替代原始来源。混合事件仅保留直接证据并重新生成；有用户状态的聚合专属记录保留状态和审计中的原始链接，撤出新闻列表；实际模型尝试计数保留，真实历史快照不改写。已知聚合端点不能通过普通 Feed 适配器重新添加。
 - Builder 观察名单：本人官网可确认的 Andrej Karpathy / `@karpathy` 已登记，博客直接订阅；X 时间线仍待官方授权。Tibo / `@tibo_maker` 仅为待确认候选，尚未监听。没有执行任何社交账号的“关注”操作。

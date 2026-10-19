@@ -9,7 +9,21 @@ pub(super) struct VisualUpgrade {
     protected: Vec<(String, String)>,
     captured_at: chrono::DateTime<Utc>,
     registered_before: i64,
+    profile_topics: Vec<(String, String)>,
+    profiles_before: i64,
     unfinished: Vec<(Uuid, Value)>,
+}
+
+/// One row per reader interest entry, so a migration can be checked entry by entry
+/// instead of only as a whole-table digest.
+async fn profile_topics(pool: &PgPool) -> anyhow::Result<Vec<(String, String)>> {
+    Ok(sqlx::query_as(
+        "SELECT ip.user_id,topic::text FROM interest_profiles ip
+         CROSS JOIN LATERAL jsonb_array_elements(ip.profile->'topics') topic
+         ORDER BY ip.user_id,topic::text",
+    )
+    .fetch_all(pool)
+    .await?)
 }
 
 /// Rows that already existed must stay byte-identical. A later migration may still
@@ -21,7 +35,7 @@ async fn protected_migration_data(
 ) -> anyhow::Result<Vec<(String, String)>> {
     let mut fingerprints = Vec::new();
     for table in [
-        "app_users", "app_settings", "interest_profiles", "user_event_states", "event_exposures",
+        "app_users", "app_settings", "user_event_states", "event_exposures",
         "daily_briefs", "daily_brief_items", "reader_shares", "sources", "user_source_overrides",
         "events", "content_items", "reader_personalization", "reader_reading_signals",
     ] {
@@ -102,8 +116,11 @@ pub(super) async fn seed_upgrade(pool: &PgPool) -> anyhow::Result<VisualUpgrade>
     let captured_at: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT now()").fetch_one(pool).await?;
     let registered_before: i64 = sqlx::query_scalar("SELECT count(*) FROM sources WHERE created_at<=$1")
         .bind(captured_at).fetch_one(pool).await?;
+    let profiles_before: i64 = sqlx::query_scalar("SELECT count(*) FROM interest_profiles")
+        .fetch_one(pool).await?;
     Ok(VisualUpgrade { sources, events, brief,
-        protected:protected_migration_data(pool,captured_at).await?, captured_at, registered_before, unfinished })
+        protected:protected_migration_data(pool,captured_at).await?, captured_at, registered_before,
+        profile_topics:profile_topics(pool).await?, profiles_before, unfinished })
 }
 
 impl VisualUpgrade {
@@ -113,6 +130,25 @@ impl VisualUpgrade {
         assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM sources WHERE created_at<=$1")
             .bind(self.captured_at).fetch_one(pool).await?,self.registered_before,
             "a migration must not delete an existing source");
+        // Reader interests are checked entry by entry: a migration may add a newly
+        // introduced public topic, but never edit, drop or reweight an existing one.
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM interest_profiles")
+            .fetch_one(pool).await?,self.profiles_before,"a migration must not add or drop a profile");
+        let after = profile_topics(pool).await?;
+        for entry in &self.profile_topics {
+            assert!(after.contains(entry),
+                "a migration must not change or drop an existing interest topic: {} {}",entry.0,entry.1);
+        }
+        for (user,entry) in after.iter().filter(|entry| !self.profile_topics.contains(entry)) {
+            let topic: Value = serde_json::from_str(entry)?;
+            let id = topic["id"].as_str().unwrap_or_default();
+            assert!(sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM taxonomy_nodes WHERE id=$1 AND owner_user_id IS NULL AND enabled)",
+            ).bind(id).fetch_one(pool).await?,"added interest {id} is not a public topic for {user}");
+            assert_eq!((&topic["weight"],&topic["enabled"],&topic["context"]),
+                (&json!(50),&json!(true),&json!("long_term")),
+                "an added topic must use the same defaults a new reader gets: {id}");
+        }
         // Later catalog registrations may only add explicitly verified public entries.
         let registered: Vec<(String,String,Value)> = sqlx::query_as(
             "SELECT name,endpoint,compliance FROM sources

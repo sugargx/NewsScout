@@ -2,9 +2,15 @@
 
 本文件记录 ScoutNews 的已实现变更与文档范围，不是实时运行状态。当前包版本为 `0.2.0`；以下日期不代表新增 Git tag、包版本或完成整个 V0。
 
+## 2026-10-19（补）：主题统一叫 AI Infra，并补进已有兴趣档案
+
+- 分类标签由「AI Infra」统一为 `AI Infra`，与兴趣权重里的主题名一致；`ai-infra`、`ai infra` 与旧标签都归一到同一个名字，旧数据不需要改写。
+- 修复已有账号在「兴趣权重」里看不到 AI Infra 的问题：兴趣档案只在首次请求时按当时的主题表生成一次，之后新增主题不会补进去。迁移0036按原有默认（权重50、长期兴趣、启用）为缺少该主题的档案补一条，并保留每一条既有主题的权重、开关与自定义项。
+- 只补这一个新主题，不会把用户自己删掉的公共主题重新加回来。后续再新增主题时同样需要在该主题自己的迁移里补一行。
+
 ## 2026-10-19：AI Infra 信源与主题
 
-- 新增 `AI Infra` 主题与 `AI 基础设施` 分类：覆盖推理服务、训练并行、算子与编译、集群调度这一层。规则刻意不匹配裸 `gpu`/`nvidia`，硬件产品新闻仍归「芯片与硬件」，不被吸走。
+- 新增 `AI Infra` 主题与 `AI Infra` 分类：覆盖推理服务、训练并行、算子与编译、集群调度这一层。规则刻意不匹配裸 `gpu`/`nvidia`，硬件产品新闻仍归「芯片与硬件」，不被吸走。
 - 登记16个实际拨测过的直接来源：PyTorch Blog、NVIDIA Developer Blog、Meta Engineering、The Chip Letter、Interconnects、arXiv `cs.DC`，以及 vLLM、SGLang、TensorRT-LLM、PyTorch、DeepSpeed、Ray、Triton、CUTLASS、llama.cpp、JAX 的发布 Atom。每条都记录抓取当天的真实首条标题作为样本，不编造。
 - 未收录 SemiAnalysis（公开 feed 基本只给摘要，正文付费）与 Chip Huyen（最新一篇停在2025-01），避免把付费墙或停更源当作可订阅信源。
 - 上游标签源同时发布 CI、nightly 和构建计数（`viable/strict/1792399349`、`b11727`、`nightly-last-green: …`）。扩展「开发构建」判定覆盖这些机器标签，默认不进精选与雷达，打开“包含开发构建”仍可查看；`v0.32.1rc0`、`Ray-2.59.0`、`CUTLASS 4.8.0` 等具名版本不受影响。

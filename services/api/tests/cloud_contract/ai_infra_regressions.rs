@@ -35,6 +35,15 @@ pub(super) async fn verify_ai_infra_catalog(pool: &PgPool) -> anyhow::Result<()>
     .await?;
     assert_eq!(entry, ("AI Infra".into(), 50, true));
 
+    // The original batch stays complete; later catalogs may also use the topic.
+    let batch: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sources s
+         JOIN source_topics st ON st.source_id=s.id AND st.taxonomy_id='ai-infra'
+         WHERE s.owner_user_id IS NULL AND s.compliance->>'catalogVersion'='2026-10-19-ai-infra'",
+    )
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(batch, 16, "every verified AI Infra feed registers");
     let registered: Vec<(String, String, String, String, String)> = sqlx::query_as(
         "SELECT s.name,s.endpoint,s.adapter_type,s.tier,s.content_type FROM sources s
          JOIN source_topics st ON st.source_id=s.id AND st.taxonomy_id='ai-infra'
@@ -42,7 +51,7 @@ pub(super) async fn verify_ai_infra_catalog(pool: &PgPool) -> anyhow::Result<()>
     )
     .fetch_all(pool)
     .await?;
-    assert_eq!(registered.len(), 16, "every verified AI Infra feed registers");
+    assert!(registered.len() >= batch as usize);
     for (name, endpoint, adapter, tier, content_type) in &registered {
         assert!(endpoint.starts_with("https://"), "{name}");
         assert!(
@@ -72,6 +81,44 @@ pub(super) async fn verify_ai_infra_catalog(pool: &PgPool) -> anyhow::Result<()>
     .fetch_one(pool)
     .await?;
     assert_eq!(aggregated, 0, "no aggregate platform is reintroduced");
+
+    // Publishers found through an aggregator are subscribed at the publisher itself,
+    // and every registered feed must carry its own publication dates.
+    for (name, endpoint) in [
+        ("Google Research Blog", "https://research.google/blog/rss/"),
+        ("Ollama Blog", "https://ollama.com/blog/rss.xml"),
+        ("LangChain Blog", "https://blog.langchain.com/rss.xml"),
+    ] {
+        let source: (String, String, String, Value) = sqlx::query_as(
+            "SELECT s.name,s.tier,s.adapter_type,s.compliance FROM sources s
+             WHERE s.owner_user_id IS NULL AND s.endpoint=$1",
+        )
+        .bind(endpoint)
+        .fetch_one(pool)
+        .await?;
+        assert_eq!(source.0, name);
+        assert_eq!((source.1.as_str(), source.2.as_str()), ("T1", "rss"), "{name}");
+        assert_eq!(source.3["provenance"], json!("direct_publisher"), "{name}");
+        assert!(source.3["sampleTitle"].as_str().is_some_and(|title| !title.trim().is_empty()), "{name}");
+        let linked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM source_topics st JOIN sources s ON s.id=st.source_id
+             WHERE s.endpoint=$1",
+        )
+        .bind(endpoint)
+        .fetch_one(pool)
+        .await?;
+        assert!(linked > 0, "{name} must land in at least one real topic");
+    }
+    // Catalog metadata may not claim a topic that does not exist.
+    let unknown: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT claimed FROM sources s
+         CROSS JOIN LATERAL jsonb_array_elements_text(s.compliance->'topicIds') claimed
+         WHERE s.compliance->>'catalogVersion'='2026-10-20-first-party'
+           AND NOT EXISTS(SELECT 1 FROM taxonomy_nodes tn WHERE tn.id=claimed)",
+    )
+    .fetch_all(pool)
+    .await?;
+    assert_eq!(unknown, Vec::<String>::new());
 
     for (title, summary, expected) in [
         (

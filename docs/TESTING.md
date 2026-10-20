@@ -713,3 +713,24 @@ r22的雷达渲染验收没有覆盖“首页长列表 + 长摘要、展开依�
 | 雷达「加载更多」被无关请求禁用 | 按钮绑定整个无限查询的 `isFetching`；同项目其余三处翻页均用 `isFetchingNextPage` | 改为只在加载下一页时禁用 |
 
 复查后明确**不改**的项：长列表未做虚拟化（当前每页 40 条，引入虚拟化会与已有的焦点、滚动位置恢复用例冲突，收益不抵风险）；`useProcessing` 的 10/30 秒轮询（后台标签不轮询，且只置为过期不自动重排列表，符合既定阅读约束）。
+
+## 31. 对照聚合站补齐一手信源（2026-10-20）
+
+把 `aihot.news` 的公开 feed 读取一次，统计其 50 条精选中的外链分布，用于识别原始发布者。该站本身仍被 `validate_adapter_endpoint` 拦截，未被、也不会被登记为信源；隔离契约中「不得重新引入聚合平台」的断言继续生效。
+
+外链分布（52 条链接 / 31 个域名）：`x.com` 13、`ithome.com` 3、`mp.weixin.qq.com` 3、`lmsys.org` 2、`vllm.ai` 2、`engineering.fb.com` 2、`api-docs.deepseek.com` 2、`arstechnica.com` 2，其余各 1。其中 `engineering.fb.com`、`pytorch.org`、`openai.com`、`github.com` 我们已覆盖。
+
+| 候选 | 拨测结果 | 处理 |
+| --- | --- | --- |
+| Google Research Blog | `research.google/blog/rss/` 200，含 pubDate，最新 2026-10-16 | 登记 T1 |
+| Ollama Blog | `ollama.com/blog/rss.xml` 200，含 pubDate，最新 2026-10-19 | 登记 T1 |
+| LangChain Blog | `blog.langchain.com/rss.xml` 200，含 pubDate，最新 2026-10-19，正是聚合站当天条目的原始出处 | 登记 T1 |
+| Google Developers Blog | 200，但 `?alt=atom`、`?alt=rss`、`/atom.xml` 三种变体的条目**均无任何日期字段** | 不登记：条目无法参与时间筛选与每日精选，且会让采集时间顶替发布时间 |
+| Qwen 官方博客 | `qwenlm.github.io/blog/index.xml` 200，但最新一篇为 2025-09-23 | 不登记：停更超一年 |
+| NVIDIA 新闻稿 | `nvidianews.nvidia.com/releases.xml` 200，内容为公关口径 | 不登记：技术内容已由开发者博客覆盖 |
+| MiniMax / DeepSeek 变更日志 / Anthropic 发布说明 / Stanford HAI | 404 或仅 HTML | 不登记：无可用 feed |
+| x.com / 微信公众号 / 二手科技媒体 | — | 不跟进：无公开接口；二手转述与一手证据优先的编辑边界冲突 |
+
+隔离云端契约新增断言：三条来源均为 T1 + rss + `direct_publisher` 且样本标题非空、各自至少落入一个真实主题、且新目录元数据不得声明不存在的主题 id。原「ai-infra 来源恰为16条」的计数断言改为按目录版本限定，否则后续任何同主题来源都会误报——Ollama 正是这样合理地成为第17条。
+
+**已记录的既有瑕疵**：r25 的0035 曾在 `topicIds` 中写入 `'hardware'`，但该 taxonomy 节点并不存在，JOIN 会静默丢弃。归类结果正确（这些来源实际落在 `ai-infra`），仅元数据多写了一个无效 id，未作改写以免触动既有数据；新目录已由上述断言防止重演。

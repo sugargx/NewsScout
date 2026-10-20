@@ -290,6 +290,7 @@ Reddit 评论补充使用原站单帖 Atom 的有界解析与策略检查，只�
 这里记录当前来源和处理边界，不是全部 V0 已完成。整体能力、阻塞项和最近交付范围见 [项目状态](docs/PROJECT-STATUS.md)。
 
 - 公开来源目录：在原有四个初始源上，增量登记 22 个经公开端点核验的来源，涵盖公司/研究 Blog、心理学、HCI、Design、Agent/Memory/MCP/Rust、arXiv、精选 Hugging Face 模型、GitHub 元数据和中英文 Podcast（含张小珺）。新增来源先观察，不自动宣称已获用户确认。
+- **一手实验室与平台（2026-10-20 新增）**：Google Research Blog、Ollama Blog、LangChain Blog。来源于把一个公开聚合站的 feed 读取一次、识别其引用的原始发布者，再到发布者处订阅；聚合站本身仍被拦截，不作为信源。同批明确不收：Google Developers Blog（feed 所有变体均无发布时间字段，接入后无法参与时间筛选与每日精选）、Qwen 官方博客（2025-09 起停更）、NVIDIA 新闻稿（公关口径，技术内容已由开发者博客覆盖），以及 X、微信公众号与二手科技媒体（无公开接口 / 与一手证据优先的边界冲突）。
 - **AI Infra（2026-10-19 新增）**：新增 `AI Infra` 主题与 `AI Infra` 分类，覆盖推理服务、训练并行、算子与编译、集群调度这一层；分类规则不匹配裸 `gpu`/`nvidia`，硬件产品新闻仍归「芯片与硬件」。登记16个当日实际拨测过的直接来源：PyTorch Blog、NVIDIA Developer Blog、Meta Engineering、The Chip Letter、Interconnects、arXiv `cs.DC`，以及 vLLM、SGLang、TensorRT-LLM、PyTorch、DeepSpeed、Ray、Triton、CUTLASS、llama.cpp、JAX 的发布 Atom，每条记录当天真实首条标题作为样本。未收录 SemiAnalysis（正文付费）与 Chip Huyen（2025-01 起停更）。这些上游标签源同时发布 CI、nightly 与构建计数，已归入「开发构建」默认隐藏，具名版本不受影响。
 - 直接发布者补充：量子位官网 RSS、新智元官网 RSS（`https://aiera.com.cn/feed/`）、Mistral 官方新闻、GitHub Blog AI & ML 与 Engineering、Simon Willison 作者长文及 Andrej Karpathy 作者博客。GitHub 的两个栏目分别订阅，共用同一官方发布者身份；Engineering 使用 `https://github.blog/engineering/feed/`，只覆盖当前 Feed，不承诺完整历史。新智元读取其自有发布内容，不采集站内自动聚合面板，不冒称获得微信公众号接口。
 - AIHOT 适配器与订阅已移除，旧聚合正文经增量迁移清理，不再用二次聚合摘要替代原始来源。混合事件仅保留直接证据并重新生成；有用户状态的聚合专属记录保留状态和审计中的原始链接，撤出新闻列表；实际模型尝试计数保留，真实历史快照不改写。已知聚合端点不能通过普通 Feed 适配器重新添加。

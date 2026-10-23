@@ -108,12 +108,13 @@ impl PostgresStore {
         };
         let id: Uuid = saved.try_get("id")?;
         let cutoff: DateTime<Utc> = saved.try_get("cutoff")?;
-        let before: Value = sqlx::query_scalar(
-            "SELECT jsonb_build_object('ruleVersion',b.rule_version,'generatedAt',b.generated_at,
+        // Preserve PostgreSQL JSON numbers without an f64 serialization round-trip.
+        let before: String = sqlx::query_scalar(
+            "SELECT (jsonb_build_object('ruleVersion',b.rule_version,'generatedAt',b.generated_at,
               'windowStart',b.window_start,'windowEnd',b.window_end,'sections',b.sections,
               'items',COALESCE((SELECT jsonb_agg(jsonb_build_object('eventId',i.event_id,'rank',i.rank,
                 'section',i.section,'selectionReason',i.selection_reason,'snapshot',i.snapshot) ORDER BY i.rank)
-                FROM daily_brief_items i WHERE i.brief_id=b.id),'[]'::jsonb))
+                FROM daily_brief_items i WHERE i.brief_id=b.id),'[]'::jsonb)))::text
             FROM daily_briefs b WHERE b.id=$1",
         ).bind(id).fetch_one(&mut *tx).await?;
         let brief = self.build_brief(cutoff, None).await?;
@@ -154,7 +155,7 @@ impl PostgresStore {
             "选文规则升级：新规则下没有合格条目，保留原晨报"
         };
         sqlx::query("INSERT INTO admin_audits(id,actor,action,target_type,target_id,before_value,after_value,reason)
-            VALUES($1,scoutnews_actor(),$2,'daily_brief',$3,$4,$5,$6)")
+            VALUES($1,scoutnews_actor(),$2,'daily_brief',$3,$4::jsonb,$5,$6)")
             .bind(Uuid::new_v4()).bind(action).bind(id.to_string()).bind(before)
             .bind(serde_json::json!({"ruleVersion":reader::DAILY_SELECTION_RULE,"replaced":replaced,
                 "items":brief.items.len(),"approvedCutoff":approved_cutoff}))

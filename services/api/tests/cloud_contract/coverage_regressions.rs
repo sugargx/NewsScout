@@ -229,14 +229,21 @@ pub(super) async fn verify_explicit_edition_correction(
             ORDER BY b.id) FROM daily_briefs b WHERE b.id=ANY($1)")
             .bind(ids).fetch_one(pool).await
     };
-    let before = frozen(briefs.clone()).await?;
+    sqlx::query("UPDATE daily_brief_items SET snapshot=jsonb_set(snapshot,'{score,total}',
+        '72.91031932830810546875'::jsonb) WHERE brief_id=$1")
+        .bind(briefs[0]).execute(pool).await?;
+    let before = frozen(briefs.clone()).await?.as_array().unwrap().iter().cloned()
+        .collect::<Vec<_>>();
+    let original_snapshot_hash: String = sqlx::query_scalar(
+        "SELECT md5(snapshot::text) FROM daily_brief_items WHERE brief_id=$1",
+    ).bind(briefs[0]).fetch_one(pool).await?;
     assert!(store_a.correct_saved_edition(date, cutoff+chrono::Duration::seconds(1), &[required]).await.is_err());
     assert!(store_b.correct_saved_edition(date, cutoff, &[required]).await.is_err(),
         "another reader's private event cannot be forced into an edition");
     sqlx::query("UPDATE events SET summary_kind='feed' WHERE id=$1").bind(required).execute(pool).await?;
     assert!(store_a.correct_saved_edition(date, cutoff, &[required]).await.is_err(),
         "an incomplete summary must leave the saved edition untouched");
-    assert_eq!(frozen(briefs.clone()).await?, before);
+    assert_eq!(frozen(briefs.clone()).await?, json!(before));
     sqlx::query("UPDATE events SET summary_kind='copilot' WHERE id=$1").bind(required).execute(pool).await?;
     assert!(store_a.correct_saved_edition(date, cutoff, &[required]).await?);
     assert!(!store_a.correct_saved_edition(date, cutoff, &[required]).await?, "correction is once only");
@@ -245,14 +252,24 @@ pub(super) async fn verify_explicit_edition_correction(
     assert_eq!(corrected.window_end, cutoff);
     let other_ids = briefs[1..].to_vec();
     let others_after = frozen(other_ids.clone()).await?;
-    let before_others: Vec<_> = before.as_array().unwrap().iter()
+    let before_others: Vec<_> = before.iter()
         .filter(|row| row["brief"]["id"] != briefs[0].to_string()).cloned().collect();
     assert_eq!(others_after, json!(before_others), "other dates and readers stay byte-identical");
     let audits: Vec<Value> = sqlx::query_scalar("SELECT before_value FROM admin_audits
         WHERE action='edition_correction' AND target_id=$1")
         .bind(briefs[0].to_string()).fetch_all(pool).await?;
     assert_eq!(audits.len(), 1);
-    assert_eq!(audits[0]["items"][0]["snapshot"], snapshot);
+    assert_eq!(audits[0]["items"][0]["snapshot"]["summary"], snapshot["summary"]);
+    let archived_snapshot_hash: String = sqlx::query_scalar(
+        "SELECT md5((before_value->'items'->0->'snapshot')::text) FROM admin_audits
+         WHERE action='edition_correction' AND target_id=$1",
+    ).bind(briefs[0].to_string()).fetch_one(pool).await?;
+    assert_eq!(archived_snapshot_hash, original_snapshot_hash);
+    let exact_numeric_backup: bool = sqlx::query_scalar("SELECT
+        before_value->'items'->0->'snapshot'->'score'->'total'='72.91031932830810546875'::jsonb
+        FROM admin_audits WHERE action='edition_correction' AND target_id=$1")
+        .bind(briefs[0].to_string()).fetch_one(pool).await?;
+    assert!(exact_numeric_backup, "audit must retain exact PostgreSQL JSON numbers without an f64 round-trip");
     sqlx::query("DELETE FROM admin_audits WHERE action='edition_correction' AND target_id=$1")
         .bind(briefs[0].to_string()).execute(pool).await?;
     sqlx::query("DELETE FROM daily_briefs WHERE id=ANY($1)").bind(briefs).execute(pool).await?;

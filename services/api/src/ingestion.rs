@@ -198,6 +198,82 @@ impl std::fmt::Display for CommentPolicyBlocked {
 
 impl std::error::Error for CommentPolicyBlocked {}
 
+/// Shared with the cloud contract test so the scheduling rule is asserted against
+/// the statement collection actually runs, not a copy that can drift from it.
+pub(crate) const DUE_SOURCES_SQL: &str = include_str!("sql/due_sources.sql");
+
+#[derive(Debug, thiserror::Error)]
+#[error("publisher response format changed")]
+struct SourceFormatChanged(#[source] anyhow::Error);
+
+const FAILURE_MESSAGES: &[(&str, &str)] = &[
+    ("authorization_withdrawn", "该来源的授权已变更，本次未保存采集结果"),
+    ("policy_blocked", "来源的机器人协议不允许本次采集，已停止请求"),
+    ("rate_limited", "来源要求限速，已按其指定时间退避等待"),
+    ("backoff", "来源要求暂停请求，已按其指定时间退避等待"),
+    ("timeout", "请求超时，来源未在限定时间内响应"),
+    ("unreachable", "无法连接该来源，域名或服务可能已不可用"),
+    ("unauthorized", "来源返回未授权或拒绝访问，可能需要登录或已限制程序访问"),
+    ("not_found", "来源地址返回不存在，订阅地址可能已变更或下线"),
+    ("server_error", "来源服务端暂时出错，稍后会自动重试"),
+    ("http_error", "来源返回 HTTP 错误，内容未入库"),
+    ("format_changed", "来源格式已变化或不符合适配器约定，需要维护适配器"),
+    ("storage_error", "采集结果未能保存，需检查服务端存储；不会视为来源已更新"),
+    ("unavailable", "采集失败；请检查来源可用性或稍后重试"),
+];
+
+pub(crate) fn collection_failure_message(code: &str) -> Option<&'static str> {
+    FAILURE_MESSAGES.iter().find_map(|(known, text)| (*known == code).then_some(*text))
+}
+
+fn failure_code(error: &anyhow::Error) -> &'static str {
+    if error.is::<SourceAuthorizationChanged>() {
+        return "authorization_withdrawn";
+    }
+    if error.is::<CommentPolicyBlocked>() {
+        return "policy_blocked";
+    }
+    if error.is::<SourceFormatChanged>() {
+        return "format_changed";
+    }
+    if error.is::<sqlx::Error>() {
+        return "storage_error";
+    }
+    if error.is::<tokio::time::error::Elapsed>() {
+        return "timeout";
+    }
+    if let Some(backoff) = error.downcast_ref::<FetchBackoff>() {
+        return if backoff.status == StatusCode::TOO_MANY_REQUESTS {
+            "rate_limited"
+        } else {
+            "backoff"
+        };
+    }
+    if let Some(request) = error.downcast_ref::<reqwest::Error>() {
+        if request.is_timeout() {
+            return "timeout";
+        }
+        if request.is_connect() {
+            return "unreachable";
+        }
+        if let Some(status) = request.status() {
+            return match status.as_u16() {
+                401 | 403 => "unauthorized",
+                404 | 410 => "not_found",
+                408 => "timeout",
+                500..=599 => "server_error",
+                _ => "http_error",
+            };
+        }
+    }
+    "unavailable"
+}
+
+fn failure_cause(error: &anyhow::Error) -> (&'static str, &'static str) {
+    let code = failure_code(error);
+    (code, collection_failure_message(code).expect("known collection failure code"))
+}
+
 impl FeedAdapter {
     pub fn new(_client: Client) -> Self {
         // An injected client may follow redirects before they can be validated.
@@ -210,14 +286,16 @@ impl FeedAdapter {
         source: &AdapterSource,
         adapter: &str,
     ) -> Result<FetchOutcome> {
-        validate_adapter_endpoint(adapter, &source.endpoint)?;
+        let endpoint = validate_adapter_endpoint(adapter, &source.endpoint)?;
         tokio::time::timeout(FETCH_TIMEOUT, async {
             if matches!(
                 adapter,
-                "anthropic_news" | "anthropic_research" | "anthropic_engineering"
+                "anthropic_news" | "anthropic_research" | "anthropic_engineering" | "claude_blog"
             ) {
+                let mut robots_url = endpoint.clone();
+                robots_url.set_path("/robots.txt");
                 let robots = AdapterSource {
-                    endpoint: "https://www.anthropic.com/robots.txt".into(),
+                    endpoint: robots_url.to_string(),
                     etag: None,
                     last_modified: None,
                 };
@@ -248,11 +326,12 @@ impl FeedAdapter {
                         | "github_search"
                         | "anthropic_news"
                         | "anthropic_research"
-                        | "anthropic_engineering" => {
-                            source_adapters::parse(adapter, &bytes, &endpoint)?
+                        | "anthropic_engineering"
+                        | "claude_blog" => {
+                            source_adapters::parse(adapter, &bytes, &endpoint)
                         }
-                        _ => parse_items(&bytes, &endpoint, adapter)?,
-                    };
+                        _ => parse_items(&bytes, &endpoint, adapter),
+                    }.map_err(SourceFormatChanged)?;
                     Ok(FetchOutcome::Items {
                         items,
                         etag,
@@ -309,7 +388,7 @@ impl FeedAdapter {
                     "Accept",
                     match adapter {
                         "huggingface_models" | "github_repository" | "github_search" | "x_oembed" => "application/json",
-                        "anthropic_news" | "anthropic_research" | "anthropic_engineering" => "text/html",
+                        "anthropic_news" | "anthropic_research" | "anthropic_engineering" | "claude_blog" => "text/html",
                         "publisher_page" => "text/html, application/xhtml+xml;q=0.9, text/plain;q=0.5",
                         _ => "application/atom+xml, application/rss+xml, application/xml, text/xml;q=0.9",
                     },
@@ -1094,13 +1173,13 @@ impl FeedWorker {
     }
 
     pub async fn run_due(&self) -> Result<IngestionReport> {
-        self.run(false, None, None, false).await
+        self.run(false, None, None).await
     }
     pub async fn run_all(&self) -> Result<IngestionReport> {
-        self.run(true, None, None, false).await
+        self.run(true, None, None).await
     }
     pub async fn run_source(&self, id: Uuid) -> Result<IngestionReport> {
-        self.run(true, Some(id), None, false).await
+        self.run(true, Some(id), None).await
     }
 
     pub async fn run_authorized_source(&self, id: Uuid, actor: &str) -> Result<IngestionReport> {
@@ -1125,7 +1204,11 @@ impl FeedWorker {
     }
 
     pub async fn run_cloud_due(&self) -> Result<()> {
-        self.run(false, None, None, true).await?;
+        // The shared catalog follows each source's own interval here, so a feed
+        // published during the day is collected within that interval instead of
+        // waiting for the next daily edition slot. The daily run still forces a
+        // full sweep so a source that stayed due all day cannot be skipped.
+        self.run_due().await?;
         // Following schedules never mutate the shared catalog. One reader can
         // request a shorter interval without pausing collection for others.
         let rows=sqlx::query("SELECT o.user_id,o.source_id FROM user_source_overrides o
@@ -1485,7 +1568,7 @@ impl FeedWorker {
         Ok(report)
     }
     pub async fn run_daily(&self, since: DateTime<Utc>) -> Result<IngestionReport> {
-        self.run(true, None, Some(since), false).await
+        self.run(true, None, Some(since)).await
     }
 
     async fn run(
@@ -1493,27 +1576,9 @@ impl FeedWorker {
         force: bool,
         only_source: Option<Uuid>,
         daily_since: Option<DateTime<Utc>>,
-        private_only: bool,
     ) -> Result<IngestionReport> {
-        let sources = sqlx::query(r#"SELECT s.id,s.name,s.endpoint,s.content_type,s.adapter_type,s.tier,s.cache_meta,s.compliance,s.publisher_id,s.owner_user_id,
-                COALESCE(p.official_domains,'[]'::jsonb) AS official_domains
-            FROM sources s LEFT JOIN publishers p ON p.id=s.publisher_id
-            WHERE s.lifecycle_status IN ('stable','observing')
-              AND (NOT $5 OR s.owner_user_id IS NOT NULL)
-              AND s.adapter_type = ANY($3)
-              AND ($2::uuid IS NULL OR s.id=$2)
-              AND ($4::timestamptz IS NULL OR NOT EXISTS(SELECT 1 FROM fetch_runs f
-                  WHERE f.source_id=s.id AND f.started_at>=$4 AND f.status IN ('success','not_modified')))
-              AND (s.cache_meta->>'retryAfter' IS NULL OR (s.cache_meta->>'retryAfter')::timestamptz <= now())
-              AND ($1::boolean OR s.cache_meta->>'retryAfter' IS NOT NULL OR NOT EXISTS (
-                SELECT 1 FROM fetch_runs f WHERE f.source_id=s.id
-                AND f.started_at + make_interval(mins => GREATEST(s.schedule_minutes,
-                    CASE s.adapter_type WHEN 'arxiv_atom' THEN 720 WHEN 'github_search' THEN 1440
-                    WHEN 'github_repository' THEN 360 WHEN 'huggingface_models' THEN 60
-                    WHEN 'anthropic_news' THEN 180 WHEN 'anthropic_research' THEN 180 WHEN 'anthropic_engineering' THEN 180
-                    WHEN 'x_public_preview' THEN 1440 ELSE 1 END)) > now()))
-            ORDER BY s.last_success_at ASC NULLS FIRST,s.name,s.id"#)
-            .bind(force).bind(only_source).bind(supported_adapters()).bind(daily_since).bind(private_only).fetch_all(&self.pool).await?;
+        let sources = sqlx::query(DUE_SOURCES_SQL)
+            .bind(force).bind(only_source).bind(supported_adapters()).bind(daily_since).fetch_all(&self.pool).await?;
         if sources.is_empty() && only_source.is_some() {
             bail!(
                 "source is missing, paused, in server-requested backoff, or has an unsupported adapter"
@@ -1527,7 +1592,6 @@ impl FeedWorker {
             // Yield between sources so a large scheduled catalog cannot hold
             // every reader's durable job behind a whole multi-hour batch.
             let _guard = self.run_lock.lock().await;
-            let source_name: String = source.try_get("name")?;
             let source_id: Uuid = source.try_get("id")?;
             match self.process_source(source, None).await {
                 Ok(counts) => {
@@ -1535,10 +1599,8 @@ impl FeedWorker {
                     report.updated += counts.updated;
                     report.succeeded += 1;
                 }
-                Err(error) => {
-                    tracing::warn!(%source_id, "source ingestion failed");
+                Err(_) => {
                     report.failed += 1;
-                    let _ = (source_name, error);
                     report
                         .errors
                         .push(format!("source {source_id}: collection failed"));
@@ -1555,13 +1617,19 @@ impl FeedWorker {
             .process_source_inner(&row, source_id, run_id, actor)
             .await;
         if let Err(error) = &result {
-            let error_text = "Collection failed; check source availability or retry later";
+            let (code, error_text) = failure_cause(error);
+            let database = error.downcast_ref::<sqlx::Error>().and_then(sqlx::Error::as_database_error);
+            tracing::warn!(%source_id, cause = code,
+                database_code = database.and_then(|error| error.code()).as_deref(),
+                database_constraint = database.and_then(|error| error.constraint()),
+                "source ingestion failed");
             // Deliberately outside the failed content transaction: parse and database
             // failures must both finish the run and update the source's health.
-            let log = sqlx::query(r#"INSERT INTO fetch_runs(id,source_id,started_at,finished_at,status,error)
-                VALUES($1,$2,now(),now(),'failed',$3)
-                ON CONFLICT(id) DO UPDATE SET finished_at=now(),status='failed',error=EXCLUDED.error"#)
-                .bind(run_id).bind(source_id).bind(&error_text).execute(&self.pool).await;
+            let log = sqlx::query(r#"INSERT INTO fetch_runs(id,source_id,started_at,finished_at,status,error,http_meta)
+                VALUES($1,$2,now(),now(),'failed',$3,jsonb_build_object('failureCode',$4::text))
+                ON CONFLICT(id) DO UPDATE SET finished_at=now(),status='failed',error=EXCLUDED.error,
+                  http_meta=fetch_runs.http_meta || EXCLUDED.http_meta"#)
+                .bind(run_id).bind(source_id).bind(error_text).bind(code).execute(&self.pool).await;
             let retry_after = if row.try_get::<String, _>("adapter_type")? == "x_public_preview" {
                 FeedAdapter::enrichment_retry_after(error)
             } else {
@@ -1641,6 +1709,7 @@ impl FeedWorker {
                 | "anthropic_news"
                 | "anthropic_research"
                 | "anthropic_engineering"
+                | "claude_blog"
         );
         if cache.get("excerptVersion").and_then(|value| value.as_u64()) != Some(2)
             || needs_context
@@ -1936,7 +2005,7 @@ fn article_retry_after(error: &anyhow::Error) -> Option<DateTime<Utc>> {
 fn supports_article_enrichment(adapter: &str) -> bool {
     matches!(
         adapter,
-        "rss" | "atom" | "anthropic_news" | "anthropic_research" | "anthropic_engineering"
+        "rss" | "atom" | "anthropic_news" | "anthropic_research" | "anthropic_engineering" | "claude_blog"
     )
 }
 
@@ -2404,6 +2473,132 @@ async fn refresh_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "explicit opt-in: checks registered public endpoints with the production transport"]
+    async fn publisher_index_transport_contract() {
+        let adapter = FeedAdapter::new(Client::new());
+        let mut failures = Vec::new();
+        for (kind, endpoint) in [
+            ("anthropic_news", "https://www.anthropic.com/news"),
+            ("anthropic_research", "https://www.anthropic.com/research"),
+            ("anthropic_engineering", "https://www.anthropic.com/engineering"),
+            ("claude_blog", "https://claude.com/resources/articles"),
+            ("podcast_rss", "https://api.substack.com/feed/podcast/1084089.rss"),
+            ("podcast_rss", "https://api.substack.com/feed/podcast/10845.rss"),
+            ("podcast_rss", "https://api.substack.com/feed/podcast/458709.rss"),
+        ] {
+            let source = AdapterSource {
+                endpoint: endpoint.into(),
+                etag: None,
+                last_modified: None,
+            };
+            match adapter.fetch_with_adapter(&source, kind).await {
+                Ok(FetchOutcome::Items { items, .. }) => {
+                    assert!(!items.is_empty(), "{endpoint}");
+                    println!("{kind}: {} dated items from {endpoint}", items.len());
+                }
+                Ok(FetchOutcome::NotModified) => failures.push(format!("{kind}: uncached 304")),
+                Err(error) => failures.push(format!("{kind}: {endpoint}: {error:#}")),
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit opt-in: fetches each newly registered public endpoint once"]
+    async fn coverage_endpoints_parse_with_real_publication_dates() {
+        let client = Client::builder()
+            .user_agent("ScoutNews/0.2 (catalog registration verification)")
+            .timeout(std::time::Duration::from_secs(45))
+            .build()
+            .unwrap();
+        for (adapter, endpoint) in [
+            ("rss", "https://vllm.ai/blog/rss.xml"),
+            ("rss", "https://research.ibm.com/rss"),
+            ("rss", "https://allenai.org/rss.xml"),
+            (
+                "github_search",
+                "https://api.github.com/search/repositories?q=org%3Adeepseek-ai+archived%3Afalse&sort=updated&order=desc&per_page=20",
+            ),
+        ] {
+            let url = source_adapters::validate_adapter_endpoint(adapter, endpoint).unwrap();
+            let bytes = client
+                .get(url.clone())
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            let items = if adapter == "github_search" {
+                source_adapters::parse(adapter, &bytes, &url).unwrap()
+            } else {
+                parse_items(&bytes, &url, adapter).unwrap()
+            };
+            assert!(!items.is_empty(), "{endpoint} returned no entries");
+            // Every entry must carry its own publication date. Without one the
+            // collection clock would silently stand in for publication time.
+            for item in &items {
+                assert!(item.published_at.is_some(), "{endpoint}: {}", item.title);
+            }
+            let newest = items
+                .iter()
+                .filter_map(|item| item.published_at)
+                .max()
+                .unwrap();
+            println!(
+                "{endpoint}: entries={} newest={} first={}",
+                items.len(),
+                newest.to_rfc3339(),
+                items[0].title
+            );
+        }
+    }
+
+    #[test]
+    fn failure_cause_names_the_class_without_leaking_the_request() {
+        let cases: Vec<(anyhow::Error, &str)> = vec![
+            (
+                FetchBackoff {
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    until: Utc::now(),
+                }
+                .into(),
+                "rate_limited",
+            ),
+            (
+                FetchBackoff {
+                    status: StatusCode::SERVICE_UNAVAILABLE,
+                    until: Utc::now(),
+                }
+                .into(),
+                "backoff",
+            ),
+            (CommentPolicyBlocked.into(), "policy_blocked"),
+            (SourceAuthorizationChanged.into(), "authorization_withdrawn"),
+            (SourceFormatChanged(anyhow::anyhow!("PRIVATE_PARSE_DETAIL")).into(), "format_changed"),
+            (sqlx::Error::Protocol("PRIVATE_STORAGE_DETAIL".into()).into(), "storage_error"),
+            (anyhow::anyhow!("feed returned malformed XML"), "unavailable"),
+        ];
+        for (error, expected) in cases {
+            let (code, text) = failure_cause(&error);
+            assert_eq!(code, expected);
+            assert!(!text.is_empty());
+            // A stored cause is shown to the reader, so it must never carry the
+            // endpoint, a response body or the internal error chain.
+            assert!(!text.contains("http"), "{text}");
+            assert!(!text.contains(&error.to_string()), "{text}");
+        }
+        // An unclassified failure keeps the conservative generic sentence.
+        assert_eq!(
+            failure_cause(&anyhow::anyhow!("boom")).1,
+            "采集失败；请检查来源可用性或稍后重试"
+        );
+        assert!(collection_failure_message("PRIVATE_REQUEST_URL_OR_TOKEN").is_none());
+    }
 
     #[test]
     fn x_registry_accepts_only_bounded_same_author_originals() {

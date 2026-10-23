@@ -24,6 +24,7 @@ const sourceAdapters: { value: NewSource["adapter"]; label: string; contentType:
   { value: "anthropic_news", label: "Anthropic News 官方索引", contentType: "blog" },
   { value: "anthropic_research", label: "Anthropic Research 研究索引", contentType: "blog" },
   { value: "anthropic_engineering", label: "Anthropic Engineering 工程索引", contentType: "blog" },
+  { value: "claude_blog", label: "Claude 产品博客", contentType: "blog" },
   { value: "x_public_preview", label: "X 原帖预览（登记链接）", contentType: "blog" },
 ];
 

@@ -57,14 +57,14 @@ pub fn coverage(sources: &[Source]) -> Value {
         ),
         (
             "anthropic",
-            "Anthropic 官方 News / Research / Engineering",
+            "Anthropic / Claude 官方索引",
             |s| {
                 matches!(
                     s.adapter.as_str(),
-                    "anthropic_news" | "anthropic_research" | "anthropic_engineering"
+                    "anthropic_news" | "anthropic_research" | "anthropic_engineering" | "claude_blog"
                 )
             },
-            "三个独立官方索引仅提供标题、原始日期、主题和来源短摘录；每次请求先核验 robots，结构或政策变化即报错，不抓文章全文或分页。索引当前可用不等于近 30 天完整覆盖；200 条上限和索引自身收录范围均可能限制覆盖。",
+            "News、Research、Engineering 和 Claude 产品博客是不同入口。索引只读取发布者的日期、标题和短摘录，不包含导航推荐或分页；正文另按公开访问策略有界补充。结构或 robots 政策变化即报错，索引可用不等于近 30 天完整覆盖。",
         ),
         (
             "papers-ai",
@@ -156,7 +156,7 @@ pub fn coverage(sources: &[Source]) -> Value {
             "github-discovery",
             "GitHub 项目发现（观察）",
             |s| s.adapter == "github_search",
-            "公开 Search API 候选，不是官方 Trending，不授予官方来源身份，不把 star 或榜单排名当作事实热度。",
+            "公开 Search API 不是官方 Trending；开放查询仍是未核实候选，登记的单账号查询须逐项验证归属。不把 star 或榜单排名当作事实热度。",
         ),
     ];
     let mut items = Vec::new();
@@ -183,6 +183,7 @@ pub fn coverage(sources: &[Source]) -> Value {
             "anthropic_news",
             "anthropic_research",
             "anthropic_engineering",
+            "claude_blog",
         ];
         let missing_anthropic_index = id == "anthropic"
             && anthropic_adapters
@@ -311,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_coverage_counts_three_exact_adapters_without_claiming_window_completeness() {
+    fn anthropic_coverage_requires_product_blog_without_claiming_window_completeness() {
         let mut sources = Vec::new();
         for path in ["news", "research", "engineering"] {
             let mut source = source();
@@ -325,16 +326,23 @@ mod tests {
             item(&coverage(&sources[..1]), "anthropic")["status"],
             "partial"
         );
+        assert_eq!(item(&coverage(&sources), "anthropic")["status"], "partial");
         let mut wrong_host = sources[1].clone();
         wrong_host.endpoint = "https://example.com/research".into();
         sources.push(wrong_host);
         let mut wrong_adapter = sources[2].clone();
         wrong_adapter.adapter = "anthropic_unverified".into();
         sources.push(wrong_adapter);
+        let mut product = source();
+        product.adapter = "claude_blog".into();
+        product.endpoint = "https://claude.com/resources/articles".into();
+        product.lifecycle_status = "stable".into();
+        product.last_success_at = Some(chrono::Utc::now());
+        sources.push(product);
         let report = item(&coverage(&sources), "anthropic");
-        assert_eq!(report["sourceCount"], 3);
+        assert_eq!(report["sourceCount"], 4);
         assert_eq!(report["status"], "active");
-        assert_eq!(report["indexAvailability"].as_array().unwrap().len(), 3);
+        assert_eq!(report["indexAvailability"].as_array().unwrap().len(), 4);
         assert!(
             report["indexAvailability"]
                 .as_array()

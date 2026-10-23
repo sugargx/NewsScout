@@ -54,6 +54,116 @@ impl PostgresStore {
         Self { pool }
     }
 
+    pub(crate) async fn correct_saved_edition(
+        &self,
+        date: NaiveDate,
+        expected_cutoff: DateTime<Utc>,
+        required_events: &[Uuid],
+    ) -> Result<bool> {
+        let today = reader::local_date(Utc::now());
+        anyhow::ensure!(date <= today && date >= today - chrono::Duration::days(7),
+            "explicit correction is limited to the last seven days");
+        anyhow::ensure!(reader::local_date(expected_cutoff) == date
+            && (1..=20).contains(&required_events.len()), "invalid correction approval");
+        let cutoff: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT COALESCE(window_end,generated_at) FROM daily_briefs
+             WHERE local_date=$1 AND status='published' AND owner_user_id=scoutnews_actor()",
+        ).bind(date).fetch_optional(&self.pool).await?;
+        anyhow::ensure!(cutoff == Some(expected_cutoff), "saved edition does not match the approved cutoff");
+        self.reselect_saved_brief(date, Some((expected_cutoff, required_events))).await
+    }
+
+    async fn reselect_saved_brief(
+        &self,
+        date: NaiveDate,
+        approval: Option<(DateTime<Utc>, &[Uuid])>,
+    ) -> Result<bool> {
+        const OUTDATED: &str = "SELECT b.id,COALESCE(b.window_end,b.generated_at) AS cutoff
+            FROM daily_briefs b WHERE b.local_date=$1 AND b.status='published'
+              AND b.owner_user_id=scoutnews_actor()
+              AND ($3::timestamptz IS NOT NULL OR b.rule_version<>$2)
+              AND ($3::timestamptz IS NULL OR COALESCE(b.window_end,b.generated_at)=$3)
+              AND NOT EXISTS(SELECT 1 FROM admin_audits a WHERE a.actor=scoutnews_actor()
+                AND a.action=$4 AND a.target_id=b.id::text
+                AND a.after_value->>'ruleVersion'=$2)";
+        let now = Utc::now();
+        if approval.is_none() && date != reader::local_date(now) {
+            return Ok(false);
+        }
+        let approved_cutoff = approval.map(|value| value.0);
+        let action = if approval.is_some() { "edition_correction" } else { "edition_reselect" };
+        if sqlx::query(OUTDATED).bind(date).bind(reader::DAILY_SELECTION_RULE)
+            .bind(approved_cutoff).bind(action).fetch_optional(&self.pool).await?.is_none()
+        {
+            return Ok(false);
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(format!("brief:{}:{date}", self.pool.actor())).execute(&mut *tx).await?;
+        let Some(saved) = sqlx::query(&format!("{OUTDATED} FOR UPDATE OF b"))
+            .bind(date).bind(reader::DAILY_SELECTION_RULE).bind(approved_cutoff).bind(action)
+            .fetch_optional(&mut *tx).await?
+        else {
+            return Ok(false);
+        };
+        let id: Uuid = saved.try_get("id")?;
+        let cutoff: DateTime<Utc> = saved.try_get("cutoff")?;
+        let before: Value = sqlx::query_scalar(
+            "SELECT jsonb_build_object('ruleVersion',b.rule_version,'generatedAt',b.generated_at,
+              'windowStart',b.window_start,'windowEnd',b.window_end,'sections',b.sections,
+              'items',COALESCE((SELECT jsonb_agg(jsonb_build_object('eventId',i.event_id,'rank',i.rank,
+                'section',i.section,'selectionReason',i.selection_reason,'snapshot',i.snapshot) ORDER BY i.rank)
+                FROM daily_brief_items i WHERE i.brief_id=b.id),'[]'::jsonb))
+            FROM daily_briefs b WHERE b.id=$1",
+        ).bind(id).fetch_one(&mut *tx).await?;
+        let brief = self.build_brief(cutoff, None).await?;
+        if let Some((_, required)) = approval {
+            anyhow::ensure!(required.iter().all(|id| brief.items.iter().any(|event| event.id == *id)),
+                "approved correction is not ready: required events must qualify naturally and have completed summaries");
+        }
+        let has_excluded_source: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM daily_brief_items bi
+             WHERE bi.brief_id=$1 AND NOT reader_daily_source_eligible(bi.event_id))",
+        ).bind(id).fetch_one(&mut *tx).await?;
+        let replaced = !brief.items.is_empty() || has_excluded_source;
+        if replaced {
+            sqlx::query(
+                "UPDATE daily_briefs SET rule_version=$2,generated_at=$3,window_start=$4,sections=$5 WHERE id=$1",
+            ).bind(id).bind(reader::DAILY_SELECTION_RULE).bind(now).bind(brief.window_start)
+                .bind(serde_json::to_value(&brief.sections)?).execute(&mut *tx).await?;
+            sqlx::query("DELETE FROM daily_brief_items WHERE brief_id=$1").bind(id).execute(&mut *tx).await?;
+            for (index, event) in brief.items.iter().enumerate() {
+                sqlx::query("INSERT INTO daily_brief_items(brief_id,event_id,rank,section,selection_reason,snapshot)
+                    VALUES($1,$2,$3,$4,$5,$6)")
+                    .bind(id).bind(event.id).bind((index+1) as i32).bind(&event.primary_topic)
+                    .bind(&event.score.explanation).bind(serde_json::to_value(event)?).execute(&mut *tx).await?;
+            }
+            let message = if approval.is_some() {
+                format!("经本人确认，本期晨报已留痕修正一次：{} 条；原版已保存于审计记录，其他日期不变", brief.items.len())
+            } else {
+                format!("选文规则已更新，今日晨报按新规则重选一次：{} 条；往期晨报不变", brief.items.len())
+            };
+            sqlx::query("UPDATE morning_runs SET message=$2 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()")
+                .bind(date).bind(message).execute(&mut *tx).await?;
+        }
+        let reason = if approval.is_some() {
+            "本人明确批准指定日期的修正；截止时间保持，原版完整保存在 before_value"
+        } else if replaced {
+            "选文规则升级：当日晨报按新规则重选一次，原选文保存在 before_value"
+        } else {
+            "选文规则升级：新规则下没有合格条目，保留原晨报"
+        };
+        sqlx::query("INSERT INTO admin_audits(id,actor,action,target_type,target_id,before_value,after_value,reason)
+            VALUES($1,scoutnews_actor(),$2,'daily_brief',$3,$4,$5,$6)")
+            .bind(Uuid::new_v4()).bind(action).bind(id.to_string()).bind(before)
+            .bind(serde_json::json!({"ruleVersion":reader::DAILY_SELECTION_RULE,"replaced":replaced,
+                "items":brief.items.len(),"approvedCutoff":approved_cutoff}))
+            .bind(reason).execute(&mut *tx).await?;
+        tx.commit().await?;
+        tracing::info!(%date, replaced, items=brief.items.len(), action, "saved edition reviewed once with audit");
+        Ok(replaced)
+    }
+
     async fn coverage_records(
         &self,
         ids: Option<&[Uuid]>,
@@ -1477,120 +1587,7 @@ impl Store for PostgresStore {
     }
 
     async fn reselect_outdated_brief(&self, date: NaiveDate) -> Result<bool> {
-        // Outdated = saved under an earlier rule and not yet re-selected (or kept)
-        // for the current one. The audit row is both the backup and the once-only marker.
-        const OUTDATED: &str = "SELECT b.id,COALESCE(b.window_end,b.generated_at) AS cutoff
-            FROM daily_briefs b WHERE b.local_date=$1 AND b.status='published'
-              AND b.owner_user_id=scoutnews_actor() AND b.rule_version<>$2
-              AND NOT EXISTS(SELECT 1 FROM admin_audits a WHERE a.actor=scoutnews_actor()
-                AND a.action='edition_reselect' AND a.target_id=b.id::text
-                AND a.after_value->>'ruleVersion'=$2)";
-        let now = Utc::now();
-        if date != reader::local_date(now) {
-            return Ok(false);
-        }
-        // Runs on every scheduler tick, so probe without locking first.
-        if sqlx::query(OUTDATED)
-            .bind(date)
-            .bind(reader::DAILY_SELECTION_RULE)
-            .fetch_optional(&self.pool)
-            .await?
-            .is_none()
-        {
-            return Ok(false);
-        }
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-            .bind(format!("brief:{}:{date}", self.pool.actor()))
-            .execute(&mut *tx)
-            .await?;
-        let locked = format!("{OUTDATED} FOR UPDATE OF b");
-        let Some(saved) = sqlx::query(&locked)
-            .bind(date)
-            .bind(reader::DAILY_SELECTION_RULE)
-            .fetch_optional(&mut *tx)
-            .await?
-        else {
-            return Ok(false);
-        };
-        let id: Uuid = saved.try_get("id")?;
-        let cutoff: DateTime<Utc> = saved.try_get("cutoff")?;
-        let before: Value = sqlx::query_scalar(
-            "SELECT jsonb_build_object('ruleVersion',b.rule_version,'generatedAt',b.generated_at,
-              'windowStart',b.window_start,'windowEnd',b.window_end,'sections',b.sections,
-              'items',COALESCE((SELECT jsonb_agg(jsonb_build_object('eventId',i.event_id,'rank',i.rank,
-                'section',i.section,'selectionReason',i.selection_reason,'snapshot',i.snapshot) ORDER BY i.rank)
-                FROM daily_brief_items i WHERE i.brief_id=b.id),'[]'::jsonb))
-            FROM daily_briefs b WHERE b.id=$1",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-        // Same boundary as the original selection: nothing published after it enters.
-        let brief = self.build_brief(cutoff, None).await?;
-        let has_excluded_source: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM daily_brief_items bi
-             WHERE bi.brief_id=$1 AND NOT reader_daily_source_eligible(bi.event_id))",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-        // An empty result cannot preserve a saved edition that violates the new hard gate.
-        let replaced = !brief.items.is_empty() || has_excluded_source;
-        if replaced {
-            sqlx::query(
-                "UPDATE daily_briefs SET rule_version=$2,generated_at=$3,window_start=$4,sections=$5 WHERE id=$1",
-            )
-            .bind(id)
-            .bind(reader::DAILY_SELECTION_RULE)
-            .bind(now)
-            .bind(brief.window_start)
-            .bind(serde_json::to_value(&brief.sections)?)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query("DELETE FROM daily_brief_items WHERE brief_id=$1")
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            for (index, event) in brief.items.iter().enumerate() {
-                sqlx::query(r#"INSERT INTO daily_brief_items(brief_id,event_id,rank,section,selection_reason,snapshot)
-                    VALUES($1,$2,$3,$4,$5,$6)"#).bind(id).bind(event.id).bind((index+1) as i32)
-                    .bind(&event.primary_topic).bind(&event.score.explanation).bind(serde_json::to_value(event)?)
-                    .execute(&mut *tx).await?;
-            }
-            sqlx::query("UPDATE morning_runs SET message=$2 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()")
-                .bind(date)
-                .bind(format!("选文规则已更新，今日晨报按新规则重选一次：{} 条；往期晨报不变", brief.items.len()))
-                .execute(&mut *tx)
-                .await?;
-        }
-        sqlx::query("INSERT INTO admin_audits(id,actor,action,target_type,target_id,before_value,after_value,reason)
-            VALUES($1,scoutnews_actor(),'edition_reselect','daily_brief',$2,$3,$4,$5)")
-            .bind(Uuid::new_v4())
-            .bind(id.to_string())
-            .bind(before)
-            .bind(serde_json::json!({
-                "ruleVersion": reader::DAILY_SELECTION_RULE,
-                "replaced": replaced,
-                "items": brief.items.len(),
-            }))
-            .bind(if replaced {
-                "选文规则升级：当日晨报按新规则重选一次，原选文保存在 before_value"
-            } else {
-                "选文规则升级：新规则下没有合格条目，保留原晨报"
-            })
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        // Once per edition (the audit row above prevents repeats); no reader identity is logged.
-        tracing::info!(
-            %date,
-            replaced,
-            items = brief.items.len(),
-            rule = reader::DAILY_SELECTION_RULE,
-            "today's saved edition checked once against the current selection rule"
-        );
-        Ok(replaced)
+        self.reselect_saved_brief(date, None).await
     }
 
     async fn brief_history(&self) -> Result<Vec<BriefHistory>> {
@@ -1643,6 +1640,8 @@ impl Store for PostgresStore {
             (SELECT CASE WHEN scoutnews_actor()='local' THEN error
                 WHEN error IS NOT NULL THEN 'Collection failed; retry later' END
                 FROM fetch_runs WHERE source_id=s.id ORDER BY started_at DESC,id LIMIT 1) AS last_error,
+             (SELECT http_meta->>'failureCode' FROM fetch_runs
+                 WHERE source_id=s.id ORDER BY started_at DESC,id LIMIT 1) AS last_failure_code,
             COALESCE(array_agg(tn.label ORDER BY tn.label) FILTER(WHERE tn.label IS NOT NULL),'{}') AS topics
             FROM sources s LEFT JOIN publishers p ON p.id=s.publisher_id
             LEFT JOIN source_topics st ON st.source_id=s.id LEFT JOIN taxonomy_nodes tn ON tn.id=st.taxonomy_id
@@ -1664,7 +1663,9 @@ impl Store for PostgresStore {
                     last_success_at: row.try_get("last_success_at")?,
                     schedule_minutes: row.try_get("schedule_minutes")?,
                     consecutive_failures: row.try_get("consecutive_failures")?,
-                    last_error: row.try_get("last_error")?,
+                    last_error: row.try_get::<Option<String>, _>("last_failure_code")?
+                        .as_deref().and_then(crate::ingestion::collection_failure_message)
+                        .map(str::to_owned).or(row.try_get("last_error")?),
                 })
             })
             .collect()

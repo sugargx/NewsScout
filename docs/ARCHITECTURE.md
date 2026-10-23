@@ -80,7 +80,9 @@ Node宿主在客户端放弃GET/HEAD时向上游传播取消，正常响应结�
 
 云端主动采集由 `ingestion_jobs.rs` 返回持久化 job ID，Worker 在 owner scope 下处理；每批最多100来源、每用户每小时6次提交、最多一个 pending/running 任务，全局同一来源2分钟 claim 间隔。重复提交可能返回既有任务，不能当新任务成功；没有取消端点。过期 running 租约会标记 `worker_interrupted`，不以无界自动重提掩盖中断。
 
-Anthropic News 的 `source_adapters.rs` 以服务端索引中的标题/日期卡片识别文章，而非仅按 `/news/` 路径识别。允许经过校验的官网根路径公告与原新闻路径；排除导航入口、站外/带凭据/异常端口地址及含混编码路径，不请求文章正文或执行脚本。已识别卡片缺少必要字段、日期不合法或超出200条界限时使采集失败，沿用现有 `fetch_runs` 与来源失败/退避链路，避免“仍能解析旧文章”掩盖部分漏采。News 的此门槛不改变 Research/Engineering 的目录与截断契约，也不宣称网站全量覆盖。
+Anthropic News / Research / Engineering 保留旧日期卡片兼容，并在改版后通过 `publisher_indexes.rs` 被动解码页面公开的 Flight JSON。只接受 `posts + hasNextPage` 的实际列表，不把导航和相关推荐混入结果；官网给出明确 `linkedUrl` 的研究可不含 slug。普通记录使用已渲染的明确链接，含混链接、缺少日期或必要字段即报错。独立的 `claude_blog` 仅接受 Claude 产品站的 `items + total + leadFromFeed` 列表和具名 `blogPost` 路由，排除站外转载及非英文条目。四个入口共用 Anthropic 发布者，不因子域不同增加互证。
+
+这些索引均先检查 robots，不执行脚本、不请求隐藏接口、不翻页，最多200条；正文补充另沿用受限原文读取流程。公共目录现在与私有来源一样按自身 `schedule_minutes` 到期，不再被 `private_only` 排除而只能等每日批次。个人频率覆盖不改公共目录行，上游退避与安全最小间隔仍生效。`fetch_runs.http_meta.failureCode` 记录稳定失败分类；云端 `lastError` 只从白名单映射安全文案，旧错误及未知代码继续脱敏。
 
 仅有日期的公告继续保存来源日期和 `datePrecision=day`；明确的 RFC3339 时间保留 `time` 精度。格式和材料未变的旧日期卡片保留原身份与内容指纹，不因本次解析扩展而重排摘要；新增材料与发布者的实质更新仍沿用正常处理队列。24小时筛选与历史晨报规则不变，补采时间不替代发布时间。
 

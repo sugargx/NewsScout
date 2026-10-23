@@ -22,6 +22,7 @@ const PROXY: &str = "isolated-test-proxy-secret-32-bytes-minimum";
 const CSRF: &str = "isolated-test-csrf-secret-32-bytes-minimum";
 
 mod ai_infra_regressions;
+mod coverage_regressions;
 mod ingestion_regressions;
 mod brief_visual_regressions;
 mod reader_performance_regressions;
@@ -280,9 +281,18 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     let visual_upgrade = brief_visual_regressions::seed_upgrade(&pool).await?;
     migrator.migrations = all_migrations;
     migrator.run(&pool).await?;
+    let mut previous_release = sqlx::migrate!("./migrations");
+    previous_release.migrations = std::borrow::Cow::Owned(previous_release.migrations.iter()
+        .filter(|migration| migration.version <= 37).cloned().collect());
+    let rollback_error = previous_release.run(&pool).await
+        .expect_err("an old migration bundle must not be treated as a schema39-compatible rollback");
+    assert!(rollback_error.to_string().contains("38"), "{rollback_error}");
     visual_upgrade.verify_and_cleanup(&pool).await?;
     verify_explicit_role_membership(&pool).await?;
     ai_infra_regressions::verify_ai_infra_catalog(&pool).await?;
+    coverage_regressions::verify_coverage_catalog(&pool).await?;
+    coverage_regressions::verify_catalog_follows_its_own_interval(&pool).await?;
+    coverage_regressions::verify_critical_disclosure_selection(&pool).await?;
     crate::source_directory::import(&pool).await?;
     sqlx::query("UPDATE interest_profiles SET profile=$1 WHERE user_id='local'")
         .bind(json!({"topics":[{"id":"local","label":"LOCAL_OWNER_SENTINEL","group":"local","context":"work","weight":99,"enabled":true}]}))
@@ -298,6 +308,8 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     assert_ne!(a.id, b.id);
     assert_ne!(a.csrf, b.csrf);
     self_service_regressions::verify_admission(&pool, &app, &a).await?;
+    coverage_regressions::verify_source_failure_projection(&pool, &a).await?;
+    coverage_regressions::verify_explicit_edition_correction(&pool, &a, &b).await?;
     let (shared_source, shared) = fixture(&pool, None, "PUBLIC_FIXTURE").await?;
     let (a_source, a_event) = fixture(&pool, Some(a.id.to_string()), "PRIVATE_ALPHA").await?;
     let (b_source, b_event) = fixture(&pool, Some(b.id.to_string()), "PRIVATE_BETA").await?;

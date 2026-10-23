@@ -227,6 +227,30 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+for (const width of [1440, 390]) {
+  test(`cloud source coverage exposes the Claude adapter and safe failure cause at ${width}px`, async ({ page, mockCloud }, info) => {
+    const mock = await mockCloud(page.context());
+    const cause = "来源格式已变化或不符合适配器约定，需要维护适配器";
+    mock.sources = [{
+      ...sourceFixture("Claude 产品博客测试"), adapter: "claude_blog", tier: "T1",
+      endpoint: "https://claude.com/resources/articles", consecutiveFailures: 2, lastError: cause,
+    }];
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/sources?adapter=claude_blog");
+    const card = page.getByRole("region", { name: "Claude 产品博客测试", exact: true });
+    await expect(card.getByText("Claude 产品博客", { exact: true })).toBeVisible();
+    await expect(card.getByText(cause, { exact: true })).toBeVisible();
+    await expect(card.getByText("采集失败", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await screenshot(page, info, `claude-source-${width}`);
+    await page.getByRole("button", { name: "新增来源", exact: true }).click();
+    await page.getByLabel("采集适配器", { exact: true }).selectOption("claude_blog");
+    await expect(page.getByLabel("内容类型", { exact: true })).toHaveValue("blog");
+    await expect(page.getByLabel("采集适配器", { exact: true })).toHaveValue("claude_blog");
+    expect(mock.requests.some(request => request.method !== "GET")).toBe(false);
+  });
+}
+
 test("cloud daily share downloads a local image, publishes nothing and keeps legacy links revocable", async ({ page, browser, mockCloud }, info) => {
   const owner = await mockCloud(page.context()), sharing = sharingContract();
   owner.reply = sharing.reply;

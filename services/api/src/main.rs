@@ -9,6 +9,7 @@ mod coverage;
 mod edition;
 mod ingestion;
 mod ingestion_jobs;
+mod maintenance;
 mod models;
 #[cfg(test)]
 #[path = "../tests/owner_upgrade/mod.rs"]
@@ -62,6 +63,10 @@ async fn main() -> Result<()> {
         || env::var("SCOUTNEWS_DEMO_MODE").is_ok_and(|mode| mode.eq_ignore_ascii_case("true"));
     if !explicit_environment {
         dotenvy::dotenv().ok();
+    }
+    let args: Vec<String> = env::args().skip(1).collect();
+    if !args.is_empty() {
+        return maintenance::run(&args).await;
     }
     let mut auth = auth::Auth::from_env()?;
     tracing_subscriber::fmt()

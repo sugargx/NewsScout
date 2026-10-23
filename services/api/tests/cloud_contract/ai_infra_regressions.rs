@@ -55,7 +55,10 @@ pub(super) async fn verify_ai_infra_catalog(pool: &PgPool) -> anyhow::Result<()>
     for (name, endpoint, adapter, tier, content_type) in &registered {
         assert!(endpoint.starts_with("https://"), "{name}");
         assert!(
-            matches!(adapter.as_str(), "rss" | "atom" | "github_release_atom" | "arxiv_atom"),
+            matches!(
+                adapter.as_str(),
+                "rss" | "atom" | "github_release_atom" | "arxiv_atom" | "github_search"
+            ),
             "{name} uses {adapter}"
         );
         assert!(matches!(tier.as_str(), "T1" | "T1.5" | "T2"), "{name}");

@@ -12,6 +12,9 @@ use std::{
 };
 use url::Url;
 
+#[path = "publisher_indexes.rs"]
+mod publisher_indexes;
+
 pub fn supported_adapters() -> &'static [&'static str] {
     &[
         "rss",
@@ -25,6 +28,7 @@ pub fn supported_adapters() -> &'static [&'static str] {
         "anthropic_news",
         "anthropic_research",
         "anthropic_engineering",
+        "claude_blog",
         "x_public_preview",
     ]
 }
@@ -153,6 +157,12 @@ pub fn validate_adapter_endpoint(adapter: &str, endpoint: &str) -> Result<Url> {
                 && url.path() == "/engineering"
                 && url.query().is_none()
         }
+        "claude_blog" => {
+            api_port
+                && host == "claude.com"
+                && url.path() == "/resources/articles"
+                && url.query().is_none()
+        }
         _ => false,
     };
     if !valid || url.fragment().is_some() {
@@ -169,7 +179,25 @@ pub(super) fn official_evidence_url(
     compliance: &Value,
 ) -> bool {
     if adapter == "github_search" {
-        return false;
+        let (Ok(source), Ok(url)) = (
+            validate_adapter_endpoint("github_search", endpoint),
+            validate_public_https(content_url),
+        ) else {
+            return false;
+        };
+        let Some(account) = account_scope(&source) else {
+            return false;
+        };
+        let path: Vec<_> = url.path().trim_matches('/').split('/').collect();
+        return source.host_str() == Some("api.github.com")
+            && source.path() == "/search/repositories"
+            && url.host_str() == Some("github.com")
+            && url.port().is_none_or(|port| port == 443)
+            && matches!(path.as_slice(), [owner, repository]
+                if owner.eq_ignore_ascii_case(&account) && slug(repository))
+            && compliance.get("catalogVersion").is_some()
+            && compliance.get("publisherScope").and_then(Value::as_str)
+                == Some(format!("https://github.com/{account}").as_str());
     }
     if matches!(adapter, "github_release_atom" | "github_repository") {
         let Ok(url) = Url::parse(content_url) else {
@@ -231,6 +259,12 @@ pub(super) fn parse(adapter: &str, bytes: &[u8], endpoint: &Url) -> Result<Vec<F
             endpoint,
         );
     }
+    if adapter == "claude_blog" {
+        return publisher_indexes::parse(
+            std::str::from_utf8(bytes).context("publisher index is not UTF-8")?,
+            endpoint,
+        )?.context("Claude index contract changed: no dated article listing; manual review required");
+    }
     if matches!(adapter, "anthropic_research" | "anthropic_engineering") {
         return parse_anthropic_technical(
             std::str::from_utf8(bytes).context("technical index is not UTF-8")?,
@@ -258,7 +292,7 @@ pub(super) fn parse(adapter: &str, bytes: &[u8], endpoint: &Url) -> Result<Vec<F
             }
         }
         "github_repository" => {
-            if let Some(item) = github_item(&data, endpoint, false)? {
+            if let Some(item) = github_item(&data, endpoint, RepositoryScope::Monitored)? {
                 items.push(item);
             }
         }
@@ -266,6 +300,11 @@ pub(super) fn parse(adapter: &str, bytes: &[u8], endpoint: &Url) -> Result<Vec<F
             if data.get("incomplete_results").and_then(Value::as_bool) != Some(false) {
                 bail!("GitHub search response is incomplete or lacks its completeness flag");
             }
+            let account = account_scope(endpoint);
+            let scope = match account.as_deref() {
+                Some(account) => RepositoryScope::Account(account),
+                None => RepositoryScope::Discovery,
+            };
             for repo in data
                 .get("items")
                 .and_then(Value::as_array)
@@ -273,7 +312,7 @@ pub(super) fn parse(adapter: &str, bytes: &[u8], endpoint: &Url) -> Result<Vec<F
                 .iter()
                 .take(MAX_FEED_ENTRIES)
             {
-                if let Some(item) = github_item(repo, endpoint, true)? {
+                if let Some(item) = github_item(repo, endpoint, scope)? {
                     items.push(item);
                 }
             }
@@ -411,7 +450,39 @@ fn huggingface_item(model: &Value, endpoint: &Url) -> Result<Option<FetchedItem>
     .map(Some)
 }
 
-fn github_item(repo: &Value, endpoint: &Url, discovery: bool) -> Result<Option<FetchedItem>> {
+/// How a repository record was reached, which decides what may be claimed about it.
+#[derive(Clone, Copy)]
+enum RepositoryScope<'a> {
+    /// One explicitly monitored repository.
+    Monitored,
+    /// A search restricted to a single owning account, so every result is that
+    /// account's own repository.
+    Account(&'a str),
+    /// An open search. Results are unvetted candidates.
+    Discovery,
+}
+
+/// The single account a repository search is restricted to, if any.
+fn account_scope(endpoint: &Url) -> Option<String> {
+    let query = query_value(endpoint, "q")?;
+    let mut account = None;
+    for term in query.split_whitespace() {
+        if term.eq_ignore_ascii_case("OR") {
+            return None;
+        }
+        let Some((key, value)) = term.split_once(':') else { continue };
+        if key.eq_ignore_ascii_case("org") || key.eq_ignore_ascii_case("user") {
+            if account.is_some() || !slug(value) {
+                return None;
+            }
+            account = Some(value.to_ascii_lowercase());
+        }
+    }
+    account
+}
+
+fn github_item(repo: &Value, endpoint: &Url, scope: RepositoryScope<'_>) -> Result<Option<FetchedItem>> {
+    let discovery = matches!(scope, RepositoryScope::Discovery);
     if repo
         .get("private")
         .and_then(Value::as_bool)
@@ -432,13 +503,21 @@ fn github_item(repo: &Value, endpoint: &Url, discovery: bool) -> Result<Option<F
     if parts.len() != 2 || !parts.iter().all(|part| slug(part)) {
         bail!("invalid repository name");
     }
-    if !discovery
-        && !endpoint
-            .path()
-            .strip_prefix("/repos/")
-            .is_some_and(|expected| expected.eq_ignore_ascii_case(name))
-    {
-        bail!("repository response is outside the monitored repository");
+    match scope {
+        RepositoryScope::Monitored
+            if !endpoint
+                .path()
+                .strip_prefix("/repos/")
+                .is_some_and(|expected| expected.eq_ignore_ascii_case(name)) =>
+        {
+            bail!("repository response is outside the monitored repository");
+        }
+        // A scoped search must only ever return that account's repositories.
+        // Anything else means the query or the response is not what was registered.
+        RepositoryScope::Account(account) if !parts[0].eq_ignore_ascii_case(account) => {
+            bail!("repository response is outside the monitored account");
+        }
+        _ => {}
     }
     let url = format!("https://github.com/{name}");
     if repo.get("html_url").and_then(Value::as_str) != Some(url.as_str()) {
@@ -461,16 +540,24 @@ fn github_item(repo: &Value, endpoint: &Url, discovery: bool) -> Result<Option<F
         .map(|text| excerpt(text, 100))
         .collect();
     let metadata = json!({
-        "kind":if discovery {"repository_discovery"} else {"repository_metadata"},
+        "kind":match scope {
+            RepositoryScope::Monitored => "repository_metadata",
+            RepositoryScope::Account(_) => "repository_account",
+            RepositoryScope::Discovery => "repository_discovery",
+        },
         "repositoryId":id, "fullName":name, "createdAt":created, "pushedAt":pushed,
         "defaultBranch":repo.get("default_branch"), "archived":repo.get("archived"),
         "license":repo.get("license").and_then(|license| license.get("spdx_id")), "topics":topics,
         "discovery":discovery, "popularityIsNotEvidence":true
     });
-    let context = if discovery {
-        "GitHub search candidate, not a verified recommendation or official publisher."
-    } else {
-        "Public repository metadata, not a release announcement."
+    let context = match scope {
+        RepositoryScope::Monitored => "Public repository metadata, not a release announcement.",
+        RepositoryScope::Account(_) => {
+            "Public repository owned by this account, not a release announcement."
+        }
+        RepositoryScope::Discovery => {
+            "GitHub search candidate, not a verified recommendation or official publisher."
+        }
     };
     let summary = format!(
         "{context} {description} Repository created: {created}. Last push: {}. No popularity ranking is used as evidence.",
@@ -654,6 +741,9 @@ fn anthropic_news_url(href: &str, endpoint: &Url) -> Result<String> {
 }
 
 fn parse_anthropic(html: &str, endpoint: &Url) -> Result<Vec<FetchedItem>> {
+    if let Some(items) = publisher_indexes::parse(html, endpoint)? {
+        return Ok(items);
+    }
     let mut seen = BTreeSet::new();
     let mut items = Vec::new();
     for (header, body) in elements(html, "a") {
@@ -968,6 +1058,9 @@ fn anthropic_technical_records(
 }
 
 fn parse_anthropic_technical(html: &str, endpoint: &Url) -> Result<Vec<FetchedItem>> {
+    if let Some(items) = publisher_indexes::parse(html, endpoint)? {
+        return Ok(items);
+    }
     let payload = anthropic_flight_payload(html)?;
     let mut rendered_links = BTreeMap::new();
     for (header, _) in elements(html, "a") {
@@ -1199,9 +1292,13 @@ mod tests {
                 .unwrap();
         let mut data = json!({"id":123,"full_name":"someone/project","html_url":"https://github.com/someone/project",
             "private":false,"created_at":"2020-01-01T00:00:00Z","pushed_at":"2025-01-01T00:00:00Z","stargazers_count":10});
-        let a = github_item(&data, &endpoint, true).unwrap().unwrap();
+        let a = github_item(&data, &endpoint, RepositoryScope::Discovery)
+            .unwrap()
+            .unwrap();
         data["stargazers_count"] = json!(1000000);
-        let b = github_item(&data, &endpoint, true).unwrap().unwrap();
+        let b = github_item(&data, &endpoint, RepositoryScope::Discovery)
+            .unwrap()
+            .unwrap();
         assert_eq!(a.content_hash, b.content_hash);
         assert_eq!(
             a.published_at.unwrap().to_rfc3339(),
@@ -1210,7 +1307,61 @@ mod tests {
         assert_eq!(a.source_metadata["discovery"], true);
         assert!(a.summary.unwrap().contains("not a verified recommendation"));
         data["created_at"] = Value::Null;
-        assert!(github_item(&data, &endpoint, true).is_err());
+        assert!(github_item(&data, &endpoint, RepositoryScope::Discovery).is_err());
+    }
+
+    #[test]
+    fn account_scoped_search_is_owned_not_an_unvetted_candidate() {
+        let endpoint = Url::parse(
+            "https://api.github.com/search/repositories?q=org%3Adeepseek-ai+archived%3Afalse&sort=updated&order=desc&per_page=20",
+        )
+        .unwrap();
+        assert_eq!(account_scope(&endpoint).as_deref(), Some("deepseek-ai"));
+        let payload = json!({"incomplete_results":false,"items":[{"id":42,
+            "full_name":"deepseek-ai/DeepInfer","html_url":"https://github.com/deepseek-ai/DeepInfer",
+            "private":false,"created_at":"2026-10-16T07:47:23Z","pushed_at":"2026-10-21T04:55:44Z",
+            "description":"Inference framework","stargazers_count":14630}]});
+        let items = parse("github_search", payload.to_string().as_bytes(), &endpoint).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].source_metadata["kind"], "repository_account");
+        assert_eq!(items[0].source_metadata["discovery"], false);
+        let summary = items[0].summary.clone().unwrap();
+        assert!(summary.contains("owned by this account"));
+        // The conservative discovery disclaimer would be false for an official account.
+        assert!(!summary.contains("not a verified recommendation"));
+        assert_eq!(
+            items[0].published_at.unwrap().to_rfc3339(),
+            "2026-10-16T07:47:23+00:00"
+        );
+
+        // A scoped query must never accept another account's repository.
+        let foreign = json!({"incomplete_results":false,"items":[{"id":43,
+            "full_name":"someone/DeepInfer","html_url":"https://github.com/someone/DeepInfer",
+            "private":false,"created_at":"2026-10-16T07:47:23Z"}]});
+        assert!(parse("github_search", foreign.to_string().as_bytes(), &endpoint).is_err());
+
+        // An open search keeps the unvetted-candidate wording.
+        let open =
+            Url::parse("https://api.github.com/search/repositories?q=topic%3Amcp&per_page=20")
+                .unwrap();
+        assert_eq!(account_scope(&open), None);
+        let items = parse("github_search", payload.to_string().as_bytes(), &open).unwrap();
+        assert_eq!(items[0].source_metadata["kind"], "repository_discovery");
+        for query in ["org:deepseek-ai org:someone", "org:deepseek-ai OR topic:mcp", "org:deepseek-ai user:someone"] {
+            let mut multiple = open.clone();
+            multiple.query_pairs_mut().clear().append_pair("q", query).append_pair("per_page", "20");
+            assert_eq!(account_scope(&multiple), None);
+        }
+        let registry = json!({"catalogVersion":"fixture","publisherScope":"https://github.com/deepseek-ai"});
+        for (url, expected) in [
+            ("https://github.com/deepseek-ai/DeepInfer", true),
+            ("https://github.com/someone/DeepInfer", false),
+            ("https://github.com/deepseek-ai/DeepInfer/issues/1", false),
+        ] {
+            assert_eq!(official_evidence_url("github_search", endpoint.as_str(), url, &json!(["github.com"]), &registry), expected);
+        }
+        assert!(!official_evidence_url("github_search", open.as_str(), "https://github.com/deepseek-ai/DeepInfer", &json!(["github.com"]), &registry));
+        assert!(!official_evidence_url("github_search", endpoint.as_str(), "https://github.com/deepseek-ai/DeepInfer", &json!(["github.com"]), &json!({})));
     }
 
     #[test]

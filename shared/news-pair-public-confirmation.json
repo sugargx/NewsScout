@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "description": "Small hand-labeled public-news input check, assembled before new-protocol predictions. This is not an external blind benchmark or a sample of live candidate traffic.",
+  "annotationPolicy": {
+    "same_event": "Different retained text describing one specific announcement. Publisher independence is a separate, unestablished property, not implied by this label.",
+    "same_copy": "Duplicate retained article text. The identical-document controls are constructed controls, not evidence of independently discovered syndication.",
+    "expectedSlots": "Evaluation only. Canonical lowercase facts from retained passages, not from the source URL, author identity, publication timestamp, or omitted paragraphs. Empty lists mean not explicitly established; null would mean unannotated. Product names remain objects, not inferred numeric release versions.",
+    "excerpts": "Short verbatim passages with presentation-only markup removed. Where two nonadjacent passages are joined, the join is a newline and the selection is described. Each source is quoted only once in the document table.",
+    "limits": "Cases share documents and are correlated. Most natural negatives span different release dates and are not representative of a narrow same-day retrieval window. Issuers and ecosystem partners dominate; this does not establish independent corroboration. The only Chinese passage is a same-publisher translation control. Selection and annotations were done by the implementer before inference, not by blind external annotators."
+  },
+  "documents": {
+    "google-gemma3": {
+      "title": "Introducing Gemma 3: The most capable model you can run on a single GPU or TPU",
+      "excerpt": "Today, we're introducing Gemma 3, a collection of lightweight, state-of-the-art open models built from the same research and technology that powers our Gemini 2.0 models.",
+      "url": "https://blog.google/innovation-and-ai/technology/developers-tools/gemma-3/",
+      "publishedAt": "2025-03-12",
+      "publicationEvidence": "Visible article heading date; original technology/developers URL redirects here.",
+      "publisherGroup": "google",
+      "selection": "Second introductory paragraph, first sentence.",
+      "expectedSlots": {
+        "actor": [], "action": ["release"], "object": ["gemma 3"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "google-gemma3-developer": {
+      "title": "Introducing Gemma 3: The Developer Guide",
+      "excerpt": "We are excited to introduce Gemma 3, our most capable and advanced version of the Gemma open-model family, building upon the success of previous Gemma releases. We listened to community feedback and added the most requested features, such as longer context, multimodality, and more!",
+      "url": "https://developers.googleblog.com/en/introducing-gemma3/",
+      "publishedAt": "2025-03-12",
+      "publicationEvidence": "Visible article heading date.",
+      "publisherGroup": "google",
+      "selection": "First introductory paragraph, second and third sentences.",
+      "expectedSlots": {
+        "actor": [], "action": ["release"], "object": ["gemma 3"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "huggingface-gemma3": {
+      "title": "Welcome Gemma 3: Google's all new multimodal, multilingual, long context open LLM",
+      "excerpt": "Today Google releases Gemma 3, a new iteration of their Gemma family of models. The models range from 1B to 27B parameters, have a context window up to 128k tokens, can accept images and text, and support 140+ languages.",
+      "url": "https://huggingface.co/blog/gemma3",
+      "publishedAt": "2025-03-12T00:00:00.542Z",
+      "publicationEvidence": "Article JSON-LD datePublished, not comment time elements.",
+      "publisherGroup": "huggingface",
+      "selection": "TL;DR opening paragraph.",
+      "expectedSlots": {
+        "actor": ["google"], "action": ["release"], "object": ["gemma 3"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "google-gemma3n": {
+      "title": "Introducing Gemma 3n: The developer guide",
+      "excerpt": "Building on this incredible momentum, we're excited to announce the full release of Gemma 3n. While last month's preview offered a glimpse, today unlocks the full power of this mobile-first architecture.",
+      "url": "https://developers.googleblog.com/en/introducing-gemma-3n-developer-guide/",
+      "publishedAt": "2025-06-26",
+      "publicationEvidence": "Visible article heading date; explicitly distinguishes full release from the earlier preview.",
+      "publisherGroup": "google",
+      "selection": "Second introductory paragraph, first and second sentences.",
+      "expectedSlots": {
+        "actor": [], "action": ["release"], "object": ["gemma 3n"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "huggingface-gemma3n": {
+      "title": "Gemma 3n fully available in the open-source ecosystem!",
+      "excerpt": "Today, Gemma 3n is finally available on the most used open source libraries. This includes transformers & timm, MLX, llama.cpp (text inputs), transformers.js, ollama, Google AI Edge, and others.",
+      "url": "https://huggingface.co/blog/gemma3n",
+      "publishedAt": "2025-06-26T00:00:00.589Z",
+      "publicationEvidence": "Article JSON-LD datePublished, not comment time elements.",
+      "publisherGroup": "huggingface",
+      "selection": "Second introductory paragraph. No preview paragraph is used as evidence of full availability.",
+      "expectedSlots": {
+        "actor": [], "action": ["release"], "object": ["gemma 3n"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "qwen3": {
+      "title": "Qwen3: Think Deeper, Act Faster",
+      "excerpt": "Today, we are excited to announce the release of Qwen3, the latest addition to the Qwen family of large language models.",
+      "url": "https://qwenlm.github.io/blog/qwen3/",
+      "publishedAt": "2025-04-29T04:00:00+08:00",
+      "publicationEvidence": "article:published_time and JSON-LD datePublished.",
+      "publisherGroup": "qwen",
+      "selection": "Introduction, first sentence only; English and translated Chinese quotations together remain below 90 words using conservative CJK-character counting.",
+      "expectedSlots": {
+        "actor": [], "action": ["release"], "object": ["qwen3"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "qwen3-coder": {
+      "title": "Qwen3-Coder: Agentic Coding in the World",
+      "excerpt": "Today, we’re announcing Qwen3-Coder, our most agentic code model to date. Qwen3-Coder is available in multiple sizes, but we’re excited to introduce its most powerful variant first: Qwen3-Coder-480B-A35B-Instruct — a 480B-parameter Mixture-of-Experts model with 35B active parameters which supports the context length of 256K tokens natively and 1M tokens with extrapolation methods, offering exceptional performance in both coding and agentic tasks.",
+      "url": "https://qwenlm.github.io/blog/qwen3-coder/",
+      "publishedAt": "2025-07-22T21:00:00+08:00",
+      "publicationEvidence": "article:published_time and JSON-LD datePublished.",
+      "publisherGroup": "qwen",
+      "selection": "Opening paragraph, first and second sentences.",
+      "expectedSlots": {
+        "actor": [], "action": ["release"], "object": ["qwen3-coder", "qwen3-coder-480b-a35b-instruct"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "qwen3-zh": {
+      "title": "Qwen3：思深，行速",
+      "excerpt": "今天，我们宣布推出 Qwen3，这是 Qwen 系列大型语言模型的最新成员。\n我们相信，Qwen3 的发布和开源将极大地推动大型基础模型的研究与开发。",
+      "url": "https://qwenlm.github.io/zh/blog/qwen3/",
+      "publishedAt": "2025-04-29T04:00:00+08:00",
+      "publicationEvidence": "article:published_time and JSON-LD datePublished.",
+      "publisherGroup": "qwen",
+      "selection": "Introduction first sentence and concluding paragraph first sentence; nonadjacent original passages joined by a newline.",
+      "expectedSlots": {
+        "actor": [], "action": ["release", "open_source"], "object": ["qwen3"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "vllm-v1-alpha": {
+      "title": "vLLM V1: A Major Upgrade to vLLM's Core Architecture",
+      "excerpt": "We are thrilled to announce the alpha release of vLLM V1, a major upgrade to vLLM’s core architecture. Based on lessons we learned over the past 1.5 years of vLLM development, we revisited key design decisions, consolidated various features, and simplified the codebase to enhance flexibility and scalability.",
+      "url": "https://vllm.ai/blog/2025-01-27-v1-alpha-release",
+      "publishedAt": "2025-01-27",
+      "publicationEvidence": "article:published_time and JSON-LD datePublished; not the later switch to the default engine.",
+      "publisherGroup": "vllm",
+      "selection": "Opening paragraph, first and second sentences.",
+      "expectedSlots": {
+        "actor": [], "action": ["release"], "object": ["vllm v1"],
+        "version": ["1"], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "vllm-v060": {
+      "title": "vLLM v0.6.0: 2.7x Throughput Improvement and 5x Latency Reduction",
+      "excerpt": "A month ago, we released our performance roadmap committing to performance as our top priority. Today, we released vLLM v0.6.0, with 1.8-2.7x throughput improvements compared to v0.5.3, reaching state-of-the-art performance while keeping rich features and great usability.",
+      "url": "https://vllm.ai/blog/2024-09-05-perf-update",
+      "publishedAt": "2024-09-05",
+      "publicationEvidence": "article:published_time and JSON-LD datePublished.",
+      "publisherGroup": "vllm",
+      "selection": "Two introductory sentences after the comparison figures.",
+      "expectedSlots": {
+        "actor": [], "action": ["release"], "object": ["performance roadmap", "vllm v0.6.0"],
+        "version": ["0.6.0"], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    },
+    "nasa-webb-image": {
+      "title": "NASA’s Webb Delivers Deepest Infrared Image of Universe Yet",
+      "excerpt": "NASA's James Webb Space Telescope has delivered the deepest and sharpest infrared image of the distant universe so far. Webb's First Deep Field is galaxy cluster SMACS 0723, and it is teeming with thousands of galaxies – including the faintest objects ever observed in the infrared.",
+      "url": "https://science.nasa.gov/missions/webb/nasas-webb-delivers-deepest-infrared-image-of-universe-yet/",
+      "publishedAt": "2022-07-12T10:39:00-04:00",
+      "publicationEvidence": "article:published_time and JSON-LD datePublished, not the July 11 unveiling time.",
+      "publisherGroup": "nasa",
+      "selection": "First prose paragraph after the introductory bullet list.",
+      "expectedSlots": {
+        "actor": ["nasa's james webb space telescope"], "action": ["deliver"],
+        "object": ["the deepest and sharpest infrared image of the distant universe"],
+        "version": [], "event_date": [], "application": [], "polarity": ["positive"]
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "public-gemma3-issuer-partner", "family": "public-gemma", "split": "holdout",
+      "expected": "same_event", "a": "google-gemma3", "b": "huggingface-gemma3",
+      "reason": "Both describe the March 12 Gemma 3 release, with distinct retained wording. Cross-publisher does not itself prove independent reporting."
+    },
+    {
+      "id": "public-gemma3-developer-partner", "family": "public-gemma", "split": "holdout",
+      "expected": "same_event", "a": "google-gemma3-developer", "b": "huggingface-gemma3",
+      "reason": "The developer announcement and ecosystem article identify the same Gemma 3 release."
+    },
+    {
+      "id": "public-gemma3-sibling-articles", "family": "public-gemma", "split": "holdout",
+      "expected": "same_event", "a": "google-gemma3", "b": "google-gemma3-developer",
+      "reason": "Distinct launch and developer articles for one announcement, but both belong to Google; they must not increase independent-source heat."
+    },
+    {
+      "id": "public-gemma3n-full-release", "family": "public-gemma", "split": "holdout",
+      "expected": "same_event", "a": "google-gemma3n", "b": "huggingface-gemma3n",
+      "reason": "Both passages describe full June 26 availability, not the earlier preview."
+    },
+    {
+      "id": "public-gemma3-versus-3n", "family": "public-gemma", "split": "holdout",
+      "expected": "related_different", "a": "huggingface-gemma3", "b": "huggingface-gemma3n",
+      "reason": "Gemma 3 and Gemma 3n are different model announcements, despite family and publisher overlap."
+    },
+    {
+      "id": "public-qwen3-versus-coder", "family": "public-qwen", "split": "holdout",
+      "expected": "related_different", "a": "qwen3", "b": "qwen3-coder",
+      "reason": "The initial Qwen3 family and later Qwen3-Coder release are different announcements."
+    },
+    {
+      "id": "public-vllm-release-generations", "family": "public-vllm", "split": "holdout",
+      "expected": "related_different", "a": "vllm-v060", "b": "vllm-v1-alpha",
+      "reason": "v0.6.0 optimization and the later V1 alpha architecture release must not be collapsed."
+    },
+    {
+      "id": "public-different-model-issuers", "family": "public-model-contrast", "split": "holdout",
+      "expected": "related_different", "a": "qwen3", "b": "google-gemma3",
+      "reason": "Both concern open model releases, but companies and released models differ."
+    },
+    {
+      "id": "public-mobile-versus-coding-model", "family": "public-model-contrast", "split": "holdout",
+      "expected": "related_different", "a": "huggingface-gemma3n", "b": "qwen3-coder",
+      "reason": "Mobile multimodal availability is not the same event as the separate agentic coding model release."
+    },
+    {
+      "id": "public-engine-versus-astronomy", "family": "public-unrelated-control", "split": "holdout",
+      "expected": "unrelated", "a": "vllm-v1-alpha", "b": "nasa-webb-image",
+      "reason": "An inference-engine release and an infrared astronomy image concern unrelated events and topics."
+    },
+    {
+      "id": "public-control-identical-qwen", "family": "public-qwen", "split": "holdout",
+      "expected": "same_copy", "a": "qwen3", "b": "qwen3", "isControl": true,
+      "controlKind": "identical_document",
+      "reason": "Deliberately repeated input of one real article, not a naturally discovered cross-source copy."
+    },
+    {
+      "id": "public-control-identical-vllm", "family": "public-vllm", "split": "holdout",
+      "expected": "same_copy", "a": "vllm-v1-alpha", "b": "vllm-v1-alpha", "isControl": true,
+      "controlKind": "identical_document",
+      "reason": "Deliberately repeated input of one real article, not evidence of syndication."
+    },
+    {
+      "id": "public-control-qwen-translation", "family": "public-qwen", "split": "holdout",
+      "expected": "same_event", "a": "qwen3", "b": "qwen3-zh", "isControl": true,
+      "controlKind": "same_publisher_translation",
+      "reason": "Same issuer announcement in two languages; a relationship diagnostic only, never independent-source evidence."
+    }
+  ]
+}

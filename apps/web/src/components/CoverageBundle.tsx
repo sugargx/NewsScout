@@ -1,7 +1,7 @@
 import { Button } from "@fluentui/react-components";
 import { Link } from "react-router-dom";
 import type { Event } from "../types";
-import { formatPublicationDate } from "../reader";
+import { formatPublicationDate, releaseName } from "../reader";
 import { SummaryContent } from "./SummaryContent";
 import "../coverage.css";
 import { readingTitle } from "../editorial";
@@ -25,10 +25,15 @@ export function CoverageBundle({ event, onOpen, snapshot = false, expanded = fal
   const family = bundle.relation === "release_family";
   const archive = bundle.relation === "archived_materials";
   const batch = bundle.relation === "bulk_publication";
+  const copy = bundle.relation === "same_article";
+  const development = bundle.relation === "development_activity";
+  const sourceCount = new Set(visibleMembers.flatMap(member => member.evidence.map(item => item.sourceName))).size;
   return <details className={`cp-coverage${family ? " cp-release-family" : ""}${archive ? " cp-archived-materials" : ""}${batch ? " cp-bulk-publication" : ""}`} data-coverage-key={bundle.key} open={expanded || undefined} onToggle={event=>onExpandedChange?.(event.currentTarget.open)}>
-    <summary><strong>{archive ? `历史版 · ${materialCount} 篇独立文章` : `${materialCount} ${family ? "个更新" : batch ? "个同模板条目" : "份相关材料"}`}</strong><span>{archive ? bundle.topic : family ? "查看各目标与版本" : batch ? "同一账号同期批量发布，逐条查看" : "查看来源与标题"}</span></summary>
+    <summary><strong>{archive ? `历史版 · ${materialCount} 篇独立文章` : copy ? `${sourceCount} 个来源 · 同稿折叠` : `${materialCount} ${family ? "个更新" : development ? "条开发记录" : batch ? "个同模板条目" : "份相关材料"}`}</strong><span>{archive ? bundle.topic : family ? "查看各目标与版本" : development ? "查看具体改动" : batch ? "同一账号同期批量发布，逐条查看" : copy ? "查看各来源版本" : "查看来源与标题"}</span></summary>
     <div className="cp-coverage-body">
       {batch&&<p className="cp-coverage-note">同一账号在 {bundle.windowHours} 小时内批量发布的同模板条目，合并为一条展示；它们不构成多来源互证，也不提升热度。</p>}
+      {copy&&<p className="cp-coverage-note">原始标题与原始材料高度重合，各来源的原文和时间分别保留；重复刊载不增加热度。</p>}
+      {development&&<p className="cp-coverage-note">同一仓库 {bundle.windowHours} 小时内的开发活动，不表示同一条新闻。默认不推荐，也不自动生成摘要。</p>}
       {(matchingOnly||allowedEventIds)&&<p className="cp-coverage-note">仅列出符合当前筛选的材料。</p>}
       {snapshot && <p className="cp-coverage-note">这是保存版本中收录的材料。</p>}
       {hiddenCount > 0 && <p className="cp-coverage-note">已隐藏 {hiddenCount} 个不感兴趣的条目。</p>}
@@ -39,8 +44,8 @@ export function CoverageBundle({ event, onOpen, snapshot = false, expanded = fal
             <span>{formatPublicationDate(member.publishedAt, member.publicationPrecision)}</span>
           </div>
           <h3>{onOpen
-            ? <Button appearance="subtle" onClick={click => onOpen(member.eventId, click.currentTarget, archive ? "archive" : null)}>{family ? `${member.releaseTarget} · ${member.releaseVersion}` : readingTitle(member)}</Button>
-            : <Link to={`/events/${encodeURIComponent(member.eventId)}${archive ? "?readerNote=archive" : ""}`}>{family ? `${member.releaseTarget} · ${member.releaseVersion}` : readingTitle(member)}</Link>}</h3>
+            ? <Button appearance="subtle" onClick={click => onOpen(member.eventId, click.currentTarget, archive ? "archive" : null)}>{family ? releaseName(member, " · ") : readingTitle(member)}</Button>
+            : <Link to={`/events/${encodeURIComponent(member.eventId)}${archive ? "?readerNote=archive" : ""}`}>{family ? releaseName(member, " · ") : readingTitle(member)}</Link>}</h3>
           {archive && <SummaryContent event={member}/>}
           {family && <p className="cp-release-highlight">{member.summaryPoints?.[0] || member.summary}</p>}
           {(family || member.eventId !== event.id) && (onOpen

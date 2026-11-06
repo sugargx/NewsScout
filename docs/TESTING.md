@@ -768,3 +768,236 @@ ACR `ck16` 来自 `ce409d6`，15:55:34（+08）确认r28副本0，15:56:47确认
 | 仍受限的材料 | OpenAI正文403未解决；Latent Space、Lenny's Podcast、The Pragmatic Engineer云端失败码均为`unauthorized`，各已连续失败33次、该入口入库数0；本地三条feed成功不构成云端修复证据 |
 
 `r29-recall-after.private.json`为补正前真实会话证据；`r29-correction-receipt.json`为写入回执，`r29-corrected-data.private.json`及`r29-corrected-protection-checks.json`为其后的独立只读审计。`r29-finalization.log`与`release-r29-20261023.json`记录最终镜像、恢复范围和持久化指针。全程未启动/迁移日常schema27库，没有批量重跑历史摘要、改模型/5000额度、启用学习或改写10月23日保存版。
+
+## 33. 雷达构建降噪、原文同稿与离线判别（2026-10-27，本地未发布）
+
+本轮只在本机与一次性隔离库实现/验证，不代表云端已更新。任务证据在 `tmp\radar-quality-20261027`，浏览器证据由隔离启动器写入其运行目录；下载的公开文章、模型权重、虚拟环境和报告均不进入Git。
+
+### 分组与材料边界
+
+- `development-release-cases.json` 以同一组28个正反例约束 Rust 和 SQL。默认不展示机器构建，自动摘要不领取这些任务；具名版本仍可领取。旧任务/尝试记录保留，待处理构建投影为 `manual_only`，显式手动摘要入口不变。
+- `original-copy-v1` 使用原始标题与原始正文，不使用生成摘要。中文标点/排版归一、标题数字签名、逐字主体包含、五字符重合阈值、数字/否定守卫共同生效；相似度不是语义同一性的证明。近似改写宁可不折叠，尤其保护动作变化、否定位置变化及交易主客体交换。
+- 候选标题24–240字符、原文最多16,000字符；每标题桶最多64条、每组最多24条、固定36小时，组内全对验证而非传递连通。以来源时间和ID稳定建组，同标题/时间但不同正文的组有不同键；过滤后再组装、分页，不承诺跨时间筛选全局去重。
+- 同稿采用最早匹配条目作为列表代表，保留它的评分、时间和摘要，多来源热度加分为0。详情仍可显式打开任一成员；收藏、已打开及不感兴趣不互相传播。活动收拢是同仓库24小时的开发记录集合，不表示所有提交是同一事件。
+- 量子位 `https://www.qbitai.com/2026/10/505443.html` 与新智元公开文章 `https://aiera.com.cn/asi-post.html?id=120702` 的RSS导语分别只有26/84字符。真实HTML/公开JSON经生产解析器取得4058/3893字符，去除仅用于比较的发布者头部/版权尾注后验证同稿；原始内容不被覆盖。
+- 提取器只接受明确文章div或指定来源页面声明的同域公开JSON，校验robots、主机、ID、标题、文章类型、发布状态和未受保护标记。没有执行页面脚本、扩大为通用私有API读取或绕过访问限制；此前已存的短/blocked材料尚未在云端补抓。
+
+### 离线开源判别实验
+
+代码：[Knowledgator/GLiClass](https://github.com/Knowledgator/GLiClass)。权重：`knowledgator/gliclass-multilang-mini`，固定 revision `0bd888b6c3ef9fca5f0a9d407bddfbbc7623486b`；代码和权重许可均为 Apache-2.0。首轮只实际评估了这一候选，未把调研过的NLI/BGE写成已运行的比较实验；后续三个替代模型的实测见§34。
+
+24对合成夹具分成8对校准、16对留出，故事家族不跨集合。离线运行两种顺序，区分 `same_copy`、`same_event`、`related_different`、`unrelated`、`uncertain`；缺失/估计截断、顺序不一致、低分或小间隔均弃判。原始分数不是校准概率；冻结门槛为score≥0.99、margin≥0.5。
+
+| 实测项目 | 结果与解释 |
+| --- | --- |
+| 留出原始标签命中 | 6/16（37.5%）；仅是小型合成冒烟样本，不是代表性生产基准 |
+| 接受/弃判 | 接受同稿/同事件0对，16/16弃判；误合并0是因为没有接受任何合并 |
+| Precision / Recall | Precision未定义（JSON `null`），不能称100%；合并召回为0 |
+| CPU耗时 | 对称两次推理的中位数1241.25ms、P95 1873.5ms；加载3.26s，不含此前导入启动 |
+| 本机资源 | CPU、2线程；峰值进程工作集2200.1MiB，不是云端成本估算 |
+| 运行版本 | Python3.11.9、GLiClass0.1.21、Transformers5.20.2、Torch2.6.0+cu124（明确用CPU）、NumPy2.2.6 |
+| 结论 | 这一候选/提示配置不进入在线自动分组，不把小样本或全部弃判包装成已证明安全 |
+
+`news_decision_shadow.py` 只读取显式本地配对文件：最多200对、2MB输入，标题500字符、原文16,000字符，推理上限512 tokens；非全库两两组合。独立 `download` 只取固定公开safetensors/分词文件，不携带新闻或凭据。`run` 强制离线、关闭遥测、不访问新闻URL、不写数据库，所有记录固定 `canMerge:false`、`action:"observe_only"`、`productionApproved:false`。保留修订、运行版本、输入指纹和CPU观测；相同输入即便交换顺序也不能从校准混入留出。
+
+可选依赖放入独立环境，不加入API/前端依赖，也不启动推理服务：
+
+```powershell
+python -m venv .\tmp\news-decision-venv
+.\tmp\news-decision-venv\Scripts\python.exe -m pip install -r .\scripts\news-decision-requirements.txt
+.\tmp\news-decision-venv\Scripts\python.exe .\scripts\news_decision_shadow.py download --cache-dir .\tmp\news-decision-cache
+.\tmp\news-decision-venv\Scripts\python.exe .\scripts\news_decision_shadow.py run --cache-dir .\tmp\news-decision-cache --input .\shared\news-pair-cases.json --split calibration --output .\tmp\news-calibration.json --calibrate .\tmp\news-thresholds.json
+.\tmp\news-decision-venv\Scripts\python.exe .\scripts\news_decision_shadow.py run --cache-dir .\tmp\news-decision-cache --input .\shared\news-pair-cases.json --split holdout --thresholds .\tmp\news-thresholds.json --output .\tmp\news-holdout.json
+python -m unittest discover -s tests -p test_news_decision_shadow.py -v
+```
+
+实际下载/安装曾遇到镜像metadata404、公共索引TLS失败及版本兼容问题；使用任务目录虚拟环境复用本机Torch并固定可用版本后完成推理，没有改全局包。加载时存在GLiClass配置类型提示，227个参数张量实际加载；不将这一配置的结果推广为所有模型/版本都不适合。
+
+### 升级与验收约束
+
+0040只替换分类SQL函数，不更新来源、事件、摘要任务、设置、阅读状态或保存版。测试从已有39份迁移的库升级并比较12张受保护表，旧的39份迁移包须拒绝未知40；以后如发布，恢复二进制必须携带相同0040，不能直接激活旧镜像。没有把迁移直接应用到日常schema27库或云端。
+
+隔离数据库契约覆盖队列领取、SQL/Rust一致性、两个读者及公共投影的私有成员隔离。浏览器回归同时选择既有 `radar grouping` 和新增 `radar quality`，检查来源过滤、分页、去重不抬位、独立收藏、隐藏主条目后的打开、公用投影和1440/390布局；全程保护保存版、模型设置和模型调用审计。
+
+| 最终验收 | 结果与证据 |
+| --- | --- |
+| Rust单元 | 213通过、15显式忽略，`rust-unit-v3.log`；另显式运行真实原文解析/折叠1项通过，`reported-pair-v3.log` |
+| 隔离数据库 | 5项契约全部通过，`cloud-contract-v3.log`；包含schema39→40保护指纹、真实任务领取、28例SQL/Rust一致性、A/B及公共投影成员隔离 |
+| 读取性能 | 2400条合成记录、60条活动事件；实际生产初始化连接池首读582ms，随后8次307–440ms，每次均低于既有5000ms门槛。未隔离迁移会话缓存的对照池仍有约25秒慢读，不能混作生产池结果或云端SLA |
+| 前端 | 类型检查及生产构建通过。`browser-v4.log` 中既有/新增分组用例联合2项通过；再补实际40位哈希、手机就地打开/返回后，新增用例单独通过，见 `browser-v5.log`，不重复计数为3项 |
+| 交互/画面 | 1440/390同稿展开、桌面隐藏主条目后打开剩余来源、390阅读/返回及开发动态长哈希换行均核对；没有水平溢出。公开网关忽略本地读者的收藏/隐藏状态，保存版、模型设置和调用审计保持。截图为隔离合成材料，不是线上个人新闻 |
+| 判别工具 | 标准库7项测试通过，包括反序输入的校准泄漏阻断；实际模型结果见上表，工具不获准驱动产品动作 |
+
+草案检查出现过数据库超时；已去掉读取SQL里重复关联受RLS保护的events，改为使用已读行投影手动摘要状态，分类函数保持可内联的单表达式。随后发现预期失败的旧迁移包测试把session advisory lock留在连接池，导致下一次bootstrap等待；改用独立取得的连接，并在断言前关闭，不把锁放回池中。失败轮已保留，没有调大超时或关闭RLS来冒充通过。
+
+Windows不能在这套数据库测试仍运行时重链接同一目标目录的测试EXE；一次并行尝试得到LNK1104，最终串行执行。首轮浏览器夹具误用了匿名兴趣协议不支持的ID而返回400，改用协议已有的 `engineering:50` 后通过，未放宽网关校验。
+
+本轮未提交/推送或部署，没有改写云端运行指针、模型/5000额度、历史精选或普通本地数据库。所有本轮启动的隔离服务已经停止。
+
+## 34. 替代开源判别模型比较（2026-10-27，本地观察）
+
+在首轮 GLiClass 之外，实际运行三种候选；没有用一个模型的失败否定整个开源判别方向。下面是限定提示、精度和输入长度的零样本实验，不是复现 Jev 的专有训练，也不是模型通用能力排名。
+
+### 模型与固定协议
+
+| CLI选择 | 公开权重与固定revision | 权重许可 | 本次实现 |
+| --- | --- | --- | --- |
+| `minilm` | [MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli](https://huggingface.co/MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli)，`0a71e92a985b6e1ad1828cf67ce9c459639c1dca` | MIT | 多语言NLI，float32 |
+| `mdeberta` | [MoritzLaurer/mDeBERTa-v3-base-mnli-xnli](https://huggingface.co/MoritzLaurer/mDeBERTa-v3-base-mnli-xnli)，`8adb042d524ecd5c26d3e3ba0e3fbcf7e2d0864c` | MIT | 多语言NLI，float32；不使用模型卡警告的FP16 |
+| `qwen3-reranker` | [Qwen/Qwen3-Reranker-0.6B](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B)，`e61197ed45024b0ed8a2d74b80b4d909f1255473` | Apache-2.0 | 指令式reranker，bfloat16，只计算下一个yes/no token，不生成文字 |
+
+NLI按配置读取entailment/contradiction的实际head编号，对五种关系假设分别打分。Qwen采用[官方提示框架](https://github.com/QwenLM/Qwen3-Embedding)，把关系条件作为query、两篇原始材料作为document；这是将相关性模型用于关系判断的实验适配，不能预设它已经学会新闻事件同一性。
+
+沿用五分类、A/B与B/A双向一致性、缺失/截断弃判、512-token上限和永久 `observe_only`。每种模型独立使用原有8对校准样本选门槛，不借用其他模型的阈值。原有16对已被查看，因此现在称为**复用比较集**，不是未见过的外部验证集。新增 `shared\news-pair-confirmation.json` 的12对、12个新故事家族在查看替代模型输出前冻结；两份夹具均未随结果修改。
+
+新夹具覆盖转载、独立报道、跨语言、金融/生物不同用途、交易主客体交换、否定位置变化、无关材料、带指令的原文和缺失正文。它仍是人工编写的小型合成确认集，不代表真实新闻分布。原始标签命中是正向最高分的五分类命中率；最终观察决定还要经过双向、分数和材料门槛。
+
+阈值文件新增模型/权重修订、提示与精度协议指纹、校准故事家族；错误模型、修订、协议或跨文件家族泄漏均拒绝。旧版GLiClass阈值仅保留其原模型兼容路径。默认CLI仍为GLiClass，已有首轮报告没有覆盖。
+
+### 实测结果
+
+| 模型 | 复用16对：原始命中 | 新增12对：原始命中 | 冻结score / margin | 同稿或同事件观察决定（复用 / 新增） |
+| --- | --- | --- | --- | --- |
+| GLiClass（首轮基线） | 6/16，37.5% | 未复测 | 0.99 / 0.5 | 0 / 未复测 |
+| MiniLM NLI | 2/16，12.5% | 5/12，41.7% | 0.99 / 0.5 | 0 / 0；两组全部弃判 |
+| mDeBERTa NLI | 7/16，43.8% | 6/12，50.0% | 0.99 / 0.5 | 0 / 0；两组全部弃判 |
+| Qwen3-Reranker | 7/16，43.8% | 5/12，41.7% | 0.5 / 0.1 | 3 / 2；新增集出现1次有害误判 |
+
+Qwen在复用集确认3对正确转载，误合并0、copy/independent类型错误0、弃判13/16，合并召回3/7；不能由这3次成功推出生产安全。新增集只确认了1对正确转载，却把 `confirmation-swapped-actors` 中“Amber收购Cobalt”和“Cobalt收购Amber”判成同一事件：两种输入顺序均通过其校准门槛，材料完整且只有249 tokens，不是截断造成的。新增集弃判10/12，观察决定的precision为1/2、合并召回1/6。**这只是影子输出的假阳性，没有实际合并或写入任何新闻。**
+
+MiniLM、mDeBERTa两组均没有接受合并，其precision为 `null`、合并召回为0；不能把“误合并0”宣传成100%正确。所有候选的报告仍为 `productionApproved:false`，每条结果仍为 `canMerge:false`。
+
+| 本机CPU观测（复用比较集） | 对称判别中位数 / P95 | 加载秒数 | 峰值工作集MiB |
+| --- | --- | --- | --- |
+| GLiClass首轮 | 1241.25 / 1873.5 ms | 3.26 | 2200.1 |
+| MiniLM | 512.0 / 777.7 ms | 6.47 | 1692.1 |
+| mDeBERTa | 4132.8 / 6094.7 ms | 5.21 | 2339.5 |
+| Qwen3-Reranker | 44999.55 / 67070.3 ms | 10.36 | 1957.9 |
+
+三种替代配置均为CPU、2线程；NLI和Qwen每对包含两种顺序、五种假设的10次forward，不是单次forward耗时。推理计时不含导入和模型加载，加载秒数也不含此前导入。共享机器内存曾不足1GB，启动器因此延后加载；可用内存回升后逐模型串行运行，没有关闭其他用户进程或创建云资源。不能把这些数字当成GPU吞吐或云端成本。Qwen在新确认集的对称中位数为50188.15ms，更不能放到阅读GET路径中。
+
+### 复现与结论
+
+运行环境沿用§33的任务目录虚拟环境和固定依赖，没有新增包。模型缓存仍在 `tmp\radar-quality-20261027\model-cache`；二轮结果单独保存在 `tmp\news-model-round2-20261027`：每种模型各有 `*-calibration.json`、`*-thresholds.json`、`*-holdout.json`、`*-confirmation.json`，另有输入SHA256清单 `fixture-manifest.json` 和汇总 `comparison.json`。公开权重与报告均不提交Git。
+
+```powershell
+# 先单独下载；不要并行加载多个模型。也可将模型名换成minilm或qwen3-reranker。
+$model = 'mdeberta'
+$python = '.\tmp\radar-quality-20261027\venv\Scripts\python.exe'
+$cache = '.\tmp\radar-quality-20261027\model-cache'
+$out = '.\tmp\news-model-round2-rerun'
+& $python .\scripts\news_decision_shadow.py download --model $model --cache-dir $cache
+& $python .\scripts\news_decision_shadow.py run --model $model --cache-dir $cache --input .\shared\news-pair-cases.json --split calibration --calibrate "$out\$model-thresholds.json" --output "$out\$model-calibration.json"
+& $python .\scripts\news_decision_shadow.py run --model $model --cache-dir $cache --input .\shared\news-pair-cases.json --split holdout --thresholds "$out\$model-thresholds.json" --output "$out\$model-holdout.json"
+& $python .\scripts\news_decision_shadow.py run --model $model --cache-dir $cache --input .\shared\news-pair-confirmation.json --split holdout --thresholds "$out\$model-thresholds.json" --output "$out\$model-confirmation.json"
+python -m unittest discover -s tests -p test_news_decision_shadow.py -v
+```
+
+扩展后14项标准库测试通过，覆盖阈值修订/协议隔离、跨文件家族泄漏、head顺序、五假设打分、Qwen尾部提示保留、截断长度与禁止生成。不因这次纯离线工具扩展重跑或改写已经完成的Rust/数据库/浏览器验收。
+
+结论：三种替代模型都已实际评估，但这三份零样本配置均不获准驱动在线合并。Qwen能识别部分转载，却暴露了角色互换假阳性；提高门槛会改变覆盖率，不能在看过确认集之后调参再宣称通过。继续研究需要独立的新标注新闻、明确的事件要素约束或领域训练，而不是把通用相似度/相关性分数直接变成合并操作。GLiNER2仅调研，未运行；也未实际采用ONNX或量化替代实现。云端r29/schema39、历史精选、模型设置和调用额度均未变更，本轮仍未提交、推送或部署。
+
+## 35. 原文证据与固定模型对照（2026-10-27，本地观察）
+
+本轮针对“输入处理和任务用法是否有问题”进行对照，不继续搜索第五个模型。固定使用§34的 MiniLM checkpoint，选择依据是此前约1.7GiB的进程峰值，而不是挑选得分最高的模型。此前28对比较/确认样本均已看过，本轮全部明确作为开发数据。
+
+### 实现与预先确定的对照
+
+| 协议 | 输入与判断 |
+| --- | --- |
+| `raw` | 保留原始标题、正文摘录、发布时间和URL的JSON；沿用此前五种关系假设与双向打分 |
+| `clean` | NFC与空白规范化、纯文本表达、去除时间/URL元数据；假设和评分方法不变 |
+| `evidence` | 原文标题、最多3句逐字证据及显式事件字段；仍使用相同五种关系假设 |
+| `hierarchical` | 严格同稿规则、原文支撑的冲突/身份约束、原生三分类NLI；保留entailment、neutral和contradiction |
+
+第四组同时改变规则、证据约束和模型任务，不能把它与第一组的差异归因于某一个因素。前三组的原始五分类命中可以互相比较；第四组的原始标签只是NLI支持度诊断，不是完整五分类准确率。
+
+`scripts\news_evidence.py` 保留字段、起止位置和原始引用，不用模型摘要补事实。中英文模板只支持有限句式：第一人称、模态、角色不清、多事件或冲突材料不强行补全主体。版本必须有明确的 `v`、`version` 或“版本”标记，不把任意小数、参数量或产品名数字认作版本；事件日期必须在明确的日期句式中，发布时间不变成事件发生时间。用途保存原文限定语，不只硬编码“金融/生物”两类，也不把没有抽出的用途当作一致。
+
+每篇扫描最多96句事件材料，优先保留否定、更正、取消等重要句子，同时记录省略和扫描上限。证据字段来自原文，不等于语义角色必然解释正确：独立的 `expectedSlots` 只用于误差统计，经四字段白名单排除于模型和预处理输入之外。未知字段与未标注字段分别用空列表和 `null` 表示，重复文档的互相冲突标注会在加载模型前拒绝。
+
+离线同稿快捷规则要求足够长的相同标题、完整保留正文的规范化等值及足够文本信息量；标点、正负号和小改动不能被剥除后误判一致。它**比Rust中已验证的正文主体包含规则更严格，不是生产匹配器的等价移植**。同稿和显式冲突可跳过模型，分别报告规则贡献；其他正向判断必须有一致主体/动作/对象/极性，以及明确版本或事件日期锚点。正文NLI证据还必须对应这些事件字段，不能仅凭相同标题与泛泛背景句的互相蕴含确认事件。
+
+### 数据、隔离与复现
+
+固定8对原有校准、28对已见合成开发样本，以及 `shared\news-pair-public-confirmation.json` 中11篇真实公开文档组成的10对自然新闻比较、3对单列控制。自然比较为4对同事件、5对相关但不同事件、1对无关事件；控制包含2对重复输入和1对同发布者的中英文公告。控制结果单列，不冒充自然发现的转载命中。
+
+材料取自Google及其开发者博客、Hugging Face、Qwen、vLLM、NASA的实际页面，保留来源链接、发布时间依据和短引用位置；没有引用搜索摘要冒充文章。每个来源只在文档表中保留一次短摘录，英文/中文译文也共同控制引用长度。运行报告仅保留原文指纹、证据位置与引用SHA256，回溯冻结夹具，不反复复制文章内容。
+
+这些新闻对不是盲测：由实现者在推理前选取和标注，多个比较共享文章，多数负例跨不同发布日期，发行方/生态合作方占比较高，唯一中文材料是翻译控制，不能代表当天中文雷达候选分布。`same_event` 表示不同文字在描述同一公告，不保证发布者独立；旧五假设中的“independently”措辞仍保留用于对照。所有结果另外标注 `publisherIndependence:not_established`，不会为同公司的跨站文章或译文增加互证热度。
+
+完整实验最多200对、输入文件合计2MB；文档表、多输入文件不能绕过批量限制。跨校准/开发/确认分区不仅检查故事家族，还检查去除元数据后的单篇原文指纹。四组门槛均只从8对校准中拟合，全部冻结后才进入开发/确认；若没有门槛能满足零有害误并和零同稿类型错误，明确记录 `calibrationPolicySatisfied:false`，不会用1/1回退门槛掩盖规则错误。
+
+CPU/2线程/float32，仅加载一个已有的本地模型，所有推理离线；MiniLM加载前要求至少1800MiB可用内存，不足就拒绝。原生NLI超过512 tokens不截断推理，而是弃判；前三组仍记录未截断长度，并阻止截断材料形成有效决定。模型、脚本和输入均有指纹，既有输出目录拒绝覆盖，任何看过结果后的修改都必须保留旧运行并另开目录，不能继续把同一确认集称为未见。
+
+```powershell
+$python = '.\tmp\radar-quality-20261027\venv\Scripts\python.exe'
+$cache = '.\tmp\radar-quality-20261027\model-cache'
+& $python -m unittest discover -s tests -p 'test_news*.py' -q
+& $python .\scripts\news_decision_ablation.py --model minilm --cache-dir $cache --calibration-input .\shared\news-pair-cases.json --development-input .\shared\news-pair-cases.json --development-input .\shared\news-pair-confirmation.json --confirmation-input .\shared\news-pair-public-confirmation.json --output-dir .\tmp\news-evidence-rerun
+```
+
+44项标准库测试通过，包括真实夹具边界、原文位置、未知与模态、角色互换、用途/日期/版本/否定差异、小数和正负号、迟到更正、neutral主导、无oracle输入、跨分区泄漏、严格同稿、事件证据对齐、失败校准策略、控制对分列和完整CLI落盘顺序。CLI测试使用假运行时，仅证明执行契约，不作为真实模型效果。
+
+### 实际对照结果
+
+真实模型运行已经完成，不能与前述假运行时测试混淆。启动时可用内存回升至1829.7MiB，通过原有1800MiB门槛；没有降低门槛、关闭其他进程或换用另一模型。单次进程顺序完成四组校准和比较，输入及三份脚本的冻结SHA256均保持；`raw` 在28对已见样本上的双向分数与§34的MiniLM结果逐项相同，最大差为0。
+
+| 协议 | 已见开发集：原始标签命中 | 自然公开新闻：原始标签命中 | 开发集：有效同稿/同事件观察决定 | 自然公开新闻：有效同稿/同事件观察决定 |
+| --- | --- | --- | --- | --- |
+| `raw` | 7/28 | 4/10 | 0 | 0 |
+| `clean` | 16/28 | 6/10 | 0 | 0 |
+| `evidence` | 7/28 | 2/10 | 0 | 0 |
+| `hierarchical` | 不作五分类比较 | 不作五分类比较 | 2，均来自同稿规则 | 0 |
+
+四组校准门槛均为score0.99/margin0.5，`calibrationPolicySatisfied:true`；前三组在校准集也完全弃判，因此这不表示已经学会安全合并。`clean` 的开发集命中提升为11项变对、2项变错，公开自然样本为4项变对、2项变错，并不是所有例子都改善。公开同事件的原始标签由0/4变为2/4，但仍没有通过最终门槛；开发集同事件原始命中维持4/6，7对同稿的原始类别仍全部识别错误。
+
+前三组开发28对全部弃判，公开13对也全部弃判。分层组开发集确认 `copy-later-republication`、`copy-chinese-independent-url-ids` 两对同稿，另将一对不同用途材料判为 `related_different`，其余25对弃判。两个同稿都跳过模型，不能归功于NLI；不同用途的一次分离来自NLI。公开10对自然新闻仍全部弃判；另列的两个“同文输入两次”控制被规则识别，译文控制弃判，不能拿控制命中率充当真实转载准确率。
+
+全部观察结果的有害误并和同稿类型误判均为0，但无接受决定的子集precision必须为 `null`，不是100%。本轮没有任何原生NLI的正向同事件决定，也没有足够证据批准自动合并。四组开发/公开材料均没有超过512-token上限；开发集只有2对预设短材料弃判，公开摘录没有短材料弃判，不应把当前失败归咎于截断。
+
+**抽取覆盖是本轮实际测出的瓶颈。** 11篇文档的77个已标注字段中，40个本来就没有明确值；不能把这些正确未知当成理解能力。37个有已知值的字段仅4个完整抽对，33个漏掉；40个参考字段值只恢复4个。虽然所有保留引用都对齐原文、没有观测到多抽的字段值，但这远不等于抽取准确率100%。常见的第一人称公告、名词化发布描述及“已同意收购”句式尚不能被当前有限模板可靠解释，连明确的动作/对象也会随主体缺失而漏掉。两组比较中均没有新闻对满足完整事件身份约束，不能宣称结构化卡片已经解决了这个问题。
+
+交易方向互换的旧反例尤其值得保留：对“Amber同意收购Cobalt”和反向首句直接做三分类NLI，两个方向的entailment仍为约0.9768/0.9822；共同背景句又得到约0.9848的蕴含分。当前模板也没有抽出该句式的角色。最终仍弃判，但不能说是模型理解了交易方向，或说原文引用校验等于语义校验；未对齐事件的背景句高分不能批准合并，更不能通过确认集降门槛来掩盖问题。
+
+| CPU观测 | 开发集每对中位数 / P95 | 公开集每对中位数 / P95 |
+| --- | --- | --- |
+| `raw` | 545.7 / 728.7ms | 724.1 / 858.1ms |
+| `clean` | 406.5 / 596.9ms | 489.3 / 623.4ms |
+| `evidence` | 672.15 / 764.8ms | 734.4 / 943.0ms |
+| `hierarchical` | 308.95 / 479.2ms | 131.4 / 241.1ms |
+
+分层组有规则/短材料短路，任务也不等价于五分类；只计实际调用模型的配对，中位数为382.3/197.2ms（开发/公开）。因此不能把总延迟下降直接宣称为等价语义能力的加速。模型加载14.08秒，不含此前框架导入；整个进程累计峰值1688.4MiB，**不是四个独立进程的内存比较**。运行仍使用Transformers5.20.2、Torch2.6.0+cu124的CPU路径、NumPy2.2.6，没有新增依赖。
+
+证据保存在 `tmp\news-evidence-20261027`：`frozen-inputs.json`、`run1.log`、`comparison.json`；`run1` 内有运行清单、四组校准门槛和12份阶段报告。后续优化应优先补足真实公告的事件抽取、角色约束和领域标注，再重新设计未见评估；本轮确认材料现在也已看过，不可重复当作盲测。原始报告及旧两轮实验未覆盖。结论是**纯文本输入改善了这一配置的原始关系判断，但结构化证据与分层原型尚未达到语义自动合并门槛**；不接入门户、不迁移数据库、不更改云端r29/schema39、模型设置、额度或历史内容。
+
+## 36. 同一项目当天发布只占一行（2026-11-06）
+
+用户截图中，PyTorch `trunk/<40位提交哈希>` 构建与 LangGraph `langgraph-cli==0.4.42`、`langgraph-sdk==0.4.14` 各占雷达位置。先用 `tmp\radar-grouping-20261106` 中的只读探针核对线上 r29：探针在既有容器执行通道内以 `BEGIN READ ONLY` 查询公开目录来源近72小时的事件与材料，不读取私人来源、阅读状态，也不调用会更新访问时间的维护API；快照文件只作本地私有证据。
+
+| 线上只读核对（2026-11-06 16:26 +08） | 结论 |
+| --- | --- |
+| 开发构建 | r29 的SQL判定只识别 `trunk/纯数字`；10条 `trunk/<哈希>` 及附带说明的标题在近24小时仍可见。10月27日的0040已覆盖这些形态，但当时未发布 |
+| LangGraph | CLI与SDK都能识别为同仓库组件，但旧发布家族要求两条说明引用同一PR；两者分别引用 #9611/#9479 与 #9610/#9599，因此被拆成两行 |
+| 其他形态 | 72小时内LangGraph每天连发CLI/SDK/核心包，Ray同日发布2.60.0与2.59.1；后者标题不属于既有家族，也各占一行 |
+| 回放估计 | 按新规则回放近24小时91个可见事件：13条开发构建默认隐藏，同仓库发布再少1行；近72小时共减少69行（65+4）。只统计发布相关变化，不含同稿折叠 |
+
+### 规则与边界
+
+- `coverage\project.rs` 以 GitHub 官方发布页 `owner/repo` 为行身份，从最新一条向前固定24小时窗口，窗口按来源时间和事件ID确定，不随排序、兴趣或分页改变，也不跨天链式延伸。
+- 只接受规范HTTPS发布页URL、T1官方材料、精确时间和同一仓库的全部证据；fork、其他仓库、非官方、仅日期、未知/未来时间、超过24小时以及机器构建都不并入。构建继续默认隐藏，主动包含时进入“开发动态”。
+- 整窗恰为一个已有严格批次时保留原 `release-family-v2` / `project-release-window-v1` 标题；否则使用 `project-release-window-v2` 的中性标题（组件更新、某家族更新或版本更新），不声称共同改动、同一事件或互证，热度加分为0。
+- 组件身份可脱离PR编号识别，仅用于显示“CLI/SDK/核心包”；“同批”与共同主题仍要求原有共同改动证据。前端发布行统一显示“目标 版本”，没有可识别版本时回退原标题。
+
+### 验收
+
+| 项目 | 结果与证据 |
+| --- | --- |
+| Rust单元 | 217通过、15显式忽略（`rust-unit-all.log`）；分组模块64项含线上形态回归：LangGraph CLI+SDK一行、Ray同日两个版本、同仓库构建不混入、fork分开、保存版只在阅读时汇总 |
+| 改写的旧用例 | 12项原先要求“同仓库无共同改动/同组件连续版本/跨通道必须拆开”的断言改为一行中性汇总；跨仓库、fork、非官方、仅日期、超过24小时仍断言分开，严格“同批”标题仍需共同改动 |
+| 隔离数据库 | `run-cloud-isolation.ps1` 全部通过：读者隔离及发布窗口性能契约、来源目录、晨报、每日选文（`cloud-contracts.log`） |
+| 浏览器（隔离库） | 发布、同稿、开发构建与分组相关5项通过（`e2e-release-groups.log`）；新增用例以用户报告的形态写入真实PostgreSQL，默认列表只剩一行“langgraph 组件更新：CLI 0.4.42 / SDK 0.4.14”，开启开发构建后另有一行开发动态；1440/390无横向溢出 |
+| 读者回归（隔离库） | `coverage-bundles`、`public-reader`、`public-reading-api`、`public-reading-ui`、`editorial-reader`、`reader-experience` 共223项通过，18.7分钟（`e2e-reader-regression.log`） |
+| 前端 | 类型检查与生产构建通过 |
+
+日常隔离启动器固定使用55432端口，但该端口被另一个项目的 `videopick-postgres-1` 容器占用；没有停止它，而是在任务目录生成只改端口为55493的启动器副本运行，仓库脚本未修改。

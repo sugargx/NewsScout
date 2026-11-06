@@ -102,6 +102,11 @@ impl AutomationStore {
         Self { pool: pool.into() }
     }
 
+    #[cfg(test)]
+    pub(crate) async fn claim_event_for_test(&self) -> Result<Option<Uuid>> {
+        Ok(self.claim("isolated-fixture").await?.map(|job| job.event_id))
+    }
+
     pub async fn settings(&self) -> Result<ProcessingSettings> {
         let value: String =
             sqlx::query_scalar("SELECT value FROM app_settings WHERE key='summary_settings'")
@@ -157,6 +162,7 @@ impl AutomationStore {
                 LEFT JOIN recent_topics t ON t.primary_topic=e.primary_topic
                 WHERE j.status='pending' AND j.attempts<3 AND j.next_attempt_at<=now()
                   AND e.status='published' AND (e.summary_kind='feed' OR e.summary_format_version<$3)
+                  AND NOT reader_is_opaque_engineering_release(e.event_type,e.canonical_title)
                   AND j.format_version=$3 AND j.content_version=e.content_version
                 ORDER BY CASE WHEN EXISTS(
                   SELECT 1 FROM daily_brief_items bi JOIN daily_briefs b ON b.id=bi.brief_id
@@ -231,12 +237,15 @@ impl AutomationStore {
     async fn status(&self, state: &AppState) -> Result<ProcessingStatus> {
         let settings = self.settings().await?;
         let usage = self.usage(settings.daily_limit).await?;
-        let row = sqlx::query("SELECT count(*) FILTER(WHERE status='pending') AS pending,
-            count(*) FILTER(WHERE status='running') AS running,count(*) FILTER(WHERE status='failed') AS failed,
-            count(*) FILTER(WHERE status='completed') AS completed FROM summary_jobs").fetch_one(&self.pool).await?;
+        let row = sqlx::query("SELECT count(*) FILTER(WHERE j.status='pending'
+              AND NOT reader_is_opaque_engineering_release(e.event_type,e.canonical_title)) AS pending,
+            count(*) FILTER(WHERE j.status='running') AS running,count(*) FILTER(WHERE j.status='failed') AS failed,
+            count(*) FILTER(WHERE j.status='completed') AS completed
+            FROM summary_jobs j JOIN events e ON e.id=j.event_id").fetch_one(&self.pool).await?;
         let totals = sqlx::query("SELECT count(*) FILTER(WHERE summary_kind='feed') AS feed,
             count(*) FILTER(WHERE summary_kind='copilot') AS ai FROM events WHERE status='published'").fetch_one(&self.pool).await?;
         let rows = sqlx::query("SELECT j.*,e.canonical_title FROM summary_jobs j JOIN events e ON e.id=j.event_id
+            WHERE j.status<>'pending' OR NOT reader_is_opaque_engineering_release(e.event_type,e.canonical_title)
             ORDER BY CASE j.status WHEN 'running' THEN 0 WHEN 'failed' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END,
             e.updated_at DESC,j.event_id LIMIT 20").fetch_all(&self.pool).await?;
         let jobs = rows

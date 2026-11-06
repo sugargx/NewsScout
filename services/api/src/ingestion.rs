@@ -668,12 +668,12 @@ impl FeedAdapter {
             etag: None,
             last_modified: None,
         };
-        let BoundedResponse::Body { bytes, .. } =
+        let BoundedResponse::Body { bytes: robots_bytes, .. } =
             self.fetch_bounded(&robots, "publisher_page").await?
         else {
             return Ok(Some(feed_context.clone().blocked_from_feed()));
         };
-        if !Self::publisher_robots_allows(&bytes, page.as_str()) {
+        if !Self::publisher_robots_allows(&robots_bytes, page.as_str()) {
             return Ok(Some(feed_context.clone().blocked_from_feed()));
         }
         if browser {
@@ -701,7 +701,25 @@ impl FeedAdapter {
             return Ok(Some(feed_context.clone().blocked_from_feed()));
         }
         let html = std::str::from_utf8(&bytes).context("publisher page is not UTF-8")?;
-        let Some((body, truncated)) = extract_publisher_article(html) else {
+        let material = if let Some(material) = extract_publisher_article(html) {
+            Some(material)
+        } else if let Some(endpoint) = crate::reading_context::public_article_endpoint(&page, html) {
+            // Same-origin, public JSON used by the publisher's own page. Retain
+            // the crawler policy, bounded transport and protected-content checks.
+            if !Self::publisher_robots_allows(&robots_bytes, endpoint.as_str()) {
+                return Ok(Some(feed_context.clone().blocked_from_feed()));
+            }
+            let source = AdapterSource { endpoint: endpoint.to_string(), etag: None, last_modified: None };
+            match self.fetch_bounded(&source, "publisher_page").await? {
+                BoundedResponse::Body { bytes, content_type, .. }
+                    if content_type.as_deref().is_some_and(|value| value.split(';').next().is_some_and(|value| value.trim() == "application/json")) =>
+                    crate::reading_context::extract_public_article_json(&bytes, &endpoint, title),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let Some((body, truncated)) = material else {
             return Ok(Some(feed_context.clone().blocked_from_feed()));
         };
         Ok(Some(ReadingContext::publisher_page(

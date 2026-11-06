@@ -6,6 +6,7 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { SummaryContent } from "../components/SummaryContent";
 import { TopicWorkspace, type TopicDataSource, type TopicReadingContext } from "../components/TopicExplorer";
 import { CoverageBundle } from "../components/CoverageBundle";
+import { releaseName } from "../reader";
 import { hasPublicOpened, loadPublicFeedback, publicApi, publicDate, publicFeedbackKey, publicView, recordPublicOpen, savePublicFeedback, type PublicArticle, type PublicFeedback, type PublicView } from "../public-reader";
 import { interestSignature, loadPublicInterests, publicInterestKey, withPublicInterests, type PublicInterestRecord } from "../public-interests";
 import { PublicInterestDialog } from "../components/PublicInterestDialog";
@@ -430,7 +431,7 @@ export function PublicReader() {
         </button>):displayedItems.map((item,index)=>{const material=item,target=item.id,grouped=!!item.coverage&&item.coverage.relation!=="same_named_topic";
           const title=grouped?item.coverage!.topic:readingTitle(material);
           const meta=<><span className="ns-reader-story-topic">{item.primaryTopic}</span><span>{contentLabel(material)}</span><span className="ns-article-source" title={material.evidence[0]?.sourceName}>{material.evidence[0]?.sourceName}</span><time dateTime={material.publishedAt??undefined} title={publicDate(material.publishedAt,material.publicationPrecision)}>{publicDate(material.publishedAt,material.publicationPrecision)}</time>{hasPublicOpened(feedback,material)&&!grouped&&<span className="ns-beta-opened">已打开</span>}</>;
-          const bundlePreview=grouped?item.coverage!.members.filter(member=>!feedback.dismissed.includes(member.eventId)).map(member=>item.coverage!.relation==="release_family"?`${member.releaseTarget} ${member.releaseVersion}`:member.title).join(" · "):material.summary;
+          const bundlePreview=grouped?item.coverage!.members.filter(member=>!feedback.dismissed.includes(member.eventId)).map(member=>item.coverage!.relation==="release_family"?releaseName(member):member.title).join(" · "):material.summary;
           if(tab==="radar"&&view==="compact")return <ReaderRow key={item.id} title={title} meta={meta} preview={bundlePreview}
             selected={eventId===item.id} data-public-event={item.id} headingLevel="h3" onOpen={grouped?undefined:click=>open(target,item.id,click.currentTarget)}
             titleRef={element=>{if(element)listButtons.current.set(item.id,element);else listButtons.current.delete(item.id);}} actions={!grouped&&actions(item)}>

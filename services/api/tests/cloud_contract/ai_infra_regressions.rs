@@ -187,5 +187,13 @@ pub(super) async fn verify_ai_infra_catalog(pool: &PgPool) -> anyhow::Result<()>
             .fetch_one(pool)
             .await?;
     assert!(!blog, "the toggle only applies to release tags");
+    let cases: Value = serde_json::from_str(include_str!("../../../../shared/development-release-cases.json"))?;
+    for case in cases.as_array().unwrap() {
+        let title = case["title"].as_str().unwrap();
+        let hidden: bool = sqlx::query_scalar("SELECT reader_is_opaque_engineering_release('release',$1)")
+            .bind(title).fetch_one(pool).await?;
+        assert_eq!(hidden, case["hidden"].as_bool().unwrap(), "{title}");
+        assert_eq!(hidden, crate::reader::is_development_release("release", title), "{title}");
+    }
     Ok(())
 }

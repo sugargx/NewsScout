@@ -498,11 +498,43 @@ mod podcast_retention_tests {
 }
 
 pub fn extract_publisher_article(html: &str) -> Option<(String, bool)> {
-    let candidate = extract_element(html, "article").or_else(|| extract_element(html, "main"))?;
+    let candidate = extract_element(html, "article")
+        .or_else(|| extract_element(html, "main"))
+        .or_else(|| extract_article_div(html))?;
     let mut truncated = false;
     let body = bound_body(&reading_text(candidate), &mut truncated);
     (body.chars().count() >= 240 && !looks_like_access_challenge(&body))
         .then_some((body, truncated))
+}
+
+pub fn public_article_endpoint(page: &Url, html: &str) -> Option<Url> {
+    if page.scheme() != "https" || page.host_str()? != "aiera.com.cn"
+        || !page.username().is_empty() || page.password().is_some()
+        || !html.contains("fetch(\"/wp-json/wp/v2/posts/\"")
+    {
+        return None;
+    }
+    let id = page.query_pairs().find(|(key, _)| key == "id").map(|(_, value)| value.into_owned())
+        .or_else(|| page.path_segments()?.filter(|segment|
+            segment.len() >= 5 && segment.bytes().all(|byte| byte.is_ascii_digit())).next_back().map(str::to_owned))?;
+    if !(5..=12).contains(&id.len()) || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    page.join(&format!("/wp-json/wp/v2/posts/{id}")).ok()
+}
+
+pub fn extract_public_article_json(bytes: &[u8], endpoint: &Url, title: &str) -> Option<(String, bool)> {
+    let post: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let id = endpoint.path_segments()?.next_back()?.parse::<u64>().ok()?;
+    if post["id"].as_u64()? != id || post["status"].as_str()? != "publish"
+        || post["content"]["protected"].as_bool()? || post["type"].as_str()? != "post"
+        || crate::processing::plain_text(post["title"]["rendered"].as_str()?) != title
+    {
+        return None;
+    }
+    let mut truncated = false;
+    let body = bound_body(&reading_text(post["content"]["rendered"].as_str()?), &mut truncated);
+    (body.chars().count() >= 240 && !looks_like_access_challenge(&body)).then_some((body, truncated))
 }
 
 fn local_name(name: &[u8]) -> String {
@@ -655,6 +687,64 @@ fn extract_element<'a>(html: &'a str, wanted: &str) -> Option<&'a str> {
     Some(&html[content_start..content_start + end])
 }
 
+// Some publishers use an explicitly named div instead of a semantic article.
+// Match its balanced subtree, never the entire page or its navigation siblings.
+fn extract_article_div(html: &str) -> Option<&str> {
+    let lower = html.to_ascii_lowercase();
+    let mut offset = 0;
+    let mut depth = 0usize;
+    let mut content_start = None;
+    while let Some(relative) = lower[offset..].find('<') {
+        let start = offset + relative;
+        if lower[start..].starts_with("<!--") {
+            offset = start + 4 + lower[start + 4..].find("-->")? + 3;
+            continue;
+        }
+        let mut quote = None;
+        let end = lower[start + 1..].char_indices().find_map(|(index, ch)| {
+            match (quote, ch) {
+                (Some(expected), actual) if expected == actual => quote = None,
+                (None, '\'' | '"') => quote = Some(ch),
+                (None, '>') => return Some(start + 1 + index),
+                _ => {}
+            }
+            None
+        })?;
+        let tag = lower[start + 1..end].trim();
+        let name = tag.trim_start_matches('/').split_whitespace().next().unwrap_or("");
+        offset = end + 1;
+        if !tag.starts_with('/') && matches!(name, "script" | "style" | "template") {
+            offset += lower[offset..].find(&format!("</{name}>"))? + name.len() + 3;
+            continue;
+        }
+        if name != "div" {
+            continue;
+        }
+        if tag.starts_with('/') {
+            if depth > 0 {
+                depth -= 1;
+                if depth == 0 {
+                    return content_start.map(|begin| &html[begin..start]);
+                }
+            }
+        } else if depth > 0 {
+            depth += 1;
+        } else {
+            let element = quick_xml::events::BytesStart::from_content(tag, 3);
+            let article_class = element.attributes().with_checks(false).flatten().any(|attribute| {
+                attribute.key.as_ref() == b"class"
+                    && std::str::from_utf8(&attribute.value).is_ok_and(|classes|
+                        classes.split_whitespace().any(|class| matches!(class, "article" | "article-content" | "entry-content")))
+            });
+            if article_class {
+                depth = 1;
+                content_start = Some(offset);
+            }
+        }
+    }
+    None
+}
+
 fn looks_like_access_challenge(body: &str) -> bool {
     let text = body.to_ascii_lowercase();
     [
@@ -671,6 +761,42 @@ fn looks_like_access_challenge(body: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publisher_article_div_is_balanced_and_excludes_surrounding_page() {
+        let body = "Original publisher material describes the experiment and its limitations. ".repeat(6);
+        let html = format!("<div class='navigation'>unrelated navigation</div><div class='article'><h1>Title</h1><div class='article_info'>Author</div><p>{body}</p><script>const x='<div>not content';</script></div><div>unrelated footer</div>");
+        let (article, _) = extract_publisher_article(&html).unwrap();
+        assert!(article.contains(body.trim()));
+        assert!(!article.contains("unrelated"));
+        assert!(!article.contains("not content"));
+        assert!(extract_publisher_article(&format!("<div class='article_info'>{body}</div>")).is_none());
+        assert!(extract_publisher_article(&format!("<div data-note=\" class='article' \">{body}</div>")).is_none());
+        assert!(extract_publisher_article(&format!("<div title='a > b' class='article'>{body}</div>")).is_some());
+        assert!(extract_publisher_article(&format!("<div class='article'>{body}")).is_none());
+    }
+
+    #[test]
+    fn public_article_json_requires_the_declared_route_and_public_matching_post() {
+        let page = Url::parse("https://aiera.com.cn/asi-post.html?id=120702").unwrap();
+        let endpoint = public_article_endpoint(&page, "fetch(\"/wp-json/wp/v2/posts/\"+id)").unwrap();
+        assert_eq!(endpoint.as_str(), "https://aiera.com.cn/wp-json/wp/v2/posts/120702");
+        assert!(public_article_endpoint(&page, "unrelated script").is_none());
+        assert!(public_article_endpoint(&Url::parse("https://other.example/?id=120702").unwrap(), "fetch(\"/wp-json/wp/v2/posts/\"").is_none());
+        let mut post = serde_json::json!({"id":120702,"type":"post","status":"publish",
+            "title":{"rendered":"Original title"},"content":{"protected":false,
+            "rendered":format!("<p>{}</p>", "Original public material with explicit limitations. ".repeat(8))}});
+        let extract = |post: &serde_json::Value| extract_public_article_json(&serde_json::to_vec(post).unwrap(), &endpoint, "Original title");
+        assert!(extract(&post).is_some());
+        post["content"]["protected"] = true.into();
+        assert!(extract(&post).is_none());
+        post["content"]["protected"] = false.into();
+        post["id"] = 120703.into();
+        assert!(extract(&post).is_none());
+        post["id"] = 120702.into();
+        post["status"] = "private".into();
+        assert!(extract(&post).is_none());
+    }
 
     #[test]
     fn retains_podcast_notes_duration_chapters_and_transcript_link() {

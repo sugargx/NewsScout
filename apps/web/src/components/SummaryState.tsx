@@ -7,6 +7,9 @@ export function SummaryState({ event, details = false }: { event: Pick<Event, "s
   const styles = useStyles();
   const status = event.summaryStatus;
   if (!status || status === "completed") return null;
+  if (status === "manual_only") return details
+    ? <p className={styles.reason}>开发构建保留原始说明，不自动更新摘要；可按需手动生成。</p>
+    : null;
   const waiting = !!event.summaryNextAttemptAt && (status === "failed" || status === "pending" && !!event.summaryError);
   return <div className={details ? styles.reason : styles.meta}>
     <Badge color={status === "failed" && !waiting ? "danger" : "warning"} appearance="tint">{event.summaryKind === "copilot" && status === "running" ? "摘要升级中" : event.summaryKind === "copilot" && status === "pending" && !waiting ? "等待升级摘要" : summaryStatusLabel(status, event.summaryNextAttemptAt, event.summaryError)}</Badge>

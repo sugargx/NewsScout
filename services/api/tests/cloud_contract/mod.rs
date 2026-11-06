@@ -23,6 +23,7 @@ const CSRF: &str = "isolated-test-csrf-secret-32-bytes-minimum";
 
 mod ai_infra_regressions;
 mod coverage_regressions;
+mod radar_quality_regressions;
 mod ingestion_regressions;
 mod brief_visual_regressions;
 mod reader_performance_regressions;
@@ -279,20 +280,32 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     assert_eq!(reading_personalization_regressions::protected_fingerprints(&pool).await?,before_reading,
         "reading migration rewrote existing reader or material data");
     let visual_upgrade = brief_visual_regressions::seed_upgrade(&pool).await?;
+    migrator.migrations = std::borrow::Cow::Owned(
+        all_migrations.iter().filter(|migration| migration.version <= 39).cloned().collect());
+    migrator.run(&pool).await?;
+    let before_radar = reading_personalization_regressions::protected_fingerprints(&pool).await?;
     migrator.migrations = all_migrations;
     migrator.run(&pool).await?;
+    assert_eq!(reading_personalization_regressions::protected_fingerprints(&pool).await?, before_radar,
+        "radar policy migration must not rewrite source material, snapshots or reader state");
     let mut previous_release = sqlx::migrate!("./migrations");
     previous_release.migrations = std::borrow::Cow::Owned(previous_release.migrations.iter()
-        .filter(|migration| migration.version <= 37).cloned().collect());
-    let rollback_error = previous_release.run(&pool).await
-        .expect_err("an old migration bundle must not be treated as a schema39-compatible rollback");
-    assert!(rollback_error.to_string().contains("38"), "{rollback_error}");
+        .filter(|migration| migration.version <= 39).cloned().collect());
+    // A rejected migration can retain a session advisory lock. Close its
+    // connection instead of returning that lock to the shared test pool.
+    let mut rollback_connection = pool.acquire().await?;
+    let rollback_result = previous_release.run(&mut *rollback_connection).await;
+    rollback_connection.close().await?;
+    let rollback_error = rollback_result
+        .expect_err("an old migration bundle must not be treated as a schema40-compatible rollback");
+    assert!(rollback_error.to_string().contains("40"), "{rollback_error}");
     visual_upgrade.verify_and_cleanup(&pool).await?;
     verify_explicit_role_membership(&pool).await?;
     ai_infra_regressions::verify_ai_infra_catalog(&pool).await?;
     coverage_regressions::verify_coverage_catalog(&pool).await?;
     coverage_regressions::verify_catalog_follows_its_own_interval(&pool).await?;
     coverage_regressions::verify_critical_disclosure_selection(&pool).await?;
+    radar_quality_regressions::verify_development_queue(&pool).await?;
     crate::source_directory::import(&pool).await?;
     sqlx::query("UPDATE interest_profiles SET profile=$1 WHERE user_id='local'")
         .bind(json!({"topics":[{"id":"local","label":"LOCAL_OWNER_SENTINEL","group":"local","context":"work","weight":99,"enabled":true}]}))
@@ -308,6 +321,7 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
     assert_ne!(a.id, b.id);
     assert_ne!(a.csrf, b.csrf);
     self_service_regressions::verify_admission(&pool, &app, &a).await?;
+    radar_quality_regressions::verify_copy_ownership(&pool, &a, &b).await?;
     coverage_regressions::verify_source_failure_projection(&pool, &a).await?;
     coverage_regressions::verify_explicit_edition_correction(&pool, &a, &b).await?;
     let (shared_source, shared) = fixture(&pool, None, "PUBLIC_FIXTURE").await?;

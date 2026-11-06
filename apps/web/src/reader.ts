@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "./api";
-import type { Brief, Event, EventState, Processing, Provider, SummaryStatus } from "./types";
+import type { Brief, CoverageMember, Event, EventState, Processing, Provider, SummaryStatus } from "./types";
 import type { InfiniteData } from "@tanstack/react-query";
 
 export const DEFAULT_SUMMARY_MODEL = "gpt-5.6-terra";
@@ -23,7 +23,14 @@ export function summaryStatusLabel(status: SummaryStatus | null | undefined, nex
   if (status === "completed") return "已完成";
   if (status === "failed") return nextAttemptAt ? "等待重试" : "失败";
   if (status === "pending") return nextAttemptAt && lastError ? "等待重试" : "排队中";
+  if (status === "manual_only") return "仅按需生成";
   return "尚未生成";
+}
+
+/** A release without a recognizable version keeps its original title rather than "undefined". */
+export function releaseName(member: Pick<CoverageMember, "title" | "releaseTarget" | "releaseVersion">, separator = " "): string {
+  const parts = [member.releaseTarget, member.releaseVersion].map(part => part?.trim()).filter((part): part is string => !!part);
+  return parts.length ? parts.join(separator) : member.title;
 }
 
 export function aggregatedOnly(event: Partial<Pick<Event,"evidence">>): boolean {
@@ -97,7 +104,7 @@ export function updateReaderState(client:QueryClient,event:Event) {
     if(!updated.coverage?.members.some(member=>member.eventId===event.id))return updated;
     const members=updated.coverage.members.map(member=>
       member.eventId===event.id?{...member,hidden:event.notInterested}:member);
-    return {...updated,notInterested:grouped&&["release_family","same_event_evidence","bulk_publication"].includes(updated.coverage.relation)
+    return {...updated,notInterested:grouped&&["release_family","same_event_evidence","same_article","development_activity","bulk_publication"].includes(updated.coverage.relation)
       ?members.every(member=>member.hidden):updated.notInterested,coverage:{...updated.coverage,members}};
   };
   const patchGroup=(item:Event)=>patch(item,true);

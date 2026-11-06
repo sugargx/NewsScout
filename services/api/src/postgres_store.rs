@@ -180,9 +180,15 @@ impl PostgresStore {
                 'isOfficial',ee.is_official,'publishedAt',COALESCE(ci.published_at,ci.created_at),
                 'originalPublishedAt',ci.published_at,'collectedAt',ci.created_at,
                 'publicationPrecision',COALESCE(ci.metadata->'sourceMetadata'->>'datePrecision','time'),
-                'excerpt',left(COALESCE(news_publisher_excerpt(ci.original_url,ci.metadata),''),3000),
+                'excerpt',left(COALESCE(
+                    NULLIF(news_publisher_material(ci.original_url,ci.metadata)->'readingContext'->>'body',''),
+                    news_publisher_excerpt(ci.original_url,ci.metadata),''),3000),
                 'readingContext',NULL::jsonb)
                 ORDER BY ci.published_at DESC NULLS LAST,ci.id) AS coverage_evidence,
+            jsonb_agg(jsonb_build_object('title',ci.title,'body',
+                CASE WHEN e.event_type<>'release' THEN left(COALESCE(
+                    NULLIF(news_publisher_material(ci.original_url,ci.metadata)->'readingContext'->>'body',''),
+                    news_publisher_excerpt(ci.original_url,ci.metadata),''),16000) ELSE '' END)) AS coverage_originals,
             jsonb_agg(jsonb_build_object('evidenceId',ci.id,
                 'publisher',COALESCE(ee.independence_group,'publisher:'||p.id::text,'source:'||s.id::text),
                 'kind',CASE WHEN p.entity_type='community' OR s.content_type='repository' OR s.adapter_type IN ('github_search','github_repository')
@@ -215,7 +221,7 @@ impl PostgresStore {
                     serde_json::from_value(row.try_get("coverage_evidence")?)?;
                 for item in &mut evidence {
                     item.title = plain_text(&item.title);
-                    item.excerpt = plain_text(&item.excerpt);
+                    item.excerpt = crate::processing::reading_text(&item.excerpt);
                 }
                 let identities: Value = row.try_get("coverage_sources")?;
                 let sources = identities
@@ -238,7 +244,7 @@ impl PostgresStore {
                     .collect::<Result<Vec<_>>>()?;
                 let material_kind = crate::coverage::material_kind(&sources);
                 let (published_at, publication_precision) = reader::publication_context(&evidence);
-                Ok(crate::coverage::Record::new(
+                let mut record = crate::coverage::Record::new(
                     crate::models::CoverageMember {
                         event_id: row.try_get("id")?,
                         content_version: row.try_get("content_version")?,
@@ -266,7 +272,14 @@ impl PostgresStore {
                         release_version: None,
                     },
                     sources,
-                ))
+                );
+                let originals: Value = row.try_get("coverage_originals")?;
+                for original in originals.as_array().context("coverage originals must be an array")? {
+                    if let (Some(title), Some(body)) = (original["title"].as_str(), original["body"].as_str()) {
+                        record.use_original_material(&plain_text(title), crate::processing::reading_text(body));
+                    }
+                }
+                Ok(record)
             })
             .collect::<Result<Vec<_>>>()?;
         tracing::debug!(
@@ -524,11 +537,13 @@ impl PostgresStore {
             .iter()
             .filter(|event| {
                 event.evidence.iter().any(|evidence| {
-                    crate::coverage::candidate_reference(&evidence.title, &evidence.url).is_some()
+                    crate::coverage::candidate_reference(&evidence.title, &evidence.url)
+                        .is_some_and(|reference| !reference.starts_with("article-copy:"))
                 })
             })
             .map(|event| event.id)
             .collect();
+        let mut copy_candidates = HashMap::<String, HashSet<Uuid>>::new();
         for row in rows {
             let Some(reference) = crate::coverage::candidate_reference(
                 &row.try_get::<String, _>("title")?,
@@ -544,8 +559,18 @@ impl PostgresStore {
                     .and_then(|release| release.rsplit_once('/'))
                     .is_some_and(|(repository, _)| release_repositories.contains(repository));
             if exact || release_family {
-                ids.insert(row.try_get("id")?);
+                let id = row.try_get("id")?;
+                if reference.starts_with("article-copy:") {
+                    copy_candidates.entry(reference).or_default().insert(id);
+                } else {
+                    ids.insert(id);
+                }
             }
+        }
+        for candidates in copy_candidates.into_values()
+            .filter(|ids| (2..=crate::coverage::MAX_COPY_CANDIDATES).contains(&ids.len()))
+        {
+            ids.extend(candidates);
         }
         let mut ids: Vec<_> = ids.into_iter().collect();
         ids.sort_unstable();
@@ -710,6 +735,8 @@ impl PostgresStore {
             .filter_map(|item| item.original_published_at)
             .min();
         let collected_at = evidence.iter().filter_map(|item| item.collected_at).max();
+        let manual_summary = reader::is_development_release(
+            &row.try_get::<String, _>("event_type")?, &row.try_get::<String, _>("canonical_title")?);
         let mut event = Event {
             editorial: Some(serde_json::from_value(row.try_get("editorial")?)?),
             display_title: row.try_get("display_title")?,
@@ -747,7 +774,8 @@ impl PostgresStore {
                 row.try_get::<Value, _>("summary_evidence_ids")?,
             )?,
             content_version: row.try_get("content_version")?,
-            summary_status: hydration.job.as_ref().map(|job| job.status.clone()),
+            summary_status: hydration.job.as_ref().map(|job|
+                if manual_summary && job.status == "pending" { "manual_only".into() } else { job.status.clone() }),
             summary_error: hydration.job.as_ref().and_then(|job| job.last_error.clone()),
             summary_next_attempt_at: hydration.job.as_ref().and_then(|job| job.next_attempt_at),
             summary_format_version: row.try_get("summary_format_version")?,
@@ -1113,6 +1141,10 @@ mod coverage_contract_tests {
                     ("same_event_evidence", "exact-event-reference-v1")
                         | ("release_family", "release-family-v1")
                         | ("release_family", "release-family-v2")
+                        | ("release_family", "project-release-window-v1")
+                        | ("release_family", "project-release-window-v2")
+                        | ("same_article", "original-copy-v1")
+                        | ("development_activity", "development-window-v1")
                 ));
                 if bundle.community_material_count > 0 && bundle.editorial_source_count == 1 {
                     assert_eq!(bundle.popularity_boost, 0.0);
@@ -1313,15 +1345,25 @@ impl Store for PostgresStore {
             .fetch_all(&self.pool)
             .await?;
             let mut groupable_ids = std::collections::HashSet::new();
+            let mut copy_candidates = std::collections::HashMap::<String, std::collections::HashSet<Uuid>>::new();
             for reference in references {
-                if crate::coverage::candidate_reference(
+                if let Some(key) = crate::coverage::candidate_reference(
                     &reference.try_get::<String, _>("title")?,
                     &reference.try_get::<String, _>("original_url")?,
                 )
-                .is_some()
                 {
-                    groupable_ids.insert(reference.try_get::<Uuid, _>("event_id")?);
+                    let id = reference.try_get::<Uuid, _>("event_id")?;
+                    if key.starts_with("article-copy:") {
+                        copy_candidates.entry(key).or_default().insert(id);
+                    } else {
+                        groupable_ids.insert(id);
+                    }
                 }
+            }
+            // Ordinary articles are hydrated only when another event shares the
+            // bounded original-title key, never for a model call in a reader GET.
+            for ids in copy_candidates.into_values().filter(|ids| (2..=crate::coverage::MAX_COPY_CANDIDATES).contains(&ids.len())) {
+                groupable_ids.extend(ids);
             }
             let groupable_ids: Vec<_> = groupable_ids.into_iter().collect();
             let records = if groupable_ids.is_empty() {

@@ -256,10 +256,39 @@ impl Selection {
 }
 
 pub fn is_opaque_engineering_release(event: &Event) -> bool {
-    if event.event_type != "release" {
+    is_development_release(&event.event_type, &event.title)
+}
+
+pub(crate) fn is_development_release(event_type: &str, title: &str) -> bool {
+    if event_type != "release" {
         return false;
     }
-    let title = event.title.trim().to_ascii_lowercase();
+    let full_title = title.trim().to_ascii_lowercase();
+    if ["nightly", "canary", "last-green", "last_green", "last.green"]
+        .iter().any(|prefix| full_title.strip_prefix(prefix).is_some_and(|tail| {
+            tail.is_empty() || tail.starts_with(['-', '_', ':', ' '])
+        }))
+    {
+        return true;
+    }
+    let title = full_title.split(':').next().unwrap_or("").trim();
+    let opaque_sha = |value: &str| {
+        (12..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    };
+    let path: Vec<_> = title.split('/').collect();
+    if path.len() > 1 {
+        return matches!(path[0], "viable" | "strict" | "main" | "master" | "trunk" | "dev" | "ci" | "ciflow")
+            && path.iter().all(|part| !part.is_empty() && part.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')))
+            && path.last().is_some_and(|last| opaque_sha(last)
+                || last.len() >= 6 && last.bytes().all(|byte| byte.is_ascii_digit()));
+    }
+    let letters = title.bytes().take_while(u8::is_ascii_lowercase).count();
+    if (1..=3).contains(&letters) && title.len() >= letters + 4
+        && title[letters..].bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return true;
+    }
     if title.len() < 1
         || !title
             .bytes()
@@ -273,9 +302,6 @@ pub fn is_opaque_engineering_release(event: &Event) -> bool {
     }
     let Some(last) = parts.last() else {
         return false;
-    };
-    let opaque_sha = |value: &str| {
-        (12..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
     };
     if opaque_sha(&title) {
         return true;
@@ -643,6 +669,17 @@ mod tests {
         assert!(!is_opaque_engineering_release(&events[0]));
         events[0].title = "handoff--59939c003f6b3eb8add709e5897f7bfbe3e9f4d8".into();
         assert!(!is_opaque_engineering_release(&events[0]));
+    }
+
+    #[test]
+    fn development_release_cases_match_the_shared_contract() {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../../../shared/development-release-cases.json")).unwrap();
+        for case in cases.as_array().unwrap() {
+            let title = case["title"].as_str().unwrap();
+            assert_eq!(is_development_release("release", title), case["hidden"].as_bool().unwrap(), "{title}");
+            assert!(!is_development_release("blog", title), "articles are not machine tags: {title}");
+        }
     }
 
     async fn candidate(

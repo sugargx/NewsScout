@@ -10,6 +10,7 @@ pub(super) const WINDOW_HOURS: i64 = 24;
 
 #[derive(Clone)]
 pub(super) struct Release {
+    pub repo: String,
     pub key: String,
     pub target: String,
     pub version: String,
@@ -32,6 +33,16 @@ enum Grouping {
 }
 
 impl Release {
+    /// Verified family releases always belong to their repository's window.
+    pub(super) fn project(&self) -> super::project::ProjectRelease {
+        super::project::ProjectRelease {
+            key: self.repo.clone(),
+            product: self.repository.clone(),
+            target: self.target.clone(),
+            version: self.version.clone(),
+        }
+    }
+
     pub(super) fn method(&self) -> &'static str {
         match self.grouping {
             Grouping::LanguageWindow => "project-release-window-v1",
@@ -199,6 +210,7 @@ fn scoped_package_release(repo: &str, repository: &str, tag: &str, title: &str) 
         return None;
     }
     Some(Release {
+        repo: repo.into(),
         key: format!("{repo}:npm-scope:{scope}:{release_version}"),
         product: Some(format!("@{scope}")),
         repository: repository.into(),
@@ -239,6 +251,7 @@ fn package_release(repo: &str, repository: &str, tag: &str, title: &str) -> Opti
         None
     };
     Some(Release {
+        repo: repo.into(),
         key: format!("{repo}:package"),
         product: Some(repository.to_ascii_lowercase()),
         repository: repository.into(),
@@ -290,6 +303,7 @@ fn language_release(repo: &str, repository: &str, tag: &str, title: &str) -> Opt
         "stable"
     };
     Some(Release {
+        repo: repo.into(),
         key: format!("{repo}:language:{channel}"),
         product: Some(repository.into()),
         repository: repository.into(),
@@ -360,6 +374,7 @@ fn legacy_release(repo: &str, repository: &str, tag: &str, title: &str) -> Optio
         normalized(&target)
     };
     Some(Release {
+        repo: repo.into(),
         key: format!("{repo}:{}", if client { "client" } else { &family }),
         product,
         repository: repository.into(),
@@ -381,6 +396,16 @@ fn legacy_release(repo: &str, repository: &str, tag: &str, title: &str) -> Optio
 }
 
 pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
+    parse_with(member, true)
+}
+
+/// Component identity for display and neutral headings only. Without change
+/// references it can never support a shared-change or batch claim.
+pub(super) fn identity(member: &CoverageMember) -> Option<Release> {
+    parse_with(member, false)
+}
+
+fn parse_with(member: &CoverageMember, require_changes: bool) -> Option<Release> {
     if member.event_type != "release"
         || member.material_kind != "official"
         || member.publication_precision.as_deref() != Some("time")
@@ -458,7 +483,7 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
                 }
             }
         }
-        if (release.client || release.package) && changes.is_empty() {
+        if require_changes && (release.client || release.package) && changes.is_empty() {
             return None;
         }
         release.changes = changes;
@@ -476,7 +501,7 @@ pub(super) fn parse(member: &CoverageMember) -> Option<Release> {
                     .intersection(&release.changes)
                     .cloned()
                     .collect();
-                if previous.changes.is_empty() {
+                if require_changes && previous.changes.is_empty() {
                     return None;
                 }
             } else {
@@ -579,6 +604,129 @@ pub(super) fn label(members: &[&Record]) -> String {
         }
     };
     format!("{product} {}更新：{subject}", first.family_label)
+}
+
+pub(super) const PROJECT_WINDOW_METHOD: &str = "project-release-window-v2";
+
+/// A repository window keeps the stricter family heading only when every member
+/// still forms one verified batch; otherwise the heading is a neutral roundup.
+pub(super) fn window(
+    members: &[&Record],
+    cutoff: DateTime<Utc>,
+) -> (String, String, &'static str) {
+    if let Some(releases) = members
+        .iter()
+        .map(|record| record.release.as_ref())
+        .collect::<Option<Vec<_>>>()
+    {
+        let first = releases[0];
+        if releases.iter().all(|release| release.key == first.key) {
+            let strict = cohorts(members, cutoff);
+            if strict.len() == 1 && strict[0].len() == members.len() {
+                return (first.key.clone(), label(members), first.method());
+            }
+        }
+    }
+    let key = members[0]
+        .project
+        .as_ref()
+        .map(|project| project.key.clone())
+        .unwrap_or_default();
+    (key, project_label(members), PROJECT_WINDOW_METHOD)
+}
+
+fn project_label(members: &[&Record]) -> String {
+    let repository = members[0]
+        .project
+        .as_ref()
+        .map(|project| project.product.clone())
+        .unwrap_or_default();
+    let mut items: Vec<_> = members
+        .iter()
+        .map(|record| {
+            (
+                record.identity.as_ref().map(|release| release.target_key.clone()),
+                record.member.release_target.clone().unwrap_or_default(),
+                record.member.release_version.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    // Identities only choose neutral nouns; shared-change titles were decided by `window`.
+    let releases: Option<Vec<_>> = members.iter().map(|record| record.identity.as_ref()).collect();
+    let (product, mut noun) = match &releases {
+        Some(releases) => {
+            let products: BTreeSet<_> = releases
+                .iter()
+                .filter_map(|release| release.product.as_deref())
+                .map(normalized)
+                .collect();
+            let product = if products.len() == 1 {
+                releases
+                    .iter()
+                    .filter_map(|release| release.product.clone())
+                    .min()
+                    .unwrap_or_else(|| repository.clone())
+            } else {
+                repository.clone()
+            };
+            let first = releases[0];
+            let noun = if releases
+                .iter()
+                .all(|release| release.grouping == Grouping::LanguageWindow)
+            {
+                "多语言更新".to_owned()
+            } else if releases.iter().all(|release| release.package) {
+                // Same-scope or same-repository packages are components, not a verified batch.
+                items.sort_by(|a, b| {
+                    (a.0.as_deref() != Some("core"))
+                        .cmp(&(b.0.as_deref() != Some("core")))
+                        .then(a.0.cmp(&b.0))
+                });
+                "组件更新".to_owned()
+            } else if releases.iter().all(|release| {
+                !release.package
+                    && release.grouping != Grouping::LanguageWindow
+                    && release.family_label == first.family_label
+            }) {
+                format!("{}更新", first.family_label)
+            } else {
+                "版本更新".to_owned()
+            };
+            (product, noun)
+        }
+        None => (repository, "版本更新".to_owned()),
+    };
+    let targets: BTreeSet<_> = items.iter().map(|item| item.1.to_lowercase()).collect();
+    // Several versions of one target are a version roundup, not a language or component batch.
+    let versions_only = targets.len() == 1 && items.iter().all(|item| !item.2.is_empty());
+    let product = if versions_only {
+        noun = "版本更新".to_owned();
+        let target = &items[0].1;
+        if normalized(target).contains(&normalized(&product)) {
+            target.clone()
+        } else {
+            format!("{product} {target}")
+        }
+    } else {
+        product
+    };
+    let names: Vec<_> = items
+        .iter()
+        .take(2)
+        .map(|(_, target, version)| {
+            if versions_only {
+                version.clone()
+            } else {
+                format!("{target} {version}").trim().to_owned()
+            }
+        })
+        .collect();
+    let subject = if items.len() > 2 {
+        format!("{} 等{}项", names.join(" / "), items.len())
+    } else {
+        names.join(" / ")
+    };
+    format!("{product} {noun}：{subject}")
 }
 
 pub(super) fn cohorts<'a>(

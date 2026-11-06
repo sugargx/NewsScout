@@ -152,7 +152,10 @@ pub(super) fn parse(member: &CoverageMember, sources: &[SourceIdentity]) -> Opti
 pub(super) fn cohorts(records: &[Record], cutoff: DateTime<Utc>) -> Vec<Cohort<'_>> {
     let mut by_subject = BTreeMap::<&str, Vec<&Record>>::new();
     for record in records {
-        if record.release.is_none() && record.freshness_at.is_some_and(|date| date <= cutoff) {
+        if record.release.is_none()
+            && record.project.is_none()
+            && record.freshness_at.is_some_and(|date| date <= cutoff)
+        {
             if let Some(announcement) = &record.announcement {
                 by_subject
                     .entry(&announcement.subject)

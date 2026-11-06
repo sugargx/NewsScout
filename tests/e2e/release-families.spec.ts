@@ -42,7 +42,7 @@ async function closeReader(server:Awaited<ReturnType<typeof publicReader>>["serv
   });
 }
 
-test("component release groups preserve filters, pagination, versions and independent feedback",async({page,request},info)=>{
+test("one repository's release day is one row that preserves filters, pagination, versions and independent feedback",async({page,request},info)=>{
   test.setTimeout(240_000);
   const before=preserved(),tag=`release-fixture-${randomUUID()}`,source=randomUUID();
   const definitions=[
@@ -83,15 +83,16 @@ test("component release groups preserve filters, pagination, versions and indepe
     const original=await events(request,parameters);
     const grouped=await events(request,{...parameters,coverage:"true"});
     expect(original.items).toHaveLength(9);
-    expect(grouped.items).toHaveLength(3);
+    // Plugins and clients of one official repository within minutes take one radar slot.
+    expect(grouped.items).toHaveLength(1);
     expect(grouped.items.map(item=>item.coverage?.topic)).toEqual([
-      "Mem0 插件更新：安装统计","Mem0 插件更新：遥测","Mem0 客户端更新：调用来源标识",
+      "Mem0 版本更新：OpenClaw v1.2.0 / OpenCode v0.4.0 等9项",
     ]);
     const byId=new Map(original.items.map(item=>[item.id,item]));
     const represented:string[]=[];
     for(const item of grouped.items) {
       const bundle=item.coverage!;
-      expect(bundle.method).toBe("release-family-v2");
+      expect(bundle.method).toBe("project-release-window-v2");
       expect(bundle.officialSourceCount).toBe(1);
       expect(bundle.popularityBoost).toBe(0);
       expect(bundle.windowHours).toBe(24);
@@ -104,8 +105,8 @@ test("component release groups preserve filters, pagination, versions and indepe
       }
     }
     expect(represented.sort()).toEqual(original.items.map(item=>item.id).sort());
-    expect(grouped.items[2].coverage!.members.map(member=>member.releaseTarget).sort()).toEqual([
-      "Node CLI","Node SDK","Python CLI","Python SDK","Vercel AI SDK Provider",
+    expect(grouped.items[0].coverage!.members.map(member=>member.releaseTarget).sort()).toEqual([
+      "DeepSeek","Node CLI","Node SDK","OpenClaw","OpenCode","Pi Agent","Python CLI","Python SDK","Vercel AI SDK Provider",
     ]);
     const first=await events(request,{...parameters,coverage:"true",limit:"2"});
     const second=await events(request,{...parameters,coverage:"true",limit:"2",offset:"2"});
@@ -114,20 +115,21 @@ test("component release groups preserve filters, pagination, versions and indepe
     expect(filtered.items).toHaveLength(1);
     expect(filtered.items[0].coverage).toBeUndefined();
 
-    const client=grouped.items[2],member=client.coverage!.members[0];
+    const client=grouped.items[0],member=client.coverage!.members.find(item=>item.releaseTarget==="Node CLI")!;
     await page.goto(`/radar?q=${encodeURIComponent(tag)}&hours=24&sort=newest`);
     const row=page.locator(`article[data-event-id="${client.id}"]`);
     await expect(row.getByRole("heading",{level:2,name:client.coverage!.topic,exact:true})).toBeVisible();
     await row.locator(".cp-release-family > summary").click();
-    await expect(row.locator("[data-coverage-member]")).toHaveCount(5);
+    await expect(row.locator("[data-coverage-member]")).toHaveCount(9);
+    await expect(row.getByRole("heading",{level:3,name:"Node CLI · v0.2.14",exact:true})).toBeVisible();
     await row.locator(`[data-coverage-member="${member.eventId}"]`).getByRole("button",{name:"查看详情",exact:true}).click();
     const preview=page.getByRole("article",{name:"文章就地阅读",exact:true});
     await expect(preview.getByRole("heading",{level:2,name:member.title,exact:true})).toBeVisible();
     await expect(preview.getByText("已打开",{exact:true})).toBeVisible();
     await preview.getByRole("button",{name:`不感兴趣：${member.title}`,exact:true}).click();
-    await expect(row.locator("[data-coverage-member]")).toHaveCount(4);
+    await expect(row.locator("[data-coverage-member]")).toHaveCount(8);
     await preview.getByRole("button",{name:`撤销不感兴趣：${member.title}`,exact:true}).click();
-    await expect(row.locator("[data-coverage-member]")).toHaveCount(5);
+    await expect(row.locator("[data-coverage-member]")).toHaveCount(9);
     await expect.poll(async()=>{
       const response=await request.get(`${api}/api/v1/events/${member.eventId}`);
       expect(response.ok(),await response.text()).toBe(true);
@@ -152,9 +154,9 @@ test("component release groups preserve filters, pagination, versions and indepe
       const reader=page.getByRole("complementary",{name:"公开文章阅读区",exact:true});
       await expect(reader.getByRole("heading",{level:2,name:member.title,exact:true})).toBeVisible();
       await reader.getByRole("button",{name:"不感兴趣",exact:true}).click();
-      await expect(publicRow.locator("[data-coverage-member]")).toHaveCount(4);
+      await expect(publicRow.locator("[data-coverage-member]")).toHaveCount(8);
       await page.getByRole("button",{name:"撤销不感兴趣",exact:true}).click();
-      await expect(publicRow.locator("[data-coverage-member]")).toHaveCount(5);
+      await expect(publicRow.locator("[data-coverage-member]")).toHaveCount(9);
       const owner=await(await request.get(`${api}/api/v1/events/${member.eventId}`)).json();
       expect(owner.notInterested).toBe(false);
     } finally {
@@ -236,6 +238,76 @@ test("scoped npm releases form one coordinated batch without becoming corroborat
   }
 });
 
+test("reported LangGraph CLI and SDK releases take one radar slot while builds stay hidden",async({page,request},info)=>{
+  test.setTimeout(180_000);
+  const before=preserved(),tag=`reported-release-${randomUUID()}`,source=randomUUID();
+  const definitions=[
+    ["langgraph-cli==0.4.42","https://github.com/langchain-ai/langgraph/releases/tag/cli%3D%3D0.4.42",0,
+      "Changes since cli==0.4.41 release(cli): 0.4.42 (#9611) feat(cli): add deploy metrics command (#9479)"],
+    ["langgraph-sdk==0.4.14","https://github.com/langchain-ai/langgraph/releases/tag/sdk%3D%3D0.4.14",19,
+      "Changes since sdk==0.4.13 release(sdk-py): 0.4.14 (#9610) feat(sdk-py): add strict_resume (#9599)"],
+    ["trunk/0bcfbeeed87d201bf80d4fcd826dc4f4209b8be9","https://github.com/pytorch/pytorch/releases/tag/trunk%2F0bcfbeeed87d201bf80d4fcd826dc4f4209b8be9",60,
+      "[llm-selector] Factor run_test.py's --enable-td default"],
+    ["trunk/625eb586c435ba098adb78741ceb2a173debca4c","https://github.com/pytorch/pytorch/releases/tag/trunk%2F625eb586c435ba098adb78741ceb2a173debca4c",61,
+      "[llm-selector] Name the blocklisted test directories"],
+  ] as const;
+  const fixtures=definitions.map(([title,url,seconds,excerpt])=>({id:randomUUID(),content:randomUUID(),title,url,seconds,excerpt}));
+  const ids=fixtures.map(item=>literal(item.id)).join(",");
+  try {
+    databaseQuery(`BEGIN;
+      INSERT INTO sources(id,publisher_id,name,endpoint,content_type,adapter_type,tier,lifecycle_status,last_success_at)
+        SELECT ${literal(source)},publisher_id,${literal(tag)},${literal(`https://${tag}.example/feed`)},
+          'release','rss','T1','stable',now() FROM sources WHERE id='20000000-0000-0000-0000-000000000110';
+      INSERT INTO events(id,canonical_title,summary,importance,primary_topic,event_type,first_seen_at,updated_at,
+        summary_kind,summary_format_version,summary_points,summary_model,content_version)
+      VALUES ${fixtures.map(item=>`(${literal(item.id)},${literal(item.title)},
+        ${literal(`隔离发布样本，并非新采集新闻。${tag}`)},'隔离样本','Agent 与工具','release',
+        now()-interval '2 hours',now()-interval '2 hours','copilot',3,
+        '["隔离发布样本，并非真实摘要。"]','isolated-fixture',1)`).join(",")};
+      INSERT INTO content_items(id,source_id,content_type,original_url,canonical_url,title,published_at,content_hash,metadata)
+      VALUES ${fixtures.map(item=>`(${literal(item.content)},${literal(source)},'release',${literal(item.url)},
+        ${literal(item.url)},${literal(item.title)},now()-interval '2 hours'-interval '${item.seconds} seconds',
+        ${literal(item.content)},${literal(JSON.stringify({feedSummary:item.excerpt}))}::jsonb)`).join(",")};
+      INSERT INTO event_evidence(event_id,content_item_id,is_official)
+        VALUES ${fixtures.map(item=>`(${literal(item.id)},${literal(item.content)},true)`).join(",")};
+      COMMIT;`);
+    const parameters={q:tag,hours:"24",sort:"newest",asOf:new Date().toISOString(),limit:"40"};
+    const grouped=await events(request,{...parameters,coverage:"true"});
+    expect(grouped.items).toHaveLength(1);
+    const bundle=grouped.items[0].coverage!;
+    expect(bundle.topic).toBe("langgraph 组件更新：CLI 0.4.42 / SDK 0.4.14");
+    expect(bundle.method).toBe("project-release-window-v2");
+    expect(bundle.popularityBoost).toBe(0);
+    expect(bundle.officialSourceCount).toBe(1);
+    expect(bundle.members.map(member=>[member.releaseTarget,member.releaseVersion])).toEqual([["CLI","0.4.42"],["SDK","0.4.14"]]);
+    const engineering=await events(request,{...parameters,coverage:"true",includeEngineering:"true"});
+    expect(engineering.items.map(item=>item.coverage?.relation).sort()).toEqual(["development_activity","release_family"]);
+
+    await page.goto(`/radar?q=${encodeURIComponent(tag)}&hours=24&sort=newest`);
+    await expect(page.locator("article[data-event-id]")).toHaveCount(1);
+    const row=page.locator(`article[data-event-id="${grouped.items[0].id}"]`);
+    await expect(row.getByRole("heading",{level:2,name:bundle.topic,exact:true})).toBeVisible();
+    await expect(row).toContainText("CLI 0.4.42 · SDK 0.4.14");
+    await row.locator(".cp-release-family > summary").click();
+    for(const name of ["CLI · 0.4.42","SDK · 0.4.14"])
+      await expect(row.getByRole("heading",{level:3,name,exact:true})).toBeVisible();
+    for(const width of [1440,390]) {
+      await page.setViewportSize({width,height:900});
+      await row.scrollIntoViewIfNeeded();
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+      await page.screenshot({path:info.outputPath(`reported-langgraph-release-row-${width}.png`),fullPage:true});
+    }
+  } finally {
+    await page.goto("about:blank");
+    databaseQuery(`DELETE FROM user_event_states WHERE event_id IN(${ids});
+      DELETE FROM event_evidence WHERE event_id IN(${ids});
+      DELETE FROM events WHERE id IN(${ids});
+      DELETE FROM content_items WHERE source_id=${literal(source)};
+      DELETE FROM sources WHERE id=${literal(source)};`);
+    expect(preserved()).toBe(before);
+  }
+});
+
 test("component release groups retained-corpus screenshots preserve real release notes",async({page,request},info)=>{
   test.setTimeout(240_000);
   test.skip(process.env.SCOUTNEWS_E2E_CORPUS_BACKUP!=="true","A retained-corpus backup is required.");
@@ -247,19 +319,22 @@ test("component release groups retained-corpus screenshots preserve real release
   const client=result.items.find(item=>item.coverage?.members.some(member=>
     member.releaseTarget==="Node CLI"&&member.releaseVersion==="v0.2.14"));
   expect(client,"The retained September 18 releases must be present.").toBeDefined();
-  expect(client!.coverage!.members).toHaveLength(5);
-  expect(client!.coverage!.topic).toBe("Mem0 客户端更新：调用来源标识");
+  // Same-day plugin releases from the repository may share this row; all five clients must be in it.
+  expect(client!.coverage!.members.map(member=>member.releaseTarget)).toEqual(expect.arrayContaining([
+    "Node CLI","Python CLI","Node SDK","Python SDK","Vercel AI SDK Provider",
+  ]));
+  const memberCount=client!.coverage!.members.length;
   const {server,origin}=await publicReader();
   try {
     await page.goto(`${origin}/?tab=radar&q=Mem0&hours=72&sort=newest`);
-    await expect(page.getByRole("heading",{name:"Mem0 客户端更新：调用来源标识",exact:true})).toBeVisible();
+    await expect(page.getByRole("heading",{name:client!.coverage!.topic,exact:true})).toBeVisible();
     for(const view of ["列表"]) {
       await page.getByRole("tab",{name:view,exact:true}).click();
       const row=page.locator(`[data-public-event="${client!.id}"]`);
       await expect(row).toBeVisible();
       const disclosure=row.locator(".cp-release-family");
       if(!await disclosure.evaluate(element=>element.hasAttribute("open")))await disclosure.locator(":scope > summary").click();
-      await expect(disclosure.locator("[data-coverage-member]")).toHaveCount(5);
+      await expect(disclosure.locator("[data-coverage-member]")).toHaveCount(memberCount);
       for(const width of [1440,1024,768,390]) {
         await page.setViewportSize({width,height:1050});
         await row.scrollIntoViewIfNeeded();

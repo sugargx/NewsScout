@@ -8,9 +8,13 @@ use crate::models::{CoverageBundle, CoverageMember, Event};
 
 mod announcement;
 mod bulk;
+mod copies;
+mod development;
+mod project;
 mod release_family;
 
 pub const WINDOW_HOURS: i64 = 168;
+pub(crate) const MAX_COPY_CANDIDATES: usize = copies::MAX_CANDIDATES;
 
 #[derive(Clone)]
 pub struct SourceIdentity {
@@ -26,17 +30,30 @@ pub struct Record {
     freshness_at: Option<DateTime<Utc>>,
     event_references: BTreeSet<String>,
     release: Option<release_family::Release>,
+    identity: Option<release_family::Release>,
+    project: Option<project::ProjectRelease>,
     announcement: Option<announcement::Announcement>,
     batch: Option<bulk::Batch>,
+    original_material: Option<String>,
 }
 
 impl Record {
     pub fn new(mut member: CoverageMember, sources: Vec<SourceIdentity>) -> Self {
         let release = release_family::parse(&member);
+        let identity = release.clone().or_else(|| release_family::identity(&member));
+        let project = project::parse(&member)
+            .or_else(|| identity.as_ref().map(release_family::Release::project));
         let announcement = announcement::parse(&member, &sources);
         let batch = bulk::parse(&member, &sources);
-        member.release_target = release.as_ref().map(|r| r.target.clone());
-        member.release_version = release.as_ref().map(|r| r.version.clone());
+        member.release_target = identity
+            .as_ref()
+            .map(|r| r.target.clone())
+            .or_else(|| project.as_ref().map(|p| p.target.clone()));
+        member.release_version = identity
+            .as_ref()
+            .map(|r| r.version.clone())
+            .or_else(|| project.as_ref().map(|p| p.version.clone()))
+            .filter(|version| !version.is_empty());
         // Artifact references stay separate from official announcement identities;
         // repository links in prose and sponsors are never event references.
         let event_references = member
@@ -50,14 +67,31 @@ impl Record {
             .filter_map(|e| e.original_published_at)
             .min()
             .or(member.published_at);
+        let original_material = member.evidence.iter().filter(|evidence| evidence.aggregation.is_none())
+            .filter_map(|evidence| evidence.reading_context.as_ref())
+            .map(|context| context.body.clone()).max_by_key(String::len);
         Self {
             member,
             sources,
             freshness_at,
             event_references,
             release,
+            identity,
+            project,
             announcement,
             batch,
+            original_material,
+        }
+    }
+
+    pub(crate) fn use_original_material(&mut self, title: &str, body: String) {
+        if self.release.is_some() || self.announcement.is_some() || !self.event_references.is_empty() {
+            return;
+        }
+        if copies::candidate(title).is_some_and(|key| Some(key) == copies::candidate(&source_title(self)))
+            && body.len() > self.original_material.as_ref().map_or(0, String::len)
+        {
+            self.original_material = Some(body);
         }
     }
 
@@ -166,14 +200,15 @@ pub(crate) fn event_reference(value: &str) -> Option<String> {
     }
 }
 
-/// Cheap candidate discovery only; grouping still verifies an official anchor
-/// or immutable artifact before collapsing any records.
+/// Cheap candidate discovery only; full records still establish the relation.
 pub(crate) fn candidate_reference(title: &str, url: &str) -> Option<String> {
-    event_reference(url)
+    development::candidate(title, url)
+        .or_else(|| event_reference(url))
         .or_else(|| {
             announcement::subject(title).map(|subject| format!("announcement-subject:{subject}"))
         })
         .or_else(|| bulk::candidate(title, url))
+        .or_else(|| copies::candidate(title))
 }
 
 fn source_title(record: &Record) -> String {
@@ -199,14 +234,10 @@ pub struct Group {
 pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Vec<Group> {
     let by_id: HashMap<_, _> = records.iter().map(|r| (r.member.event_id, r)).collect();
     let mut by_reference = HashMap::<&str, Vec<&Record>>::new();
-    let mut by_family = HashMap::<&str, Vec<&Record>>::new();
     for record in records {
-        if let Some(release) = &record.release {
-            by_family
-                .entry(release.key.as_str())
-                .or_default()
-                .push(record);
-        } else {
+        // Official project releases are grouped by repository window below,
+        // never through a shared upstream link.
+        if record.release.is_none() && record.project.is_none() {
             for reference in &record.event_references {
                 by_reference
                     .entry(reference.as_str())
@@ -215,28 +246,15 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
             }
         }
     }
-    // Fix release cohorts before ranking picks a lead; a bridge release must not
-    // move between batches merely because a reader changes sort or interests.
-    let active_families: BTreeSet<_> = leaders
-        .iter()
-        .filter_map(|id| {
-            by_id
-                .get(id)?
-                .release
-                .as_ref()
-                .map(|release| release.key.as_str())
-        })
-        .collect();
-    let release_cohorts: Vec<_> = active_families
-        .into_iter()
-        .filter_map(|family| by_family.get(family))
-        .flat_map(|candidates| release_family::cohorts(candidates, cutoff))
-        .collect();
-    let release_membership: HashMap<_, _> = release_cohorts
+    // Fix repository windows before ranking picks a lead; a release must not
+    // move between rows merely because a reader changes sort or interests.
+    let project_cohorts = project::cohorts(records, cutoff);
+    let project_membership: HashMap<_, _> = project_cohorts
         .iter()
         .enumerate()
-        .flat_map(|(index, members)| {
-            members
+        .flat_map(|(index, cohort)| {
+            cohort
+                .members
                 .iter()
                 .map(move |record| (record.member.event_id, index))
         })
@@ -263,6 +281,14 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
                 .map(move |record| (record.member.event_id, index))
         })
         .collect();
+    let copy_cohorts = copies::cohorts(records, cutoff);
+    let copy_membership: HashMap<_, _> = copy_cohorts.iter().enumerate()
+        .flat_map(|(index, cohort)| cohort.members.iter().map(move |record| (record.member.event_id, index)))
+        .collect();
+    let development_cohorts = development::cohorts(records, cutoff);
+    let development_membership: HashMap<_, _> = development_cohorts.iter().enumerate()
+        .flat_map(|(index, cohort)| cohort.members.iter().map(move |record| (record.member.event_id, index)))
+        .collect();
     let leader_set: HashSet<_> = leaders.iter().copied().collect();
     let mut assigned = HashSet::new();
     let mut result = Vec::new();
@@ -285,19 +311,32 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
             continue;
         };
         let mut choices: Vec<(String, String, Vec<&Record>, String, String)> =
-            if let Some(release) = &lead.release {
-                let members = release_membership
+            if let Some(index) = development_membership.get(id) {
+                let cohort = &development_cohorts[*index];
+                vec![(cohort.key.clone(), cohort.title.clone(), cohort.members.clone(),
+                    "development_activity".into(), "development-window-v1".into())]
+            } else if let Some(index) = copy_membership.get(id) {
+                let cohort = &copy_cohorts[*index];
+                vec![(cohort.key.clone(), cohort.title.clone(), cohort.members.clone(),
+                    "same_article".into(), "original-copy-v1".into())]
+            } else if lead.project.is_some() || lead.release.is_some() {
+                let members: Vec<_> = project_membership
                     .get(id)
-                    .map(|index| release_cohorts[*index].clone())
+                    .map(|index| {
+                        project_cohorts[*index]
+                            .members
+                            .iter()
+                            .copied()
+                            .filter(|record| {
+                                record.member.event_id == *id
+                                    || !assigned.contains(&record.member.event_id)
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if members.len() > 1 {
-                    vec![(
-                        release.key.clone(),
-                        release_family::label(&members),
-                        members,
-                        "release_family".into(),
-                        release.method().into(),
-                    )]
+                    let (key, label, method) = release_family::window(&members, cutoff);
+                    vec![(key, label, members, "release_family".into(), method.into())]
                 } else {
                     Vec::new()
                 }
@@ -374,11 +413,20 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
         let window_hours = match relation.as_str() {
             "release_family" => release_family::WINDOW_HOURS,
             "bulk_publication" => bulk::WINDOW_HOURS,
+            "same_article" => copies::WINDOW_HOURS,
+            "development_activity" => development::WINDOW_HOURS,
             _ => WINDOW_HOURS,
         };
+        // A later syndication cannot replace the original's time or ranking.
+        // Detail callers can still explicitly select any individual member.
+        let group_lead = if relation == "same_article" {
+            members.iter().filter(|member| leader_set.contains(&member.member.event_id))
+                .min_by_key(|member| (member.freshness_at, member.member.event_id))
+                .map(|member| member.member.event_id).unwrap_or(*id)
+        } else { *id };
         members.sort_by(|a, b| {
-            (a.member.event_id != *id)
-                .cmp(&(b.member.event_id != *id))
+            (a.member.event_id != group_lead)
+                .cmp(&(b.member.event_id != group_lead))
                 .then(b.member.published_at.cmp(&a.member.published_at))
                 .then(a.member.event_id.cmp(&b.member.event_id))
         });
@@ -427,7 +475,7 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
             }
             let mut member = record.member.clone();
             member.matches_filters = leader_set.contains(&member.event_id);
-            if member.event_id == *id {
+            if member.event_id == group_lead {
                 member.relationship = "lead".into();
             } else {
                 member.relationship = relation.clone();
@@ -439,9 +487,13 @@ pub fn groups(records: &[Record], leaders: &[Uuid], cutoff: DateTime<Utc>) -> Ve
         let freshness = news_date
             .map(|d| 2f32.powf(-(cutoff - d).num_seconds().max(0) as f32 / 86400.0))
             .unwrap_or(0.0);
-        let boost = (editorial.len().saturating_sub(1).min(3) as f32) * freshness;
+        let boost = if matches!(relation.as_str(), "same_article" | "development_activity") {
+            0.0
+        } else {
+            (editorial.len().saturating_sub(1).min(3) as f32) * freshness
+        };
         result.push(Group {
-            lead: *id,
+            lead: group_lead,
             bundle: Some(CoverageBundle {
                 key: format!("{method}:{key}:{}", earliest.format("%Y-%m-%dT%H:%M:%SZ")),
                 topic: label,
@@ -470,6 +522,8 @@ pub fn apply(event: &mut Event, bundle: Option<CoverageBundle>) {
             recommendation.explanation.push_str(&if bundle.relation=="release_family" {
                 if bundle.method=="project-release-window-v1" {
                     " 同一官方项目24小时内的不同语言版本汇总展示；各自改动独立，不表示同一事件、共同改动或多来源互证，不增加热度。".into()
+                } else if bundle.method==release_family::PROJECT_WINDOW_METHOD {
+                    format!(" 同一官方仓库24小时内的{}个发布汇总为一行；各发布保留自己的版本、改动和摘要，不表示同一事件、共同改动或多来源互证，也不增加热度。",bundle.members.len())
                 } else {
                     " 同一官方项目的集中组件发布按一组展示；各组件保留自己的版本和改动，不作为多来源互证，也不因拆成多个发布条目增加热度。".into()
                 }
@@ -477,6 +531,10 @@ pub fn apply(event: &mut Event, bundle: Option<CoverageBundle>) {
                 " 原始标题中的完整模型版本主体一致，并有唯一官方发布作为依据；公告与解读合并展示，保留各自内容，不表示观点已获互证。".into()
             } else if bundle.relation=="bulk_publication" {
                 format!(" 同一账号24小时内批量发布的{}个同模板条目按一组展示；各条目保留自己的标题与内容，不表示同一事件或多来源互证，也不增加热度。",bundle.members.len())
+            } else if bundle.relation=="same_article" {
+                " 原始标题与原始材料高度重合，折叠重复刊载；不当作独立互证，不增加热度，也不因较晚转载提升排序。".into()
+            } else if bundle.relation=="development_activity" {
+                " 同一仓库24小时内的内部开发记录汇总展示，保留各条改动；不是同一事件或面向用户的正式发布，不增加热度。".into()
             } else if event.editorial.is_some() {
                 " 精确上游事件引用一致，按一组展示；独立覆盖已在5%上限内计分，分组不再叠加热度。".into()
             } else { format!(
@@ -516,9 +574,12 @@ fn bundle_is_current_or_archived(bundle: &CoverageBundle) -> bool {
         ("release_family", "release-family-v1")
             | ("release_family", "release-family-v2")
             | ("release_family", "project-release-window-v1")
+            | ("release_family", "project-release-window-v2")
             | ("same_event_evidence", "exact-event-reference-v1")
             | ("same_event_evidence", "official-announcement-v1")
             | ("bulk_publication", "bulk-template-v1")
+            | ("same_article", "original-copy-v1")
+            | ("development_activity", "development-window-v1")
             | ("archived_materials", "archived-materials-v1")
     )
 }
@@ -562,7 +623,7 @@ pub fn rollup_release_snapshots(mut events: Vec<Event>, cutoff: DateTime<Utc>) -
         .iter()
         .filter(|e| e.coverage.is_none() && !e.not_interested)
         .map(Record::from_event)
-        .filter(|r| r.release.is_some())
+        .filter(|r| r.release.is_some() || r.project.is_some())
         .collect();
     let leaders: Vec<_> = records.iter().map(|r| r.member.event_id).collect();
     let mut bundles: HashMap<_, _> = groups(&records, &leaders, cutoff)
@@ -645,6 +706,182 @@ mod tests {
             }
         }
         (events, now)
+    }
+
+    const COPY_TITLE: &str = "从“言传身教”到“触类旁通”：AI既需要“名师指引”，也需要“自我修行”";
+    const COPY_BODY: &str = "这是一份合成的去重测试材料，并非真实研究报道。本文讨论两种训练方法之间的互补关系：一种依靠教师提供示例与反馈，另一种通过自主探索积累可迁移的经验。作者逐项比较了训练数据的组织方式、推理时的学习过程和评估任务，强调应区分记住答案与学会解决问题。结尾说明实验条件与适用范围，并保留原始资料链接，供读者独立核查论述。";
+
+    async fn copy_fixtures() -> (Vec<Event>, DateTime<Utc>) {
+        let (mut events, now) = fixtures().await;
+        events.truncate(2);
+        for event in &mut events {
+            event.title = COPY_TITLE.into();
+            event.event_type = "blog".into();
+            event.evidence.truncate(1);
+            event.evidence[0].title = event.title.clone();
+            event.evidence[0].excerpt = COPY_BODY.into();
+        }
+        events[0].evidence[0].url = "https://first.example/2026/10/505443".into();
+        events[1].evidence[0].url = "https://second.example/2026/10/120702".into();
+        (events, now)
+    }
+
+    #[tokio::test]
+    async fn original_chinese_copy_ignores_publisher_ids_and_never_promotes_a_repost() {
+        let (mut events, now) = copy_fixtures().await;
+        events[0].evidence[0].title = COPY_TITLE.replace(['“', '”'], "\"");
+        let original = events[1].clone();
+        let result = rollup_events(events.clone(), now);
+        assert_eq!(result.len(), 1);
+        let bundle = result[0].coverage.as_ref().unwrap();
+        assert_eq!(result[0].id, original.id, "oldest matching article owns the position");
+        assert_eq!(result[0].published_at, original.published_at);
+        assert_eq!(result[0].summary, original.summary);
+        assert_eq!(result[0].content_version, original.content_version);
+        assert_eq!(bundle.relation, "same_article");
+        assert_eq!(bundle.popularity_boost, 0.0);
+        assert_eq!(bundle.members.len(), 2);
+        let reversed = rollup_events(events.into_iter().rev().collect(), now);
+        assert_eq!(reversed[0].id, original.id);
+        assert_eq!(reversed[0].coverage.as_ref().unwrap().key, bundle.key);
+    }
+
+    #[tokio::test]
+    async fn copied_titles_do_not_override_missing_material_or_semantic_conflicts() {
+        let (base, now) = copy_fixtures().await;
+        for change in ["missing", "summary-only", "body-number", "body-negation", "title-version", "old", "different-topic"] {
+            let mut events = base.clone();
+            match change {
+                "missing" => events[0].evidence[0].excerpt.clear(),
+                "summary-only" => {
+                    for event in &mut events {
+                        event.evidence[0].excerpt = "只有标题，尚无原始材料".into();
+                        event.summary = COPY_BODY.into();
+                    }
+                }
+                "body-number" => events[0].evidence[0].excerpt.push_str("共招募 200 人。"),
+                "body-negation" => events[0].evidence[0].excerpt.push_str("这项结论已被撤回。"),
+                "title-version" => {
+                    events[0].evidence[0].title.push_str(" v1.2");
+                    events[1].evidence[0].title.push_str(" v12");
+                }
+                "old" => {
+                    events[1].freshness_at = Some(now - Duration::days(5));
+                    events[1].published_at = events[1].freshness_at;
+                    events[1].evidence[0].original_published_at = events[1].freshness_at;
+                }
+                _ => events[0].evidence[0].excerpt = "这是另一份合成资料，介绍如何在金融服务中使用模型处理企业报表，而非模型训练研究。数据来自经过授权的结构化记录，处理流程覆盖查询、核对和人工审批。作者分别列出数据访问策略、审计要求和风险控制方法，讨论部署架构与业务流程之间的对应关系。文章没有公布训练实验，也没有声称自主学习效果有所提升，所描述的是另一项独立的产品应用。".into(),
+            }
+            assert_eq!(rollup_events(events, now).len(), 2, "{change}");
+        }
+    }
+
+    #[tokio::test]
+    async fn publisher_rights_footer_is_not_a_news_negation() {
+        let (mut events, now) = copy_fixtures().await;
+        events[0].evidence[0].excerpt.push_str("\n\n版权所有，未经授权不得以任何形式转载及使用，违者必究。");
+        assert_eq!(rollup_events(events.clone(), now).len(), 1);
+        events[0].evidence[0].excerpt.push_str("\n\n更正：本文提到的发布已经取消。");
+        assert_eq!(rollup_events(events, now).len(), 2, "a correction after the footer still changes the story");
+    }
+
+    #[tokio::test]
+    async fn copied_articles_reject_tiny_action_changes_and_relocated_negation() {
+        let (base, now) = copy_fixtures().await;
+        for (first, second) in [
+            ("团队开放服务。", "团队关闭服务。"),
+            ("模型不支持金融业务，支持生物研究。", "模型支持金融业务，不支持生物研究。"),
+            ("Alpha acquired Beta.", "Beta acquired Alpha."),
+        ] {
+            let mut events = base.clone();
+            events[0].evidence[0].excerpt = format!("{COPY_BODY}\n\n{first}\n\n{COPY_BODY}");
+            events[1].evidence[0].excerpt = format!("{COPY_BODY}\n\n{second}\n\n{COPY_BODY}");
+            assert_eq!(rollup_events(events, now).len(), 2, "{first} / {second}");
+        }
+    }
+
+    #[tokio::test]
+    async fn copied_title_buckets_are_bounded_and_distinct_material_has_distinct_keys() {
+        let (base, now) = copy_fixtures().await;
+        let mut events = Vec::new();
+        for index in 0..4 {
+            let mut event = base[index % 2].clone();
+            event.id = Uuid::new_v4();
+            event.freshness_at = Some(now);
+            event.published_at = Some(now);
+            event.evidence[0].original_published_at = Some(now);
+            if index >= 2 {
+                event.evidence[0].excerpt = "这是另一份合成资料，介绍如何在金融服务中使用模型处理企业报表，而非模型训练研究。数据来自经过授权的结构化记录，处理流程覆盖查询、核对和人工审批。作者分别列出数据访问策略、审计要求和风险控制方法，讨论部署架构与业务流程之间的对应关系。文章没有公布训练实验，也没有声称自主学习效果有所提升，所描述的是另一项独立的产品应用。".into();
+            }
+            events.push(event);
+        }
+        let result = rollup_events(events.clone(), now);
+        assert_eq!(result.len(), 2);
+        let keys: BTreeSet<_> = result.iter().map(|event| event.coverage.as_ref().unwrap().key.clone()).collect();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys, rollup_events(events.into_iter().rev().collect(), now).iter()
+            .map(|event| event.coverage.as_ref().unwrap().key.clone()).collect());
+        let flood: Vec<_> = (0..=MAX_COPY_CANDIDATES).map(|_| {
+            let mut event = base[0].clone();
+            event.id = Uuid::new_v4();
+            event
+        }).collect();
+        assert_eq!(rollup_events(flood, now).len(), MAX_COPY_CANDIDATES + 1);
+    }
+
+    #[tokio::test]
+    async fn development_batches_are_not_versions_or_multi_source_news() {
+        let (mut events, now) = fixtures().await;
+        events.truncate(2);
+        for (index, event) in events.iter_mut().enumerate() {
+            event.event_type = "release".into();
+            event.title = format!("ciflow/xpu/{}: Internal test update", 202109 + index);
+            event.evidence.truncate(1);
+            event.evidence[0].title = event.title.clone();
+            event.evidence[0].url = format!("https://github.com/pytorch/pytorch/releases/tag/ciflow%2Fxpu%2F{}", 202109 + index);
+        }
+        let result = rollup_events(events.clone(), now);
+        assert_eq!(result.len(), 1);
+        let bundle = result[0].coverage.as_ref().unwrap();
+        assert_eq!(bundle.relation, "development_activity");
+        assert_eq!(bundle.popularity_boost, 0.0);
+        assert!(bundle.topic.contains("pytorch/pytorch"));
+        events[1].evidence[0].url = "https://github.com/another/project/releases/tag/ciflow%2Fxpu%2F202110".into();
+        assert_eq!(rollup_events(events.clone(), now).len(), 2);
+        events[1].title = "PyTorch 2.9".into();
+        events[1].evidence[0].title = events[1].title.clone();
+        events[1].evidence[0].url = "https://github.com/pytorch/pytorch/releases/tag/v2.9.0".into();
+        assert_eq!(rollup_events(events, now).len(), 2);
+    }
+
+    #[tokio::test]
+    #[ignore = "uses the explicitly downloaded public HTML pair, never network or a database"]
+    async fn reported_public_copy_uses_the_real_article_parser() {
+        let directory = std::path::PathBuf::from(std::env::var("SCOUTNEWS_COPY_FIXTURE_DIR").unwrap());
+        let (mut events, mut now) = copy_fixtures().await;
+        for (event, name) in events.iter_mut().zip(["qbitai", "aiera"]) {
+            let source: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(directory.join(format!("reported-{name}.json"))).unwrap()).unwrap();
+            let published: DateTime<Utc> = source["publishedAt"].as_str().unwrap().parse().unwrap();
+            event.freshness_at = Some(published);
+            event.published_at = Some(published);
+            event.evidence[0].original_published_at = Some(published);
+            now = now.max(published);
+            let html = std::fs::read_to_string(directory.join(format!("reported-{name}.html"))).unwrap();
+            let (body, _) = crate::reading_context::extract_publisher_article(&html).or_else(|| {
+                let page = url::Url::parse("https://aiera.com.cn/asi-post.html?id=120702").unwrap();
+                let endpoint = crate::reading_context::public_article_endpoint(&page, &html)?;
+                let bytes = std::fs::read(directory.join("reported-aiera-post.json")).unwrap();
+                crate::reading_context::extract_public_article_json(&bytes, &endpoint, COPY_TITLE)
+            })
+                .unwrap_or_else(|| panic!("{name} article extraction failed"));
+            println!("{name}: {} original body characters", body.chars().count());
+            std::fs::write(directory.join(format!("reported-{name}.body.txt")), &body).unwrap();
+            event.evidence[0].excerpt = crate::processing::reading_text(&body.chars().take(3000).collect::<String>());
+            event.evidence[0].reading_context = Some(crate::reading_context::ReadingContext::publisher_page(
+                event.evidence[0].url.clone(), body, false, now));
+        }
+        assert_eq!(rollup_events(events, now).len(), 1, "the reported originals must be verified, not title-only guesses");
     }
 
     #[tokio::test]
@@ -1029,35 +1266,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn radar_language_releases_require_verified_distinct_targets_in_one_day() {
+    async fn radar_language_releases_need_one_official_repository_and_day() {
         let (events, now) = language_release_fixtures().await;
-        for (title, url) in [
-            (
-                "dotnet-1.24.0",
-                "https://github.com/fork/agent-framework/releases/tag/dotnet-1.24.0",
-            ),
-            (
-                "dotnet-1.24.0",
-                "https://github.com/microsoft/other/releases/tag/dotnet-1.24.0",
-            ),
-            (
-                "dotnet-1.24.0",
-                "https://github.com/microsoft/agent-framework/releases/tag/dotnet-1.23.0",
-            ),
-            (
-                "python-1.20.0",
-                "https://github.com/microsoft/agent-framework/releases/tag/python-1.20.0",
-            ),
-            (
-                "unrelated-1.24.0",
-                "https://github.com/microsoft/agent-framework/releases/tag/unrelated-1.24.0",
-            ),
+        for url in [
+            "https://github.com/fork/agent-framework/releases/tag/dotnet-1.24.0",
+            "https://github.com/microsoft/other/releases/tag/dotnet-1.24.0",
+        ] {
+            let mut changed = events.clone();
+            changed[1].evidence[0].url = url.into();
+            assert_eq!(rollup_events(changed, now).len(), 2, "{url}");
+        }
+        // The repository is the row identity; unverifiable language pairs stay a neutral roundup.
+        for (title, tag, topic) in [
+            ("dotnet-1.24.0", "dotnet-1.23.0", "agent-framework 版本更新：Python 1.21.0 / dotnet 1.24.0"),
+            ("python-1.20.0", "python-1.20.0", "agent-framework Python 版本更新：1.21.0 / 1.20.0"),
+            ("unrelated-1.24.0", "unrelated-1.24.0", "agent-framework 版本更新：Python 1.21.0 / unrelated 1.24.0"),
         ] {
             let mut changed = events.clone();
             changed[1].title = title.into();
             changed[1].evidence[0].title = title.into();
-            changed[1].evidence[0].url = url.into();
-            assert_eq!(rollup_events(changed, now).len(), 2, "{url}");
+            changed[1].evidence[0].url =
+                format!("https://github.com/microsoft/agent-framework/releases/tag/{tag}");
+            let grouped = rollup_events(changed, now);
+            assert_eq!(grouped.len(), 1, "{tag}");
+            let bundle = grouped[0].coverage.as_ref().unwrap();
+            assert_eq!(bundle.method, "project-release-window-v2", "{tag}");
+            assert_eq!(bundle.topic, topic, "{tag}");
+            assert_eq!(bundle.popularity_boost, 0.0);
         }
         let mut old = events.clone();
         old[1].freshness_at = Some(now - Duration::hours(26));
@@ -1067,11 +1302,13 @@ mod tests {
         assert_eq!(rollup_events(imprecise, now).len(), 2);
         let mut no_notes = events;
         no_notes[1].evidence[0].excerpt.clear();
-        assert_eq!(rollup_events(no_notes, now).len(), 2);
+        let grouped = rollup_events(no_notes, now);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].coverage.as_ref().unwrap().method, "project-release-window-v2");
     }
 
     #[tokio::test]
-    async fn radar_language_windows_preserve_channels_aliases_and_exact_time_boundary() {
+    async fn radar_language_windows_keep_the_time_boundary_and_mark_mixed_channels_as_roundups() {
         let (events, now) = language_release_fixtures().await;
         let mut boundary = events.clone();
         boundary[1].freshness_at = Some(now - Duration::hours(25));
@@ -1091,7 +1328,12 @@ mod tests {
                 event.evidence[0].url =
                     format!("https://github.com/microsoft/agent-framework/releases/tag/{title}");
             }
-            assert_eq!(rollup_events(changed, now).len(), 2, "{first} / {second}");
+            // Channels and aliases are not a verified multi-language batch, but one project day is one row.
+            let grouped = rollup_events(changed, now);
+            assert_eq!(grouped.len(), 1, "{first} / {second}");
+            let bundle = grouped[0].coverage.as_ref().unwrap();
+            assert_eq!(bundle.method, "project-release-window-v2", "{first} / {second}");
+            assert!(!bundle.topic.contains("同批"), "{}", bundle.topic);
         }
     }
 
@@ -1457,28 +1699,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn release_family_clients_require_shared_changes_and_verified_component_tags() {
+    async fn release_family_clients_without_a_shared_change_are_only_a_project_roundup() {
         let (events, now) = client_fixtures().await;
         for case in 0..7 {
             let mut pair = events[..2].to_vec();
             let other = &mut pair[1];
-            match case {
-                0 => other.evidence[0].excerpt.clear(),
-                1 => other.evidence[0].excerpt = "Other client change #9999".into(),
-                2 => other.evidence[0].url = other.evidence[0].url.replace("mem0ai", "fork"),
-                3 => other.evidence[0].title = "Other Product Python CLI (v0.2.13)".into(),
-                4 => other.evidence[0].url = other.evidence[0].url.replace("cli-v", "other-v"),
-                5 => other.publication_precision = Some("day".into()),
-                _ => other.evidence[0].is_official = false,
+            let separate = match case {
+                0 => {
+                    other.evidence[0].excerpt.clear();
+                    false
+                }
+                1 => {
+                    other.evidence[0].excerpt = "Other client change #9999".into();
+                    false
+                }
+                2 => {
+                    other.evidence[0].url = other.evidence[0].url.replace("mem0ai", "fork");
+                    true
+                }
+                3 => {
+                    other.evidence[0].title = "Other Product Python CLI (v0.2.13)".into();
+                    false
+                }
+                4 => {
+                    other.evidence[0].url = other.evidence[0].url.replace("cli-v", "other-v");
+                    false
+                }
+                5 => {
+                    other.publication_precision = Some("day".into());
+                    true
+                }
+                _ => {
+                    other.evidence[0].is_official = false;
+                    true
+                }
+            };
+            let grouped = rollup_events(pair, now);
+            assert_eq!(grouped.len(), if separate { 2 } else { 1 }, "case {case}");
+            if let Some(bundle) = grouped[0].coverage.as_ref().filter(|_| !separate) {
+                assert_eq!(bundle.method, "project-release-window-v2", "case {case}");
+                assert!(!bundle.topic.contains("调用来源标识"), "case {case}: {}", bundle.topic);
+                assert_eq!(bundle.popularity_boost, 0.0);
             }
-            assert_eq!(rollup_events(pair, now).len(), 2, "case {case}");
         }
         let mut same_component = vec![events[2].clone(), events[2].clone()];
         same_component[1].id = Uuid::new_v4();
         same_component[1].evidence[0].title = "Mem0 TypeScript SDK (v3.2.1)".into();
         same_component[1].evidence[0].url =
             "https://github.com/mem0ai/mem0/releases/tag/typescript-v3.2.1".into();
-        assert_eq!(rollup_events(same_component, now).len(), 2);
+        let grouped = rollup_events(same_component, now);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].coverage.as_ref().unwrap().method, "project-release-window-v2");
     }
 
     #[tokio::test]
@@ -1636,7 +1907,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scoped_package_batches_require_exact_identity_and_bounded_time() {
+    async fn scoped_package_batch_titles_need_exact_identity_and_projects_stay_bounded() {
         let (events, cutoff) = scoped_package_fixtures().await;
         for case in 0..7 {
             let mut pair = events[..2].to_vec();
@@ -1674,7 +1945,16 @@ mod tests {
                 }
                 _ => other.evidence[0].excerpt = "Release notes without a change reference".into(),
             }
-            assert_eq!(rollup_events(pair, cutoff).len(), 2, "case {case}");
+            let grouped = rollup_events(pair, cutoff);
+            if matches!(case, 2 | 5) {
+                assert_eq!(grouped.len(), 2, "case {case}");
+                continue;
+            }
+            // Same repository and day: one row, but never the exact same-version batch title.
+            assert_eq!(grouped.len(), 1, "case {case}");
+            let bundle = grouped[0].coverage.as_ref().unwrap();
+            assert_eq!(bundle.method, "project-release-window-v2", "case {case}");
+            assert!(!bundle.topic.contains("同批"), "case {case}: {}", bundle.topic);
         }
     }
 
@@ -1735,7 +2015,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn release_family_packages_require_shared_changes_in_the_same_repository() {
+    async fn release_family_package_batch_titles_need_shared_changes_in_the_same_repository() {
         let (events, cutoff) = package_fixtures().await;
         for case in 0..8 {
             let mut pair = events.clone();
@@ -1756,11 +2036,26 @@ mod tests {
                         "https://untrusted@github.com/langchain-ai/langgraph/pull/8886".into()
                 }
             }
-            assert_eq!(rollup_events(pair, cutoff).len(), 2, "case {case}");
+            let grouped = rollup_events(pair, cutoff);
+            if matches!(case, 3 | 4) {
+                assert_eq!(grouped.len(), 2, "case {case}");
+                continue;
+            }
+            // Unrelated notes in the same repository share one row, never the "同批" title.
+            assert_eq!(grouped.len(), 1, "case {case}");
+            let bundle = grouped[0].coverage.as_ref().unwrap();
+            assert_eq!(bundle.method, "project-release-window-v2", "case {case}");
+            assert_eq!(bundle.topic, "langgraph 组件更新：核心包 1.2.12 / SDK 0.4.5", "case {case}");
         }
         let mut pair = events;
         pair[1].evidence[0].excerpt = "https://github.com/langchain-ai/langgraph/pull/8886".into();
-        assert_eq!(rollup_events(pair, cutoff).len(), 1);
+        let grouped = rollup_events(pair, cutoff);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].coverage.as_ref().unwrap().method, "release-family-v2");
+        assert_eq!(
+            grouped[0].coverage.as_ref().unwrap().topic,
+            "langgraph 同批更新：核心包 1.2.12 / SDK 0.4.5"
+        );
     }
 
     #[tokio::test]
@@ -1875,13 +2170,23 @@ mod tests {
                     other.evidence.push(mixed);
                 }
             }
-            assert!(Record::from_event(other).release.is_none(), "case {case}");
-            assert_eq!(rollup_events(pair, cutoff).len(), 2, "case {case}");
+            let record = Record::from_event(other);
+            assert!(record.release.is_none(), "case {case}");
+            let grouped = rollup_events(pair, cutoff);
+            if case < 9 {
+                assert!(record.project.is_none(), "case {case}");
+                assert_eq!(grouped.len(), 2, "case {case}");
+            } else {
+                // Two official notes from the same repository still belong to its day row.
+                assert_eq!(grouped.len(), 1, "case {case}");
+                let bundle = grouped[0].coverage.as_ref().unwrap();
+                assert_eq!(bundle.method, "project-release-window-v2", "case {case}");
+            }
         }
     }
 
     #[tokio::test]
-    async fn release_family_packages_are_generic_but_separate_from_legacy_families() {
+    async fn release_family_packages_and_legacy_families_of_one_repository_share_one_row() {
         let (mut events, cutoff) = package_fixtures().await;
         for (event, version) in events.iter_mut().zip(["2.0.0", "0.9.1"]) {
             let evidence = &mut event.evidence[0];
@@ -1914,32 +2219,141 @@ mod tests {
             evidence.excerpt = "Shared change #8886".into();
             events.push(event);
         }
-        let grouped = rollup_events(events, cutoff);
-        assert_eq!(grouped.len(), 3);
-        let package = grouped
-            .iter()
-            .filter_map(|event| event.coverage.as_ref())
-            .find(|bundle| bundle.key.contains(":package:"))
-            .unwrap();
+        let package_only = rollup_events(package_events.clone(), cutoff);
         assert_eq!(
-            package.topic,
+            package_only[0].coverage.as_ref().unwrap().topic,
             "acme-memory 同批更新：核心包 2.0.0 / SDK 0.9.1"
         );
-        assert_eq!(package.members.len(), package_events.len());
-        assert!(package.members.iter().all(|member| {
-            package_events
-                .iter()
-                .any(|event| event.id == member.event_id)
-        }));
-        assert!(
-            grouped
-                .iter()
-                .all(|event| event.coverage.as_ref().unwrap().members.len() == 2)
-        );
+        // Packages, plugins and clients from one repository and day are one row,
+        // titled neutrally because they do not form one verified batch.
+        let grouped = rollup_events(events.clone(), cutoff);
+        assert_eq!(grouped.len(), 1);
+        let bundle = grouped[0].coverage.as_ref().unwrap();
+        assert_eq!(bundle.method, "project-release-window-v2");
+        assert_eq!(bundle.members.len(), events.len());
+        assert!(bundle.topic.starts_with("Acme Memory 版本更新："), "{}", bundle.topic);
+        assert!(bundle.topic.ends_with("等6项"), "{}", bundle.topic);
+        assert_eq!(bundle.popularity_boost, 0.0);
+        for member in &bundle.members {
+            if let Some(event) = package_events.iter().find(|event| event.id == member.event_id) {
+                let expected = if event.title.contains("-sdk==") { "SDK" } else { "核心包" };
+                assert_eq!(member.release_target.as_deref(), Some(expected));
+            }
+        }
+    }
+
+    async fn project_release(
+        repository: &str,
+        tag: &str,
+        title: &str,
+        published: &str,
+        excerpt: &str,
+    ) -> Event {
+        let (mut events, _) = fixtures().await;
+        let mut event = events.remove(0);
+        event.id = Uuid::new_v4();
+        event.event_type = "release".into();
+        event.title = title.into();
+        event.published_at = Some(published.parse().unwrap());
+        event.freshness_at = event.published_at;
+        event.publication_precision = Some("time".into());
+        event.evidence.truncate(1);
+        let evidence = &mut event.evidence[0];
+        evidence.id = Uuid::new_v4();
+        evidence.title = title.into();
+        evidence.url = format!("https://github.com/{repository}/releases/tag/{tag}");
+        evidence.is_official = true;
+        evidence.source_tier = "T1".into();
+        evidence.original_published_at = event.published_at;
+        evidence.excerpt = excerpt.into();
+        event
     }
 
     #[tokio::test]
-    async fn release_family_package_cohorts_keep_consecutive_versions_and_ties_stable() {
+    async fn reported_langgraph_cli_and_sdk_releases_share_one_row() {
+        // Shape of the reported 2026-11-06 pair: same repository, minutes apart, no shared change.
+        let events = vec![
+            project_release("langchain-ai/langgraph", "cli%3D%3D0.4.42", "langgraph-cli==0.4.42",
+                "2026-11-06T03:04:13Z", "release(cli): 0.4.42 (#9611) feat(cli): add deploy metrics command (#9479)").await,
+            project_release("langchain-ai/langgraph", "sdk%3D%3D0.4.14", "langgraph-sdk==0.4.14",
+                "2026-11-06T03:03:54Z", "release(sdk-py): 0.4.14 (#9610) feat(sdk-py): add strict_resume (#9599)").await,
+        ];
+        let originals = events.clone();
+        let cutoff: DateTime<Utc> = "2026-11-06T08:00:00Z".parse().unwrap();
+        let grouped = rollup_events(events, cutoff);
+        assert_eq!(grouped.len(), 1);
+        let bundle = grouped[0].coverage.as_ref().unwrap();
+        assert_eq!(bundle.topic, "langgraph 组件更新：CLI 0.4.42 / SDK 0.4.14");
+        assert_eq!(bundle.method, "project-release-window-v2");
+        assert_eq!(bundle.relation, "release_family");
+        assert_eq!(bundle.popularity_boost, 0.0);
+        assert!(bundle.key.starts_with("project-release-window-v2:github.com/langchain-ai/langgraph:"));
+        for (member, original) in bundle.members.iter().zip(&originals) {
+            assert_eq!(member.event_id, original.id);
+            assert_eq!(member.summary, original.summary);
+            assert_eq!(member.title, original.title);
+        }
+        assert_eq!(
+            bundle.members.iter().map(|m| (m.release_target.clone().unwrap(), m.release_version.clone().unwrap())).collect::<Vec<_>>(),
+            [("CLI".to_owned(), "0.4.42".to_owned()), ("SDK".to_owned(), "0.4.14".to_owned())]
+        );
+        let mut event = grouped[0].clone();
+        event.editorial = None;
+        event.recommendation = Some(crate::models::Recommendation {
+            material_penalty: 0.0,
+            score: 10.0,
+            freshness: 0.0,
+            affinity: 0.0,
+            novelty_penalty: 0.0,
+            facets: Vec::new(),
+            source_confirmed: true,
+            explanation: String::new(),
+        });
+        apply(&mut event, Some(bundle.clone()));
+        assert_eq!(event.recommendation.as_ref().unwrap().score, 10.0);
+        let explanation = event.recommendation.as_ref().unwrap().explanation.clone();
+        assert!(explanation.contains("不表示同一事件、共同改动或多来源互证"), "{explanation}");
+        assert_eq!(crate::reader::select_brief(grouped, cutoff).items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn generic_same_day_versions_and_snapshots_share_a_row_but_builds_do_not() {
+        let mut events = vec![
+            project_release("ray-project/ray", "ray-2.59.1", "Ray-2.59.1", "2026-11-04T08:13:00Z", "Bug fixes").await,
+            project_release("ray-project/ray", "ray-2.60.0", "Ray-2.60.0", "2026-11-04T02:08:00Z", "Highlights").await,
+        ];
+        let cutoff: DateTime<Utc> = "2026-11-04T12:00:00Z".parse().unwrap();
+        let grouped = rollup_events(events.clone(), cutoff);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].coverage.as_ref().unwrap().topic, "Ray 版本更新：2.59.1 / 2.60.0");
+        // Captured separately in an older edition: grouped for display, source items unchanged.
+        let stored = serde_json::to_value(&events).unwrap();
+        let projected = rollup_release_snapshots(events.clone(), cutoff);
+        assert_eq!(projected.len(), 1);
+        assert_eq!(serde_json::to_value(&events).unwrap(), stored);
+        // Machine build tags keep their own development grouping, never a release row.
+        for (index, sha) in ["0bcfbeeed87d201bf80d4fcd826dc4f4209b8be9", "625eb586c435ba098adb78741ceb2a173debca4c"].iter().enumerate() {
+            let mut build = project_release("ray-project/ray", &format!("trunk%2F{sha}"),
+                &format!("trunk/{sha}: Internal test update"), "2026-11-04T09:00:00Z", "").await;
+            build.evidence[0].url = format!("https://github.com/ray-project/ray/releases/tag/trunk%2F{sha}");
+            build.published_at = Some(build.published_at.unwrap() + Duration::minutes(index as i64));
+            build.freshness_at = build.published_at;
+            assert!(Record::from_event(&build).project.is_none());
+            events.push(build);
+        }
+        let grouped = rollup_events(events, cutoff);
+        assert_eq!(grouped.len(), 2);
+        let relations: BTreeSet<_> = grouped.iter()
+            .map(|event| (event.coverage.as_ref().unwrap().relation.clone(), event.coverage.as_ref().unwrap().members.len()))
+            .collect();
+        assert_eq!(relations, BTreeSet::from([("development_activity".into(), 2), ("release_family".into(), 2)]));
+        let fork = project_release("someone/ray", "ray-2.60.0", "Ray-2.60.0", "2026-11-04T02:08:00Z", "Fork").await;
+        let ray = project_release("ray-project/ray", "ray-2.59.1", "Ray-2.59.1", "2026-11-04T08:13:00Z", "Fixes").await;
+        assert_eq!(rollup_events(vec![ray, fork], cutoff).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn release_family_package_versions_share_one_stable_project_row() {
         let (events, cutoff) = package_fixtures().await;
         let mut next_version = events[1].clone();
         next_version.id = Uuid::from_u128(102);
@@ -1947,56 +2361,37 @@ mod tests {
         next_version.evidence[0].title = "langgraph-sdk==0.4.6".into();
         next_version.title = next_version.evidence[0].title.clone();
         next_version.evidence[0].url = next_version.evidence[0].url.replace("0.4.5", "0.4.6");
+        let pair = rollup_events(vec![next_version.clone(), events[1].clone()], cutoff);
+        assert_eq!(pair.len(), 1);
         assert_eq!(
-            rollup_events(vec![next_version.clone(), events[1].clone()], cutoff).len(),
-            2
+            pair[0].coverage.as_ref().unwrap().topic,
+            "langgraph SDK 版本更新：0.4.5 / 0.4.6"
         );
         // Equal publication times resolve by ID, not input order or requested detail seed.
         let mut records = vec![Record::from_event(&next_version)];
         records.extend(events.iter().map(Record::from_event));
-        let expected = BTreeSet::from([events[0].id, events[1].id]);
+        let expected = BTreeSet::from([events[0].id, events[1].id, next_version.id]);
+        let mut keys = BTreeSet::new();
         for _ in 0..records.len() {
             records.rotate_left(1);
             for record in &records {
                 let grouped = groups(&records, &[record.member.event_id], cutoff);
-                let bundle = &grouped[0].bundle;
-                if record.member.event_id == next_version.id {
-                    assert!(bundle.is_none());
-                } else {
-                    assert_eq!(
-                        bundle
-                            .as_ref()
-                            .unwrap()
-                            .members
-                            .iter()
-                            .map(|member| member.event_id)
-                            .collect::<BTreeSet<_>>(),
-                        expected
-                    );
-                }
+                let bundle = grouped[0].bundle.as_ref().unwrap();
+                keys.insert((bundle.key.clone(), bundle.topic.clone()));
+                assert_eq!(
+                    bundle.members.iter().map(|member| member.event_id).collect::<BTreeSet<_>>(),
+                    expected
+                );
             }
         }
-        next_version.published_at = Some(events[1].published_at.unwrap() + Duration::seconds(1));
-        next_version.freshness_at = next_version.published_at;
-        next_version.evidence[0].original_published_at = next_version.published_at;
-        let grouped = rollup_events(
-            vec![events[0].clone(), events[1].clone(), next_version.clone()],
-            cutoff,
-        );
-        assert_eq!(grouped.len(), 2);
-        assert!(
-            grouped[0]
-                .coverage
-                .as_ref()
-                .unwrap()
-                .members
-                .iter()
-                .any(|member| member.event_id == next_version.id)
+        assert_eq!(
+            keys.into_iter().map(|(_, topic)| topic).collect::<Vec<_>>(),
+            ["langgraph 组件更新：核心包 1.2.12 / SDK 0.4.5 等3项"]
         );
     }
 
     #[tokio::test]
-    async fn release_family_package_cohorts_bound_span_and_never_chain_changes() {
+    async fn release_family_project_windows_bound_span_without_chaining_days() {
         let (events, cutoff) = package_fixtures().await;
         for shared_changes in [true, false] {
             let mut candidates = events.clone();
@@ -2023,7 +2418,13 @@ mod tests {
                 }
                 .into();
             }
-            let expected = BTreeSet::from([candidates[0].id, candidates[1].id]);
+            // 20-hour gaps: a day window never chains to the third release. One-hour
+            // gaps: bridge notes are irrelevant because the repository day is one row.
+            let expected: BTreeSet<_> = if shared_changes {
+                BTreeSet::from([candidates[0].id, candidates[1].id])
+            } else {
+                candidates.iter().map(|event| event.id).collect()
+            };
             let mut records: Vec<_> = candidates.iter().map(Record::from_event).collect();
             for _ in 0..records.len() {
                 records.rotate_left(1);
@@ -2032,7 +2433,7 @@ mod tests {
                     .map(|record| record.member.event_id)
                     .collect();
                 let listed = groups(&records, &leaders, cutoff);
-                assert_eq!(listed.len(), 2);
+                assert_eq!(listed.len(), if shared_changes { 2 } else { 1 });
                 for record in &records {
                     let detail = groups(&records, &[record.member.event_id], cutoff);
                     if expected.contains(&record.member.event_id) {
@@ -2081,7 +2482,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn release_family_plugin_titles_distinguish_common_changes_without_bridging() {
+    async fn release_family_plugin_subjects_do_not_split_one_project_day() {
         let (mut events, now) = plugin_fixtures().await;
         events[0].evidence[0].excerpt =
             "Telemetry: Correct event delivery. (#7323, #7324, #7358)".into();
@@ -2091,27 +2492,21 @@ mod tests {
         events[3].evidence[0].excerpt =
             "Config: Use keyFingerprint for install counting. #7325 Telemetry: Correct events. (#7323, #7324, #7358)".into();
         // The original notes were published OpenClaw, OpenCode, Pi, DeepSeek
-        // from newest to oldest; ranking must not change that batch partition.
+        // from newest to oldest; ranking must not change that row partition.
         for (event, minutes) in events.iter_mut().zip([2, 1, 3, 0]) {
             event.freshness_at = Some(now - Duration::minutes(minutes));
             event.published_at = event.freshness_at;
             event.evidence[0].original_published_at = event.freshness_at;
         }
+        let telemetry = rollup_events(vec![events[0].clone(), events[2].clone()], now);
+        assert_eq!(telemetry[0].coverage.as_ref().unwrap().topic, "Mem0 插件更新：遥测");
+        // Two subjects in four minutes are still one project's plugin release day.
         let grouped = rollup_events(events.clone(), now);
-        assert_eq!(grouped.len(), 2);
-        let titles: BTreeSet<_> = grouped
-            .iter()
-            .map(|event| event.coverage.as_ref().unwrap().topic.as_str())
-            .collect();
-        assert_eq!(
-            titles,
-            BTreeSet::from(["Mem0 插件更新：安装统计", "Mem0 插件更新：遥测"])
-        );
-        assert!(
-            grouped
-                .iter()
-                .all(|event| event.coverage.as_ref().unwrap().members.len() == 2)
-        );
+        assert_eq!(grouped.len(), 1);
+        let bundle = grouped[0].coverage.as_ref().unwrap();
+        assert_eq!(bundle.method, "project-release-window-v2");
+        assert_eq!(bundle.topic, "Mem0 插件更新：OpenClaw v1.1.0 / OpenCode v0.3.0 等4项");
+        assert_eq!(bundle.members.len(), 4);
         let memberships = |events: Vec<Event>| -> BTreeSet<BTreeSet<Uuid>> {
             events
                 .into_iter()
@@ -2151,7 +2546,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn release_family_rejects_forks_other_products_nonofficial_and_unrelated_changes() {
+    async fn release_family_windows_reject_forks_nonofficial_and_imprecise_releases() {
         let (events, now) = plugin_fixtures().await;
         for case in 0..6 {
             let mut pair = events[..2].to_vec();
@@ -2171,25 +2566,36 @@ mod tests {
                         .replace("opencode-v0.3.0", "other-host-v0.3.0")
                 }
             }
-            assert_eq!(rollup_events(pair, now).len(), 2, "case {case}");
+            let grouped = rollup_events(pair, now);
+            if matches!(case, 0 | 1 | 4) {
+                assert_eq!(grouped.len(), 2, "case {case}");
+            } else {
+                assert_eq!(grouped.len(), 1, "case {case}");
+                let bundle = grouped[0].coverage.as_ref().unwrap();
+                assert_eq!(bundle.method, "project-release-window-v2", "case {case}");
+            }
         }
     }
 
     #[tokio::test]
-    async fn release_family_does_not_fold_two_versions_of_one_target_or_bridge_batches() {
+    async fn release_family_versions_of_one_target_share_a_row_without_a_batch_title() {
         let (events, now) = plugin_fixtures().await;
         let mut pair = events[..2].to_vec();
         pair[1].title = "Mem0 Pi Agent Plugin (v0.4.0)".into();
         pair[1].evidence[0].title = pair[1].title.clone();
         pair[1].evidence[0].url =
             "https://github.com/mem0ai/mem0/releases/tag/pi-agent-v0.4.0".into();
-        assert_eq!(rollup_events(pair, now).len(), 2);
+        let grouped = rollup_events(pair, now);
+        assert_eq!(grouped.len(), 1);
+        let bundle = grouped[0].coverage.as_ref().unwrap();
+        assert_eq!(bundle.method, "project-release-window-v2");
+        assert_eq!(bundle.topic, "Mem0 Pi Agent 版本更新：v0.3.0 / v0.4.0");
         let mut batches = events[..3].to_vec();
         batches[0].evidence[0].excerpt.clear();
         batches[2].evidence[0].excerpt = "Other batch #9999".into();
         let grouped = rollup_events(batches, now);
-        assert_eq!(grouped.len(), 2);
-        assert_eq!(grouped[0].coverage.as_ref().unwrap().members.len(), 2);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].coverage.as_ref().unwrap().members.len(), 3);
     }
 
     #[tokio::test]

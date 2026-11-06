@@ -18,7 +18,7 @@ export type SummaryVisual = {items:SummaryVisualItem[]} & (
   | {version:2;kind:"flow";basis:{point:number;quote:string}}
 );
 export interface Score { sourceQuality: number; corroboration: number; freshness: number; relevance: number; novelty: number; engagement: number; editorialBoost: number; total: number; explanation: string }
-export type SummaryStatus = "pending" | "running" | "completed" | "failed";
+export type SummaryStatus = "pending" | "running" | "completed" | "failed" | "manual_only";
 export interface Recommendation { score: number; freshness: number; affinity: number; noveltyPenalty: number; facets: string[]; sourceConfirmed: boolean; explanation: string; materialPenalty?:number }
 export interface CoverageMember {
   eventId:string;contentVersion:number;title:string;displayTitle?:string|null;eventType:string;publishedAt:string|null;
@@ -26,12 +26,12 @@ export interface CoverageMember {
   summaryPoints:string[];summaryMaterialLimit:string|null;summaryLimitations:string[];
   summaryVisual?:SummaryVisual|null;
   summaryModel:string|null;summarizedAt:string|null;evidence:Evidence[];
-  relationship:"lead"|"same_named_topic"|"shared_identifier"|"same_event_evidence"|"release_family"|"bulk_publication"|"archived_material";materialKind:"editorial"|"official"|"community";matchesFilters:boolean;
+  relationship:"lead"|"same_named_topic"|"shared_identifier"|"same_event_evidence"|"same_article"|"development_activity"|"release_family"|"bulk_publication"|"archived_material";materialKind:"editorial"|"official"|"community";matchesFilters:boolean;
   releaseTarget?:string|null;releaseVersion?:string|null;
   hidden?:boolean; // Client-only feedback overlay; not part of the server/public projection.
 }
 export interface CoverageBundle {
-  key:string;topic:string;relation:"same_named_topic"|"shared_identifier"|"same_event_evidence"|"release_family"|"bulk_publication"|"archived_materials";method:"deterministic-name-v1"|"release-family-v1"|"release-family-v2"|"project-release-window-v1"|"exact-event-reference-v1"|"official-announcement-v1"|"bulk-template-v1"|"archived-materials-v1";windowHours:number;
+  key:string;topic:string;relation:"same_named_topic"|"shared_identifier"|"same_event_evidence"|"same_article"|"development_activity"|"release_family"|"bulk_publication"|"archived_materials";method:"deterministic-name-v1"|"release-family-v1"|"release-family-v2"|"project-release-window-v1"|"project-release-window-v2"|"exact-event-reference-v1"|"official-announcement-v1"|"original-copy-v1"|"development-window-v1"|"bulk-template-v1"|"archived-materials-v1";windowHours:number;
   materialCount:number;newsMaterialCount:number;editorialSourceCount:number;officialSourceCount:number;
   communityMaterialCount:number;popularityBoost:number;members:CoverageMember[];
 }

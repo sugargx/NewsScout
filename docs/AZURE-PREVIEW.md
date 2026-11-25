@@ -17,11 +17,11 @@
 | 前门 | 两次部署后均为41份资源与本地构建逐字节一致、health200、匿名session/reading-personalization/events均401 |
 | 实际数据库 | r31前后只读探针：schema40→41，全部41份SHA384一致；应用设置（除摘要模型外）、兴趣、来源覆盖、个性化、分享、既有来源配置、11-16及以前全部晨报和条目共8项指纹不变，额度与启用状态不变，只有模型由 `gpt-5.6-terra` 变为 `gpt-6.1-terra`。r32前后同样10项检查全部通过 |
 | 摘要恢复 | r31启动后2分钟内恢复生成；数据库扩容后一小时内完成112条、0失败，最新摘要为 `gpt-6.1-terra`/low，仍有约1800条积压，补发按各日原窗口逐日完成 |
-| 数据库算力 | 经本人批准，15:23–15:31由 Burstable `Standard_B1ms` 临时升至 GeneralPurpose `Standard_D2ds_v5`，存储（32GB P4，120 IOPS）、版本、备份与数据不变；重启期间应用自动重连 |
+| 数据库算力 | 经本人批准，15:23–15:31由 Burstable `Standard_B1ms` 临时升至 GeneralPurpose `Standard_D2ds_v5`；21:49–21:58在积压清空、补发完成后降回 `Standard_B1ms`。两次调整中存储（32GB P4，120 IOPS）、版本、备份与数据均不变，重启期间应用自动重连 |
 | 读者复读 | 扩容后一次有界维护GET（会正常更新本人last-seen）：雷达200/3.8秒、34行；今日精选200/47毫秒，为已保存的11-25版，共15条；历史列表首项为11-25 |
 | 恢复 | r32的回退为原样的r31镜像（同为schema41）；r31仍会持续超时。r30加0041的恢复镜像 `ck1a`（`sha256:9e10670d5b0186fab10d7ff6785a8771d9f115a37834773c65ffe080756e7254`）读侧四项契约已通过，但只能恢复阅读，不能生成摘要。本轮未实际回退 |
 
-**待办：降回 B1ms。** 积压清完（`summary_jobs` 中pending接近每日新增量）、11-17至11-24补发完成且雷达稳定后，执行 `az postgres flexible-server update --resource-group rg-newsscout-preview --name psql-newsscout-preview-lhbzt6f4 --tier Burstable --sku-name Standard_B1ms --yes`。降回会重启数据库约1–5分钟，随后需核对health、雷达和CPU额度。本次使用独立的Azure CLI配置目录 `%USERPROFILE%\.azure-newsscout`（全局az登录在11-25丢失了该账号），没有改动全局登录。
+**已降回 B1ms（2026-11-25 21:49–21:58，+08）。** 降回前的只读核对：可领取的摘要任务为0。剩余900个pending都是迁移0040隐藏的CI构建标签，自动摘要按设计跳过，所以“pending数”不能当作积压。11-17至11-24三位所有者的27份晨报均已保存，雷达200/3.1秒。执行的是 `az postgres flexible-server update --resource-group rg-newsscout-preview --name psql-newsscout-preview-lhbzt6f4 --tier Burstable --sku-name Standard_B1ms --yes`，约8.5分钟。降回后health为ready，雷达200/7.2秒（重启后缓存为冷），今日精选与历史均200，CPU约10%–20%。B1ms只有1个vCore，积压处理期间的负载已高于其基线；若雷达再次变慢或CPU额度长期为0，应考虑长期使用B2s，或优化雷达与晨报预览查询。本次使用独立的Azure CLI配置目录 `%USERPROFILE%\.azure-newsscout`（全局az登录在11-25丢失了该账号），没有改动全局登录。
 
 证据在 `tmp\release-r31-20261125` 与 `tmp\release-r32-20261125`，持久化交接为 `tmp\azure-preview-20260920\release-r32-20261125.json`、`runtime-parameters-r31.json`、`runtime-parameters-r32.json`，旧状态保存在 `release-status-r30-20261125.json`。本地、隔离数据库和浏览器验收见测试指南§37；日常schema27库未启动或迁移，未改已保存的晨报。
 

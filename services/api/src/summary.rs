@@ -1,5 +1,5 @@
 use crate::{
-    models::{Event, Evidence, GeneratedSummary, SummaryVisualKind},
+    models::{Event, Evidence, GeneratedSummary, SummaryVisual, SummaryVisualKind},
     reading_context::ReadingContext,
 };
 use anyhow::{Context, Result, ensure};
@@ -237,19 +237,20 @@ pub fn parse_output(content: &str, event: &Event) -> Result<GeneratedSummary> {
     } else {
         trimmed
     };
-    let mut output: GeneratedSummary =
+    let mut raw: serde_json::Value =
         serde_json::from_str(json).context("模型未返回合法的摘要 JSON")?;
-    output.display_title = output.display_title.map(|title| title.trim().to_owned());
-    if let Some(title) = &output.display_title {
-        ensure!(
-            (2..=120).contains(&title.chars().count())
-                && !title.chars().any(char::is_control)
-                && title
-                    .chars()
-                    .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
-            "阅读标题须为2–120字单行中文；无法忠实翻译时返回null"
-        );
-    }
+    // The reading title and visual are optional aids: an unusable one is
+    // dropped instead of discarding a summary whose own checks pass.
+    let visual = raw
+        .as_object_mut()
+        .and_then(|object| object.remove("visual"))
+        .filter(|value| !value.is_null());
+    let mut output: GeneratedSummary =
+        serde_json::from_value(raw).context("模型未返回合法的摘要 JSON")?;
+    output.display_title = output
+        .display_title
+        .map(|title| title.trim().to_owned())
+        .filter(|title| valid_display_title(title));
     ensure!(
         (1..=12).contains(&output.points.len()),
         "摘要须为1–12条要点"
@@ -320,53 +321,71 @@ pub fn parse_output(content: &str, event: &Event) -> Result<GeneratedSummary> {
         output.evidence_ids.iter().all(|id| unique.insert(*id)),
         "模型重复引用了同一证据"
     );
-    if let Some(visual) = &mut output.visual {
-        ensure!((1..=2).contains(&visual.version), "图解版本不受支持");
-        ensure!(
-            visual.version == 2 || matches!(visual.kind, SummaryVisualKind::Overview | SummaryVisualKind::Comparison),
-            "旧版图解不支持流程或时间线"
-        );
-        ensure!((2..=4).contains(&visual.items.len()), "图解须为2–4条信息");
-        let mut distinct = HashSet::new();
-        for item in &mut visual.items {
-            item.label = item.label.trim().to_owned();
-            item.detail = item.detail.trim().to_owned();
-            ensure!(
-                (2..=32).contains(&item.label.chars().count())
-                    && (4..=96).contains(&item.detail.chars().count())
-                    && !item.label.chars().chain(item.detail.chars()).any(char::is_control),
-                "图解标题或说明超出长度限制或包含控制字符"
-            );
-            let point = item.point.checked_sub(1).and_then(|index| output.points.get(index));
-            ensure!(
-                point.is_some_and(|point| item.detail.contains(&item.label) && literal_clause(point, &item.detail)),
-                "图解必须摘取所引用要点的完整分句，不能补写事实或截断否定、单位"
-            );
-            ensure!(distinct.insert(item.detail.clone()), "图解重复了同一信息");
-        }
-        if matches!(visual.kind, SummaryVisualKind::Timeline) {
-            ensure!(
-                visual.items.iter().all(|item| valid_visual_date(&item.label))
-                    && visual.items.windows(2).all(|pair| pair[0].label < pair[1].label),
-                "时间线须引用真实完整日期且严格递增"
-            );
-        }
-        if matches!(visual.kind, SummaryVisualKind::Flow) {
-            let basis = visual.basis.as_mut().context("流程图缺少顺序依据")?;
-            basis.quote = basis.quote.trim().to_owned();
-            let point = basis.point.checked_sub(1).and_then(|index| output.points.get(index));
-            ensure!(
-                (4..=600).contains(&basis.quote.chars().count())
-                    && !basis.quote.chars().any(char::is_control)
-                    && point.is_some_and(|point| point == &basis.quote)
-                    && literal_visual_sequence(&basis.quote, visual.items.iter().map(|item| item.label.as_str())),
-                "流程图须逐字引用明确包含所有步骤顺序的整条要点"
-            );
-        } else {
-            ensure!(visual.basis.is_none(), "只有流程图可以包含顺序依据");
-        }
-    }
+    output.visual = visual.and_then(|value| {
+        let checked = serde_json::from_value::<SummaryVisual>(value)
+            .map_err(|_| anyhow::anyhow!("图解结构不受支持"))
+            .and_then(|mut visual| validate_visual(&mut visual, &output.points).map(|()| visual));
+        checked
+            .inspect_err(|reason| tracing::info!(%reason, "optional summary visual dropped"))
+            .ok()
+    });
     Ok(output)
+}
+
+fn valid_display_title(title: &str) -> bool {
+    (2..=120).contains(&title.chars().count())
+        && !title.chars().any(char::is_control)
+        && title
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+}
+
+fn validate_visual(visual: &mut SummaryVisual, points: &[String]) -> Result<()> {
+    ensure!((1..=2).contains(&visual.version), "图解版本不受支持");
+    ensure!(
+        visual.version == 2 || matches!(visual.kind, SummaryVisualKind::Overview | SummaryVisualKind::Comparison),
+        "旧版图解不支持流程或时间线"
+    );
+    ensure!((2..=4).contains(&visual.items.len()), "图解须为2–4条信息");
+    let mut distinct = HashSet::new();
+    for item in &mut visual.items {
+        item.label = item.label.trim().to_owned();
+        item.detail = item.detail.trim().to_owned();
+        ensure!(
+            (2..=32).contains(&item.label.chars().count())
+                && (4..=96).contains(&item.detail.chars().count())
+                && !item.label.chars().chain(item.detail.chars()).any(char::is_control),
+            "图解标题或说明超出长度限制或包含控制字符"
+        );
+        let point = item.point.checked_sub(1).and_then(|index| points.get(index));
+        ensure!(
+            point.is_some_and(|point| item.detail.contains(&item.label) && literal_clause(point, &item.detail)),
+            "图解必须摘取所引用要点的完整分句，不能补写事实或截断否定、单位"
+        );
+        ensure!(distinct.insert(item.detail.clone()), "图解重复了同一信息");
+    }
+    if matches!(visual.kind, SummaryVisualKind::Timeline) {
+        ensure!(
+            visual.items.iter().all(|item| valid_visual_date(&item.label))
+                && visual.items.windows(2).all(|pair| pair[0].label < pair[1].label),
+            "时间线须引用真实完整日期且严格递增"
+        );
+    }
+    if matches!(visual.kind, SummaryVisualKind::Flow) {
+        let basis = visual.basis.as_mut().context("流程图缺少顺序依据")?;
+        basis.quote = basis.quote.trim().to_owned();
+        let point = basis.point.checked_sub(1).and_then(|index| points.get(index));
+        ensure!(
+            (4..=600).contains(&basis.quote.chars().count())
+                && !basis.quote.chars().any(char::is_control)
+                && point.is_some_and(|point| point == &basis.quote)
+                && literal_visual_sequence(&basis.quote, visual.items.iter().map(|item| item.label.as_str())),
+            "流程图须逐字引用明确包含所有步骤顺序的整条要点"
+        );
+    } else {
+        ensure!(visual.basis.is_none(), "只有流程图可以包含顺序依据");
+    }
+    Ok(())
 }
 
 fn literal_clause(point: &str, text: &str) -> bool {
@@ -489,14 +508,21 @@ mod tests {
             "evidenceIds":[event.evidence[0].id],"visual":visual
         });
         assert!(parse_output(&output.to_string(), &event).unwrap().visual.is_some());
+        // An invalid optional visual is never shown, and never sinks the checked text summary.
+        let dropped = |output: &serde_json::Value| {
+            let parsed = parse_output(&output.to_string(), &event).unwrap();
+            assert_eq!(parsed.points.len(), 2);
+            parsed.visual.is_none()
+        };
         for invalid in [
             serde_json::json!({"version":3,"kind":"overview","items":visual["items"]}),
             serde_json::json!({"version":1,"kind":"bar_chart","items":visual["items"]}),
             serde_json::json!({"version":1,"kind":"overview","items":[]}),
             serde_json::json!({"version":1,"kind":"overview","items":visual["items"],"svg":"<svg/>"}),
+            serde_json::json!("<svg/>"),
         ] {
             output["visual"] = invalid;
-            assert!(parse_output(&output.to_string(), &event).is_err());
+            assert!(dropped(&output));
         }
 
         for (field, value) in [
@@ -509,8 +535,13 @@ mod tests {
         ] {
             output["visual"] = visual.clone();
             output["visual"]["items"][1][field] = value;
-            assert!(parse_output(&output.to_string(), &event).is_err(), "{field}");
+            assert!(dropped(&output), "{field}");
         }
+        // The summary itself stays strict even when its visual is valid.
+        output["visual"] = visual.clone();
+        output["evidenceIds"] = serde_json::json!([uuid::Uuid::new_v4()]);
+        assert!(parse_output(&output.to_string(), &event).is_err());
+        output["evidenceIds"] = serde_json::json!([event.evidence[0].id]);
         output["visual"] = serde_json::Value::Null;
         assert!(parse_output(&output.to_string(), &event).unwrap().visual.is_none());
     }
@@ -527,7 +558,12 @@ mod tests {
         let mut output = serde_json::json!({"points":[format!("{sequence}。"),
             "检索材料仅使用公开文档。","生成回答须保留来源。","检查引用不代表独立核验。"],
             "materialLimit":null,"limitations":[],"importance":"","evidenceIds":[event.evidence[0].id],"visual":flow});
-        assert!(parse_output(&output.to_string(), &event).is_ok());
+        assert!(parse_output(&output.to_string(), &event).unwrap().visual.is_some());
+        let dropped = |output: &serde_json::Value| {
+            let parsed = parse_output(&output.to_string(), &event).unwrap();
+            assert_eq!(parsed.points.len(), 4);
+            parsed.visual.is_none()
+        };
         for invalid in [
             serde_json::json!({"version":1,"kind":"flow","items":flow["items"],"basis":flow["basis"]}),
             serde_json::json!({"version":2,"kind":"flow","items":flow["items"]}),
@@ -537,16 +573,16 @@ mod tests {
             serde_json::json!({"version":2,"kind":"flow","items":flow["items"],"basis":{"point":1,"quote":sequence}}),
         ] {
             output["visual"] = invalid;
-            assert!(parse_output(&output.to_string(), &event).is_err());
+            assert!(dropped(&output));
         }
         output["visual"] = flow.clone();
         output["visual"]["items"] = serde_json::json!([flow["items"][1], flow["items"][0], flow["items"][2]]);
-        assert!(parse_output(&output.to_string(), &event).is_err());
+        assert!(dropped(&output));
         for sequence in ["系统包含检索材料、生成回答、检查引用", "系统先检索材料，生成回答，检查引用"] {
             output["points"][0] = serde_json::json!(format!("{sequence}。"));
             output["visual"] = flow.clone();
             output["visual"]["basis"]["quote"] = serde_json::json!(format!("{sequence}。"));
-            assert!(parse_output(&output.to_string(), &event).is_err());
+            assert!(dropped(&output));
         }
         for (dates, valid) in [
             (["2024-02-29", "2026-10-15"], true),
@@ -562,7 +598,7 @@ mod tests {
                 "items":dates.iter().enumerate().map(|(index, date)| serde_json::json!({
                     "label":date,"detail":format!("{date}发布方公布了阶段进展"),"point":index+1
                 })).collect::<Vec<_>>()});
-            assert_eq!(parse_output(&output.to_string(), &event).is_ok(), valid, "{dates:?}");
+            assert_eq!(parse_output(&output.to_string(), &event).unwrap().visual.is_some(), valid, "{dates:?}");
         }
     }
 
@@ -627,6 +663,7 @@ mod tests {
                 .as_deref(),
             Some("Agent Framework 发布新版本")
         );
+        // An unusable reading title falls back to the original title; the summary is kept.
         for invalid in [
             String::new(),
             "中文\n换行".into(),
@@ -634,7 +671,9 @@ mod tests {
             "中".repeat(121),
         ] {
             output["displayTitle"] = serde_json::json!(invalid);
-            assert!(parse_output(&output.to_string(), &event).is_err());
+            let parsed = parse_output(&output.to_string(), &event).unwrap();
+            assert!(parsed.display_title.is_none());
+            assert_eq!(parsed.points, ["官方提供了版本变更的说明。"]);
         }
         output["displayTitle"] = serde_json::Value::Null;
         assert!(

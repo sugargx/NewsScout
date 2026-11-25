@@ -50,6 +50,8 @@ pub struct ProviderConnection {
     pub auth_mode: Option<CopilotAuthMode>,
     pub account_login: Option<String>,
     pub last_error: Option<String>,
+    /// Last probe attempt, successful or not; paces automatic re-probes.
+    pub probed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -815,9 +817,10 @@ pub async fn generate_event_summary(
     }
     if !connection.models.iter().any(|available| available == model) {
         if state.auth.cloud() {
-            return Err(ApiError::Configuration(
-                "The dedicated Copilot account does not provide gpt-5.6-terra; no fallback will be used".into(),
-            ));
+            return Err(ApiError::Configuration(format!(
+                "The dedicated Copilot account does not provide {}; no fallback will be used",
+                automation::CLOUD_MODEL
+            )));
         }
         return Err(ApiError::BadRequest("请选择探测返回的可用模型".into()));
     }
@@ -931,9 +934,10 @@ fn validate_cloud_generation_response(value: &serde_json::Value) -> Result<(), A
             .and_then(serde_json::Value::as_str)
             != Some(automation::CLOUD_REASONING_EFFORT)
     {
-        return Err(ApiError::Configuration(
-            "Cloud Copilot did not confirm gpt-5.6-terra with low reasoning; no summary was saved and no fallback will be used".into(),
-        ));
+        return Err(ApiError::Configuration(format!(
+            "Cloud Copilot did not confirm {} with low reasoning; no summary was saved and no fallback will be used",
+            automation::CLOUD_MODEL
+        )));
     }
     Ok(())
 }
@@ -1277,8 +1281,13 @@ async fn probe_details(
             .get("login")
             .and_then(|value| value.as_str())
             .map(str::to_owned),
-        last_error: required_model_unavailable.then(||
-            "The dedicated Copilot account does not provide gpt-5.6-terra; no fallback will be used".into()),
+        last_error: required_model_unavailable.then(|| {
+            format!(
+                "The dedicated Copilot account does not provide {}; no fallback will be used",
+                automation::CLOUD_MODEL
+            )
+        }),
+        probed_at: Some(chrono::Utc::now()),
     })
 }
 
@@ -1298,6 +1307,7 @@ async fn probe_connection(state: &AppState, mode: CopilotAuthMode) -> Result<(),
             *state.provider.write().await = ProviderConnection {
                 auth_mode: Some(mode),
                 last_error: Some(message),
+                probed_at: Some(chrono::Utc::now()),
                 ..ProviderConnection::default()
             };
             Err(error)
@@ -1315,6 +1325,7 @@ pub async fn restore_copilot(state: &AppState) -> Result<(), ApiError> {
                 *state.provider.write().await = ProviderConnection {
                     auth_mode: Some(CopilotAuthMode::Service),
                     last_error: Some(message),
+                    probed_at: Some(chrono::Utc::now()),
                     ..ProviderConnection::default()
                 };
                 return Ok(());
@@ -1510,29 +1521,30 @@ mod tests {
 
     #[test]
     fn default_model_requires_the_exact_available_id() {
-        let models = vec!["gpt-5.5".into(), "gpt-5.6-terra".into()];
+        let models = vec!["gpt-5.5".into(), "gpt-6.1-terra".into()];
         assert_eq!(
-            select_default_model(&models, "gpt-5.6-terra"),
-            Some("gpt-5.6-terra".into())
+            select_default_model(&models, "gpt-6.1-terra"),
+            Some("gpt-6.1-terra".into())
         );
-        assert_eq!(select_default_model(&models, "gpt-5.6"), None);
+        assert_eq!(select_default_model(&models, "gpt-6.1"), None);
         assert_eq!(
-            select_default_model(&["gpt-5.5".into()], "gpt-5.6-terra"),
+            select_default_model(&["gpt-5.5".into()], "gpt-6.1-terra"),
             None
         );
-        assert_eq!(select_default_model(&[], "gpt-5.6-terra"), None);
+        assert_eq!(select_default_model(&[], "gpt-6.1-terra"), None);
     }
 
     #[test]
     fn cloud_generation_requires_exact_provider_model_and_low_reasoning() {
         let expected = serde_json::json!({
-            "provider":"github-copilot","model":"gpt-5.6-terra","reasoningEffort":"low"
+            "provider":"github-copilot","model":"gpt-6.1-terra","reasoningEffort":"low"
         });
         validate_cloud_generation_response(&expected).unwrap();
         for (field, value) in [
             ("provider", serde_json::json!("azure-openai")),
             ("model", serde_json::json!("gpt-5.5")),
-            ("model", serde_json::json!("gpt-5.6")),
+            ("model", serde_json::json!("gpt-5.6-terra")),
+            ("model", serde_json::json!("gpt-6.1")),
             ("reasoningEffort", serde_json::json!("high")),
             ("reasoningEffort", serde_json::json!("medium")),
             ("reasoningEffort", serde_json::Value::Null),
@@ -1631,7 +1643,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["settings"]["model"], "gpt-5.6-terra");
+        assert_eq!(value["settings"]["model"], "gpt-6.1-terra");
         assert_eq!(value["settings"]["enabled"], false);
         assert_eq!(value["blockedReason"], "demo");
         assert_eq!(value["jobs"].as_array().unwrap().len(), 0);

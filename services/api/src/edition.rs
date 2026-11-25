@@ -3,6 +3,8 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use crate::{app::AppState, models::DailyBrief, reader};
@@ -51,6 +53,81 @@ impl ReaderSettings {
 #[derive(Clone)]
 pub struct EditionStore {
     pool: ScopedDb,
+    readiness: Arc<Mutex<ReadinessPacing>>,
+}
+
+/// Unfinished morning editions from up to this many previous days are still
+/// saved once their summaries arrive, from their original collection window.
+pub(crate) const CATCH_UP_DAYS: i64 = 14;
+
+// Checking readiness builds a full edition preview, about seven seconds of
+// database CPU on the burstable server. Re-checking every waiting edition on
+// each 30-second tick exhausted its CPU credits on 2026-11-17, so previews are
+// paced: one at a time across all readers and dates, today's editions first.
+/// Minimum gap between any two readiness previews.
+const READINESS_SPACING: Duration = Duration::minutes(3);
+/// Re-check interval for one edition while the queue moves, in its first hour.
+const READINESS_RECHECK: Duration = Duration::minutes(5);
+/// Re-check interval when nothing moved, or after an hour of waiting.
+const READINESS_SLOW_RECHECK: Duration = Duration::minutes(30);
+const READINESS_PATIENCE: Duration = Duration::minutes(60);
+
+/// A cheap signal of summary-queue movement: new jobs or any status change.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct QueueProgress {
+    jobs: i64,
+    touched: Option<DateTime<Utc>>,
+}
+
+#[derive(Default)]
+struct ReadinessPacing {
+    last_check: Option<DateTime<Utc>>,
+    checked: HashMap<(String, NaiveDate), (QueueProgress, DateTime<Utc>)>,
+}
+
+impl ReadinessPacing {
+    fn spaced(&self, now: DateTime<Utc>) -> bool {
+        self.last_check
+            .is_none_or(|last| now - last >= READINESS_SPACING)
+    }
+
+    /// Cheap pre-filter, so idle ticks skip reading queue progress.
+    fn may_check(&self, key: &(String, NaiveDate), current: bool, now: DateTime<Utc>) -> bool {
+        (current && !self.checked.contains_key(key)) || self.spaced(now)
+    }
+
+    /// Today's edition is checked as soon as its run waits, as each morning's
+    /// first check always was. Re-checks and catch-up editions share one
+    /// spacing; re-checks follow queue movement and slow down after an hour.
+    fn due(
+        &self,
+        key: &(String, NaiveDate),
+        progress: &QueueProgress,
+        waiting_since: DateTime<Utc>,
+        current: bool,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let Some((previous, at)) = self.checked.get(key) else {
+            return current || self.spaced(now);
+        };
+        if !self.spaced(now) {
+            return false;
+        }
+        let moving = previous != progress && now - waiting_since < READINESS_PATIENCE;
+        now - *at
+            >= if moving {
+                READINESS_RECHECK
+            } else {
+                READINESS_SLOW_RECHECK
+            }
+    }
+
+    fn record(&mut self, key: (String, NaiveDate), progress: QueueProgress, now: DateTime<Utc>) {
+        let oldest = reader::local_date(now) - Duration::days(CATCH_UP_DAYS + 1);
+        self.checked.retain(|(_, date), _| *date >= oldest);
+        self.checked.insert(key, (progress, now));
+        self.last_check = Some(now);
+    }
 }
 
 #[derive(Serialize)]
@@ -163,7 +240,18 @@ fn ready_for_snapshot(
 
 impl EditionStore {
     pub fn new(pool: impl Into<ScopedDb>) -> Self {
-        Self { pool: pool.into() }
+        Self {
+            pool: pool.into(),
+            readiness: Default::default(),
+        }
+    }
+
+    /// The same scheduler state for another reader's scoped database.
+    pub fn scoped(&self, pool: ScopedDb) -> Self {
+        Self {
+            pool,
+            readiness: self.readiness.clone(),
+        }
     }
 
     pub async fn settings(&self) -> Result<(ReaderSettings, DateTime<Utc>)> {
@@ -269,6 +357,8 @@ impl EditionStore {
         Ok(())
     }
 
+    /// Save a waiting edition once it is ready, re-checking on the bounded
+    /// cadence of `ReadinessPacing` rather than on every scheduler tick.
     async fn finalize(&self, state: &AppState, date: NaiveDate) -> Result<()> {
         let Some(run) = self.today(date).await? else {
             return Ok(());
@@ -276,7 +366,79 @@ impl EditionStore {
         if run.finished_at.is_some() || !["summarizing", "partial"].contains(&run.status.as_str()) {
             return Ok(());
         }
-        let Some(preview) = state.store.brief(date, false).await? else {
+        // A saved edition only needs its run closed, which builds no preview.
+        if !self.saved(date).await? {
+            let key = (self.pool.actor().to_owned(), date);
+            let now = Utc::now();
+            let current = date >= reader::local_date(now);
+            let candidate = self.pacing().may_check(&key, current, now);
+            if !candidate {
+                return Ok(());
+            }
+            let progress = self.queue_progress().await?;
+            let mut pacing = self.pacing();
+            if !pacing.due(&key, &progress, run.started_at, current, now) {
+                return Ok(());
+            }
+            // Recorded before checking, so a failing check also waits its turn.
+            pacing.record(key, progress, now);
+        }
+        self.check_readiness(state, date, run).await
+    }
+
+    async fn saved(&self, date: NaiveDate) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM daily_briefs WHERE local_date=$1
+              AND owner_user_id=scoutnews_actor() AND status='published')",
+        )
+        .bind(date)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    fn pacing(&self) -> std::sync::MutexGuard<'_, ReadinessPacing> {
+        self.readiness
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    async fn queue_progress(&self) -> Result<QueueProgress> {
+        let row = sqlx::query("SELECT count(*) AS jobs,max(updated_at) AS touched FROM summary_jobs")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(QueueProgress {
+            jobs: row.try_get("jobs")?,
+            touched: row.try_get("touched")?,
+        })
+    }
+
+    /// Save recent editions that missed their own morning (for example while
+    /// summaries were unavailable), oldest first, through the same pacing.
+    pub(crate) async fn catch_up(&self, state: &AppState) -> Result<()> {
+        let today = reader::local_date(Utc::now());
+        let dates: Vec<NaiveDate> = sqlx::query_scalar(
+            "SELECT local_date FROM morning_runs WHERE owner_user_id=scoutnews_actor()
+              AND local_date<$1 AND local_date>=$2 AND finished_at IS NULL
+              AND status IN('summarizing','partial') ORDER BY local_date",
+        )
+        .bind(today)
+        .bind(today - Duration::days(CATCH_UP_DAYS))
+        .fetch_all(&self.pool)
+        .await?;
+        for date in dates {
+            self.finalize(state, date).await?;
+        }
+        Ok(())
+    }
+
+    async fn check_readiness(&self, state: &AppState, date: NaiveDate, run: MorningRun) -> Result<()> {
+        let catch_up = date < reader::local_date(Utc::now());
+        let preview = if catch_up {
+            state.store.catch_up_brief(date, false).await?
+        } else {
+            state.store.brief(date, false).await?
+        };
+        let Some(preview) = preview else {
             return Ok(());
         };
         let pending = preview
@@ -317,18 +479,21 @@ impl EditionStore {
             progress.try_get("current_pending")?,
             settings.brief_limit,
         ) {
-            let saved = state
-                .store
-                .brief(date, true)
-                .await?
-                .context("eligible morning brief could not be saved")?;
+            let saved = if catch_up {
+                state.store.catch_up_brief(date, true).await?
+            } else {
+                state.store.brief(date, true).await?
+            }
+            .context("eligible morning brief could not be saved")?;
             let partial = run.source_failed > 0 || failed > 0 || saved.items.len() < 5;
+            let saved_label = if catch_up { "晨报已补发" } else { "晨报已保存" };
             sqlx::query("UPDATE morning_runs SET status=$2,finished_at=now(),message=$3 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()")
                 .bind(date).bind(if partial { "partial" } else { "ready" })
-                .bind(format!("晨报已保存：{} 条；{} 个来源失败或退避，{} 条摘要失败；快照不会被后续更新覆盖",saved.items.len(),run.source_failed,failed))
+                .bind(format!("{saved_label}：{} 条；{} 个来源失败或退避，{} 条摘要失败；快照不会被后续更新覆盖",saved.items.len(),run.source_failed,failed))
                 .execute(&self.pool).await?;
         } else if Utc::now() - run.started_at > Duration::minutes(60) {
-            sqlx::query("UPDATE morning_runs SET status='partial',message=$2 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()")
+            sqlx::query("UPDATE morning_runs SET status='partial',message=$2 WHERE local_date=$1 AND owner_user_id=scoutnews_actor()
+                AND (status<>'partial' OR message IS DISTINCT FROM $2)")
                 .bind(date)
                 .bind(format!(
                     "已采集，等待合格摘要：当前 {} 条，不固化空报或用原文摘录凑数",
@@ -435,40 +600,80 @@ pub fn spawn(state: AppState) {
                 continue;
             }
             if let Some(store) = &state.edition {
-                let result = if state.auth.cloud() {
-                    cloud_tick(&state).await
+                if state.auth.cloud() {
+                    cloud_tick(&state).await;
                 } else {
-                    store.tick(&state).await
-                };
-                if result.is_err() {
-                    tracing::error!("reader schedule failed");
+                    report("edition", store.tick(&state).await);
+                    report("catch-up", store.catch_up(&state).await);
                 }
             }
         }
     });
 }
 
-async fn cloud_tick(state: &AppState) -> Result<()> {
-    state
-        .edition
-        .as_ref()
-        .context("global edition schedule required")?
-        .tick(state)
-        .await?;
-    let worker = state
-        .feed_worker
-        .as_ref()
-        .context("collection worker required")?;
-    worker.run_cloud_due().await?;
-    archive_cloud_readers(state, Utc::now()).await
+/// Scheduler failures name the phase and a data-free class. Error text can
+/// carry reader content or SQL, so it is never logged.
+fn report(phase: &'static str, result: Result<()>) {
+    if let Err(error) = result {
+        tracing::error!(phase, class = %failure_class(&error), "reader schedule failed");
+    }
 }
 
-pub(crate) async fn archive_cloud_readers(state: &AppState, now: DateTime<Utc>) -> Result<()> {
+fn failure_class(error: &anyhow::Error) -> String {
+    match error.downcast_ref::<sqlx::Error>() {
+        Some(sqlx::Error::PoolTimedOut) => "database-pool-timeout".into(),
+        Some(sqlx::Error::Database(database)) => format!(
+            "database-sqlstate-{}",
+            database.code().as_deref().unwrap_or("unknown")
+        ),
+        Some(sqlx::Error::Io(_)) => "database-connection".into(),
+        Some(_) => "database".into(),
+        None => "application".into(),
+    }
+}
+
+/// Phases fail independently: an edition failure must not stall collection or
+/// other readers' editions. Every current edition is handled before catch-up.
+async fn cloud_tick(state: &AppState) {
+    let Some(edition) = state.edition.as_ref() else {
+        return;
+    };
+    report("edition", edition.tick(state).await);
+    report(
+        "collection",
+        match state.feed_worker.as_ref() {
+            Some(worker) => worker.run_cloud_due().await,
+            None => Err(anyhow::anyhow!("collection worker required")),
+        },
+    );
+    report("reader-editions", archive_cloud_readers(state, Utc::now()).await);
+    report("catch-up", catch_up_cloud_editions(state).await);
+}
+
+async fn active_cloud_readers(state: &AppState) -> Result<Vec<AppState>> {
     let pool = state
         .auth
         .pool
         .as_ref()
         .context("cloud database required")?;
+    sqlx::query(
+        "SELECT id,display_name,telemetry_consent FROM app_users
+        WHERE last_seen_at>now()-interval '30 days' AND issuer<>'local' ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(state.for_reader(crate::auth::Identity {
+            id: row.try_get("id")?,
+            display_name: row.try_get("display_name")?,
+            telemetry_consent: row.try_get("telemetry_consent")?,
+        }))
+    })
+    .collect()
+}
+
+pub(crate) async fn archive_cloud_readers(state: &AppState, now: DateTime<Utc>) -> Result<()> {
     let (settings, _) = state
         .edition
         .as_ref()
@@ -479,48 +684,57 @@ pub(crate) async fn archive_cloud_readers(state: &AppState, now: DateTime<Utc>) 
     if settings.mode != "daily" || now < slot(date, settings.hour) {
         return Ok(());
     }
-    let users = sqlx::query(
-        "SELECT id,display_name,telemetry_consent FROM app_users
-        WHERE last_seen_at>now()-interval '30 days' AND issuer<>'local' ORDER BY id",
-    )
-    .fetch_all(pool)
-    .await?;
-    for row in users {
-        let reader = state.for_reader(crate::auth::Identity {
-            id: row.try_get("id")?,
-            display_name: row.try_get("display_name")?,
-            telemetry_consent: row.try_get("telemetry_consent")?,
-        });
+    for reader in active_cloud_readers(state).await? {
+        report("reader-edition", archive_reader(&reader, date, &settings).await);
+    }
+    Ok(())
+}
+
+async fn archive_reader(reader: &AppState, date: NaiveDate, settings: &ReaderSettings) -> Result<()> {
+    let edition = reader.edition.as_ref().context("reader edition required")?;
+    if edition
+        .claim(date, slot(date, settings.hour))
+        .await?
+        .is_some()
+    {
+        let sources = reader.store.sources().await?;
+        let active = sources
+            .iter()
+            .filter(|source| matches!(source.lifecycle_status.as_str(), "stable" | "observing"))
+            .collect::<Vec<_>>();
+        let succeeded = active
+            .iter()
+            .filter(|source| source.last_success_at.is_some() && source.consecutive_failures == 0)
+            .count() as i32;
+        edition
+            .finish_collecting(
+                date,
+                succeeded,
+                active.len() as i32 - succeeded,
+                "Reader-specific collection complete; awaiting qualified summaries".into(),
+            )
+            .await?;
+    }
+    // Reuse the existing readiness gate and immutable snapshot contract,
+    // but with this reader's recommendations, feedback and visible jobs.
+    edition.finalize(reader, date).await?;
+    reselect_after_rule_change(reader, date).await;
+    Ok(())
+}
+
+async fn catch_up_cloud_editions(state: &AppState) -> Result<()> {
+    report(
+        "catch-up",
+        state
+            .edition
+            .as_ref()
+            .context("edition store required")?
+            .catch_up(state)
+            .await,
+    );
+    for reader in active_cloud_readers(state).await? {
         let edition = reader.edition.as_ref().context("reader edition required")?;
-        if edition
-            .claim(date, slot(date, settings.hour))
-            .await?
-            .is_some()
-        {
-            let sources = reader.store.sources().await?;
-            let active = sources
-                .iter()
-                .filter(|source| matches!(source.lifecycle_status.as_str(), "stable" | "observing"))
-                .collect::<Vec<_>>();
-            let succeeded = active
-                .iter()
-                .filter(|source| {
-                    source.last_success_at.is_some() && source.consecutive_failures == 0
-                })
-                .count() as i32;
-            edition
-                .finish_collecting(
-                    date,
-                    succeeded,
-                    active.len() as i32 - succeeded,
-                    "Reader-specific collection complete; awaiting qualified summaries".into(),
-                )
-                .await?;
-        }
-        // Reuse the existing readiness gate and immutable snapshot contract,
-        // but with this reader's recommendations, feedback and visible jobs.
-        edition.finalize(&reader, date).await?;
-        reselect_after_rule_change(&reader, date).await;
+        report("reader-catch-up", edition.catch_up(&reader).await);
     }
     Ok(())
 }
@@ -594,6 +808,59 @@ mod tests {
         let mut empty = brief.clone();
         empty.items.clear();
         assert!(!ready_for_snapshot(&empty, 0, 0, 20));
+    }
+
+    #[test]
+    fn waiting_editions_are_rechecked_on_a_bounded_cadence() {
+        let started: DateTime<Utc> = "2026-11-16T22:00:00Z".parse().unwrap();
+        let today = ("reader".to_owned(), reader::local_date(started));
+        let other = ("other".to_owned(), today.1);
+        let idle = QueueProgress { jobs: 10, touched: Some(started) };
+        let moved = QueueProgress { jobs: 11, touched: Some(started + Duration::minutes(1)) };
+        let mut pacing = ReadinessPacing::default();
+        assert!(pacing.due(&today, &idle, started, true, started));
+        pacing.record(today.clone(), idle.clone(), started);
+        // Every reader's edition for today gets its first check at once...
+        let soon = started + Duration::seconds(30);
+        assert!(pacing.may_check(&other, true, soon));
+        assert!(pacing.due(&other, &idle, started, true, soon));
+        // ...but catch-up editions and re-checks share one spacing, so 30-second
+        // ticks never rebuild previews back to back.
+        let missed = ("reader".to_owned(), today.1 - Duration::days(1));
+        assert!(!pacing.may_check(&missed, false, soon));
+        assert!(!pacing.due(&missed, &idle, started, false, soon));
+        assert!(pacing.due(&missed, &idle, started, false, started + READINESS_SPACING));
+        // While the queue moves during the first hour, re-check soon; otherwise slowly.
+        assert!(!pacing.due(&today, &moved, started, true, soon));
+        assert!(!pacing.due(&today, &moved, started, true, started + READINESS_SPACING));
+        assert!(pacing.due(&today, &moved, started, true, started + READINESS_RECHECK));
+        assert!(!pacing.due(&today, &idle, started, true, started + READINESS_RECHECK));
+        assert!(pacing.due(&today, &idle, started, true, started + READINESS_SLOW_RECHECK));
+        let late = started + READINESS_PATIENCE;
+        pacing.record(today.clone(), idle.clone(), late);
+        assert!(!pacing.due(&today, &moved, started, true, late + READINESS_RECHECK));
+        assert!(pacing.due(&today, &moved, started, true, late + READINESS_SLOW_RECHECK));
+        // Dates beyond the catch-up window are forgotten.
+        let expired = ("reader".to_owned(), today.1 - Duration::days(CATCH_UP_DAYS + 2));
+        pacing.record(expired.clone(), idle.clone(), late);
+        pacing.record(today.clone(), idle, late + READINESS_SPACING);
+        assert!(!pacing.checked.contains_key(&expired));
+    }
+
+    #[test]
+    fn schedule_failures_are_classified_without_their_text() {
+        assert_eq!(
+            failure_class(&anyhow::Error::from(sqlx::Error::PoolTimedOut)),
+            "database-pool-timeout"
+        );
+        let wrapped = Err::<(), _>(sqlx::Error::PoolTimedOut)
+            .context("edition preview")
+            .unwrap_err();
+        assert_eq!(failure_class(&wrapped), "database-pool-timeout");
+        assert_eq!(
+            failure_class(&anyhow::anyhow!("reader title PRIVATE_ALPHA")),
+            "application"
+        );
     }
 
     #[test]
@@ -1300,10 +1567,159 @@ mod tests {
         let waiting = store.today(today).await?.unwrap();
         assert_eq!(waiting.status, "partial");
         assert!(waiting.finished_at.is_none());
+        // The next tick does not rebuild the preview: re-checks are paced.
+        sqlx::query(
+            "UPDATE morning_runs SET message='paced' WHERE local_date=$1 AND owner_user_id=scoutnews_actor()",
+        )
+        .bind(today)
+        .execute(&pool)
+        .await?;
+        store.finalize(&state, today).await?;
+        assert_eq!(
+            store.today(today).await?.unwrap().message.as_deref(),
+            Some("paced")
+        );
         sqlx::query("DELETE FROM morning_runs WHERE local_date=$1")
             .bind(today)
             .execute(&pool)
             .await?;
+        pool.close().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the isolated E2E database; never uses personal data or Copilot"]
+    async fn catch_up_edition_contract() -> Result<()> {
+        use crate::store::Store;
+        let pool = isolated_pool().await?;
+        let reader = uuid::Uuid::new_v4().to_string();
+        let scoped = ScopedDb::from(pool.clone()).reader(&reader);
+        let store = std::sync::Arc::new(crate::postgres_store::PostgresStore::new(scoped.clone()));
+        let today = reader::local_date(Utc::now());
+        let missed = today.pred_opt().unwrap();
+        let cutoff = slot(missed, 6);
+        let source = fixture_source(&pool, "company", "stable").await?;
+        let mut events = Vec::new();
+        for ordinal in 0..2 {
+            events.push(
+                fixture_event(
+                    &pool,
+                    &format!("Fixture Labs missed edition notes {ordinal}"),
+                    "模型与平台",
+                    cutoff - Duration::hours(2 + ordinal),
+                    &[source],
+                )
+                .await?,
+            );
+        }
+        // Only an unfinished run inside the catch-up window can still be saved.
+        assert!(store.catch_up_brief(missed, false).await?.is_none());
+        let too_old = today - Duration::days(CATCH_UP_DAYS + 1);
+        for (date, status, finished) in [
+            (missed, "partial", false),
+            (too_old, "partial", false),
+            (missed.pred_opt().unwrap(), "ready", true),
+        ] {
+            sqlx::query(
+                "INSERT INTO morning_runs(owner_user_id,local_date,status,scheduled_at,started_at,window_end,finished_at,message)
+                 VALUES($1,$2,$3,$4,$4,$4,CASE WHEN $5 THEN $4 END,'isolated catch-up assertion')",
+            )
+            .bind(&reader)
+            .bind(date)
+            .bind(status)
+            .bind(slot(date, 6))
+            .bind(finished)
+            .execute(&pool)
+            .await?;
+        }
+        assert!(store.catch_up_brief(too_old, false).await?.is_none());
+        assert!(store.catch_up_brief(missed.pred_opt().unwrap(), false).await?.is_none());
+        assert!(store.catch_up_brief(today, false).await?.is_none());
+        let preview = store
+            .catch_up_brief(missed, false)
+            .await?
+            .context("missed edition preview")?;
+        assert!(!preview.is_snapshot);
+        assert_eq!(preview.window_end, cutoff);
+        let chosen = preview
+            .items
+            .iter()
+            .find(|event| event.id == events[0])
+            .context("fixture missing from the missed window")?;
+        // The reader-facing path still never builds a past edition.
+        assert!(store.brief(missed, false).await?.is_none());
+
+        // A later edition (saved first) already offered the first event; one more
+        // than a week away offered the second. Only the neighbour counts as featured,
+        // so catch-up reading is not repeated whichever edition was saved first.
+        for (date, event) in [(today, events[0]), (missed + Duration::days(8), events[1])] {
+            let edition = uuid::Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO daily_briefs(id,local_date,status,generated_at,published_at,rule_version,
+                    window_start,window_end,sections,owner_user_id)
+                 VALUES($1,$2,'published',now(),now(),$3,now()-interval '7 days',now(),'[]',$4)",
+            )
+            .bind(edition)
+            .bind(date)
+            .bind(reader::DAILY_SELECTION_RULE)
+            .bind(&reader)
+            .execute(&pool)
+            .await?;
+            sqlx::query(
+                "INSERT INTO daily_brief_items(brief_id,event_id,rank,section,selection_reason,snapshot)
+                 VALUES($1,$2,1,$3,'isolated catch-up assertion',$4)",
+            )
+            .bind(edition)
+            .bind(event)
+            .bind(&chosen.primary_topic)
+            .bind(serde_json::to_value(chosen)?)
+            .execute(&pool)
+            .await?;
+        }
+        let featured = crate::postgres_store::featured_near(&scoped, missed).await?;
+        assert_eq!(featured, std::collections::HashSet::from([events[0]]));
+        let saved = store
+            .catch_up_brief(missed, true)
+            .await?
+            .context("missed edition was not saved")?;
+        assert!(saved.is_snapshot);
+        assert_eq!(saved.local_date, missed.to_string());
+        assert_eq!(saved.window_end, cutoff);
+        // The late edition still leads with its own day's news.
+        for event in &events {
+            assert!(saved.items.iter().any(|item| item.id == *event));
+        }
+        // An edition's own items never count as featured elsewhere.
+        assert_eq!(crate::postgres_store::featured_near(&scoped, missed).await?, featured);
+
+        // The scheduler marks the late edition done; runs outside the window stay untouched.
+        let edition = EditionStore::new(scoped.clone());
+        let state = AppState {
+            auth: std::sync::Arc::new(crate::auth::Auth::default()),
+            identity: None,
+            store,
+            http: reqwest::Client::new(),
+            oauth_states: Default::default(),
+            provider: Default::default(),
+            feed_worker: None,
+            generation_lock: Default::default(),
+            automation: None,
+            edition: Some(edition.clone()),
+            publishing: None,
+        };
+        edition.catch_up(&state).await?;
+        let done = edition.today(missed).await?.context("missed run")?;
+        assert!(done.finished_at.is_some());
+        assert!(done.message.unwrap_or_default().starts_with("晨报已补发"));
+        assert!(edition.today(too_old).await?.context("old run")?.finished_at.is_none());
+
+        for table in ["daily_briefs", "morning_runs"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE owner_user_id=$1"))
+                .bind(&reader)
+                .execute(&pool)
+                .await?;
+        }
+        retire_fixture(&pool, &events, &[source]).await?;
         pool.close().await;
         Ok(())
     }

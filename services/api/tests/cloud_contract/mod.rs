@@ -284,21 +284,43 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
         all_migrations.iter().filter(|migration| migration.version <= 39).cloned().collect());
     migrator.run(&pool).await?;
     let before_radar = reading_personalization_regressions::protected_fingerprints(&pool).await?;
-    migrator.migrations = all_migrations;
+    migrator.migrations = std::borrow::Cow::Owned(
+        all_migrations.iter().filter(|migration| migration.version <= 40).cloned().collect());
     migrator.run(&pool).await?;
     assert_eq!(reading_personalization_regressions::protected_fingerprints(&pool).await?, before_radar,
         "radar policy migration must not rewrite source material, snapshots or reader state");
+    let other_settings = "SELECT md5(string_agg(to_jsonb(s)::text,E'\\n' ORDER BY s.key)) FROM app_settings s
+        WHERE s.key<>'summary_settings'";
+    let summary_settings = "SELECT value::jsonb FROM app_settings WHERE key='summary_settings'";
+    let before_model = (
+        reading_personalization_regressions::protected_fingerprints(&pool).await?,
+        sqlx::query_scalar::<_, String>(other_settings).fetch_one(&pool).await?,
+        sqlx::query_scalar::<_, Value>(summary_settings).fetch_one(&pool).await?,
+    );
+    migrator.migrations = all_migrations;
+    migrator.run(&pool).await?;
+    // 0041 moves only the withdrawn summary model; nothing else changes.
+    let unrelated = |fingerprints: Vec<(&'static str, String)>| {
+        fingerprints.into_iter().filter(|(table, _)| *table != "app_settings").collect::<Vec<_>>()
+    };
+    assert_eq!(unrelated(reading_personalization_regressions::protected_fingerprints(&pool).await?),
+        unrelated(before_model.0), "the model migration must not rewrite reader or material data");
+    assert_eq!(sqlx::query_scalar::<_, String>(other_settings).fetch_one(&pool).await?, before_model.1);
+    assert_eq!(before_model.2["model"], "gpt-5.6-terra");
+    let mut expected_settings = before_model.2.clone();
+    expected_settings["model"] = json!("gpt-6.1-terra");
+    assert_eq!(sqlx::query_scalar::<_, Value>(summary_settings).fetch_one(&pool).await?, expected_settings);
     let mut previous_release = sqlx::migrate!("./migrations");
     previous_release.migrations = std::borrow::Cow::Owned(previous_release.migrations.iter()
-        .filter(|migration| migration.version <= 39).cloned().collect());
+        .filter(|migration| migration.version <= 40).cloned().collect());
     // A rejected migration can retain a session advisory lock. Close its
     // connection instead of returning that lock to the shared test pool.
     let mut rollback_connection = pool.acquire().await?;
     let rollback_result = previous_release.run(&mut *rollback_connection).await;
     rollback_connection.close().await?;
     let rollback_error = rollback_result
-        .expect_err("an old migration bundle must not be treated as a schema40-compatible rollback");
-    assert!(rollback_error.to_string().contains("40"), "{rollback_error}");
+        .expect_err("an old migration bundle must not be treated as a schema41-compatible rollback");
+    assert!(rollback_error.to_string().contains("41"), "{rollback_error}");
     visual_upgrade.verify_and_cleanup(&pool).await?;
     verify_explicit_role_membership(&pool).await?;
     ai_infra_regressions::verify_ai_infra_catalog(&pool).await?;
@@ -331,22 +353,24 @@ async fn complete_two_reader_isolation_contract() -> anyhow::Result<()> {
         a.call(
             "POST",
             &format!("/api/v1/events/{shared}/summarize"),
-            json!({"model":"gpt-5.6-terra"})
+            json!({"model":"gpt-6.1-terra"})
         )
         .await
         .0,
         StatusCode::PRECONDITION_FAILED
     );
-    assert_eq!(
-        a.call(
-            "POST",
-            &format!("/api/v1/events/{shared}/summarize"),
-            json!({"model":"gpt-5.5"})
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
+    for withdrawn_or_other in ["gpt-5.6-terra", "gpt-5.5"] {
+        assert_eq!(
+            a.call(
+                "POST",
+                &format!("/api/v1/events/{shared}/summarize"),
+                json!({"model":withdrawn_or_other})
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+    }
     for (principal_value, csrf, origin, proxy, expected) in [
         (None, None, None, true, StatusCode::UNAUTHORIZED),
         (Some("forged"), None, None, true, StatusCode::UNAUTHORIZED),

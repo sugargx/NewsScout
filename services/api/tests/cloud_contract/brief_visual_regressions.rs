@@ -39,7 +39,12 @@ async fn protected_migration_data(
         "daily_briefs", "daily_brief_items", "reader_shares", "sources", "user_source_overrides",
         "events", "content_items", "reader_personalization", "reader_reading_signals",
     ] {
-        let value = if table == "events" { "(to_jsonb(t)-'summary_visual')" } else { "to_jsonb(t)" };
+        let value = match table {
+            "events" => "(to_jsonb(t)-'summary_visual')",
+            // 0041 deliberately replaces only the withdrawn summary model.
+            "app_settings" => "(CASE WHEN t.key='summary_settings' THEN (to_jsonb(t)-'updated_at')||jsonb_build_object('value',t.value::jsonb-'model') ELSE to_jsonb(t) END)",
+            _ => "to_jsonb(t)",
+        };
         let scope = if table == "sources" { "WHERE t.created_at<=$1" } else { "" };
         let sql = format!(
             "SELECT md5(COALESCE(string_agg({value}::text,E'\\n' ORDER BY {value}::text),'')) FROM {table} t {scope}"

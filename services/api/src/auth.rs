@@ -482,7 +482,11 @@ impl AppState {
         .reader(&identity.id.to_string());
         state.store = Arc::new(crate::postgres_store::PostgresStore::new(db.clone()));
         state.automation = Some(crate::automation::AutomationStore::new(db.clone()));
-        state.edition = Some(crate::edition::EditionStore::new(db.clone()));
+        // Share the scheduler's readiness pacing across readers.
+        state.edition = Some(match &self.edition {
+            Some(edition) => edition.scoped(db.clone()),
+            None => crate::edition::EditionStore::new(db.clone()),
+        });
         state.publishing = Some(crate::publishing::Publishing {
             pool: db.clone(),
             public_origin: self.auth.origin().map(str::to_owned),

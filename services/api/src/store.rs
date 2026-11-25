@@ -20,6 +20,11 @@ pub trait Store: Send + Sync {
     async fn visitor_event(&self, id: Uuid, interests: &VisitorInterests) -> Result<Option<Event>>;
     async fn update_event_state(&self, id: Uuid, input: EventStateInput) -> Result<Option<Event>>;
     async fn brief(&self, date: NaiveDate, persist: bool) -> Result<Option<DailyBrief>>;
+    /// A recent morning edition that could not be saved on its own day, built
+    /// from that morning's collection cutoff. `None` outside the catch-up window.
+    async fn catch_up_brief(&self, _date: NaiveDate, _persist: bool) -> Result<Option<DailyBrief>> {
+        Ok(None)
+    }
     /// Re-select today's saved edition once after a selection-rule change; past
     /// editions never change. Returns whether the saved items were replaced.
     async fn reselect_outdated_brief(&self, _date: NaiveDate) -> Result<bool> {

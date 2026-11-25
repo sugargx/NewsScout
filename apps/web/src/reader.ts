@@ -4,7 +4,7 @@ import { api } from "./api";
 import type { Brief, CoverageMember, Event, EventState, Processing, Provider, SummaryStatus } from "./types";
 import type { InfiniteData } from "@tanstack/react-query";
 
-export const DEFAULT_SUMMARY_MODEL = "gpt-5.6-terra";
+export const DEFAULT_SUMMARY_MODEL = "gpt-6.1-terra";
 
 export type FeedbackState = Pick<EventState, "saved" | "notInterested" | "notInterestedReason">;
 export type FeedbackMutationVariables = FeedbackState | { state: FeedbackState };

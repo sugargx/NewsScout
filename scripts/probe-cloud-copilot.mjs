@@ -26,8 +26,8 @@ try {
     persistenceWriteVerified: status.durable,
     refreshTokenNearExpiry: status.refreshTokenNearExpiry,
     availableModelCount: models.length,
-    configuredModel: "gpt-5.6-terra",
-    configuredModelAvailable: models.some(model => model.id === "gpt-5.6-terra"),
+    configuredModel: "gpt-6.1-terra",
+    configuredModelAvailable: models.some(model => model.id === "gpt-6.1-terra"),
     inferenceRequests: 0,
   }));
 } catch {

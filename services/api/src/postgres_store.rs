@@ -23,6 +23,25 @@ pub struct PostgresStore {
     pool: ScopedDb,
 }
 
+/// Events the reader's other saved editions chose within a week of `date`,
+/// before or after it: an edition saved late (after summaries recovered) can
+/// follow a later edition that already offered them as catch-up reading.
+pub(crate) async fn featured_near<'e, E>(executor: E, date: NaiveDate) -> Result<HashSet<Uuid>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    Ok(sqlx::query_scalar::<_, Uuid>(
+        "SELECT DISTINCT bi.event_id FROM daily_brief_items bi JOIN daily_briefs b ON b.id=bi.brief_id
+        WHERE b.owner_user_id=scoutnews_actor() AND b.status='published'
+          AND b.local_date<>$1 AND b.local_date BETWEEN $1-7 AND $1+7",
+    )
+    .bind(date)
+    .fetch_all(executor)
+    .await?
+    .into_iter()
+    .collect())
+}
+
 #[derive(Default)]
 struct EventHydration {
     evidence: Vec<Evidence>,
@@ -291,6 +310,52 @@ impl PostgresStore {
         Ok(records)
     }
 
+    /// Build (and with `persist`, save once) the edition for `date` at `cutoff`.
+    async fn edition_at(
+        &self,
+        date: NaiveDate,
+        cutoff: DateTime<Utc>,
+        persist: bool,
+    ) -> Result<Option<DailyBrief>> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await?;
+        if persist {
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+                .bind(format!("brief:{}:{date}", self.pool.actor()))
+                .execute(&mut *tx)
+                .await?;
+            if let Some(brief) = self.snapshot(date).await? {
+                return Ok(Some(brief));
+            }
+        }
+        let mut brief = self.build_brief(cutoff, None).await?;
+        brief.generated_at = now;
+        if persist {
+            if brief.items.is_empty() {
+                return Ok(None);
+            }
+            let id = Uuid::new_v4();
+            sqlx::query(r#"INSERT INTO daily_briefs(id,local_date,status,generated_at,published_at,rule_version,window_start,window_end,sections)
+                VALUES($1,$2,'published',$3,$3,$4,$5,$6,$7)"#)
+                .bind(id).bind(date).bind(now).bind(reader::DAILY_SELECTION_RULE)
+                .bind(brief.window_start).bind(cutoff)
+                .bind(serde_json::to_value(&brief.sections)?).execute(&mut *tx).await?;
+            for (index, event) in brief.items.iter().enumerate() {
+                sqlx::query(r#"INSERT INTO daily_brief_items(brief_id,event_id,rank,section,selection_reason,snapshot)
+                    VALUES($1,$2,$3,$4,$5,$6)"#).bind(id).bind(event.id).bind((index+1) as i32)
+                    .bind(&event.primary_topic).bind(&event.score.explanation).bind(serde_json::to_value(event)?)
+                    .execute(&mut *tx).await?;
+            }
+            brief.is_snapshot = true;
+        }
+        tx.commit().await?;
+        if persist {
+            self.snapshot(date).await
+        } else {
+            Ok(Some(brief))
+        }
+    }
+
     async fn build_brief(
         &self,
         cutoff: DateTime<Utc>,
@@ -314,18 +379,9 @@ impl PostgresStore {
         .bind(cutoff)
         .fetch_all(&mut *tx)
         .await?;
-        // Catch-up reading never repeats an event an earlier saved edition already chose.
+        // Catch-up reading never repeats an event a neighbouring saved edition already chose.
         let featured: std::collections::HashSet<Uuid> = if interests.is_none() {
-            sqlx::query_scalar::<_, Uuid>(
-                "SELECT DISTINCT bi.event_id FROM daily_brief_items bi JOIN daily_briefs b ON b.id=bi.brief_id
-                WHERE b.owner_user_id=scoutnews_actor() AND b.status='published'
-                  AND b.local_date<$1 AND b.local_date>=$1-7",
-            )
-            .bind(reader::local_date(cutoff))
-            .fetch_all(&mut *tx)
-            .await?
-            .into_iter()
-            .collect()
+            featured_near(&mut *tx, reader::local_date(cutoff)).await?
         } else {
             Default::default()
         };
@@ -1587,45 +1643,31 @@ impl Store for PostgresStore {
         if date != reader::local_date(now) {
             return Ok(None);
         }
-        let mut tx = self.pool.begin().await?;
-        if persist {
-            sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-                .bind(format!("brief:{}:{date}", self.pool.actor()))
-                .execute(&mut *tx)
-                .await?;
-            if let Some(brief) = self.snapshot(date).await? {
-                return Ok(Some(brief));
-            }
-        }
         let cutoff: DateTime<Utc> = sqlx::query_scalar("SELECT COALESCE(
             (SELECT window_end FROM morning_runs WHERE local_date=$1 AND
               (SELECT value::jsonb->>'mode' FROM app_settings WHERE key='reader_settings')='daily'),$2)")
             .bind(date).bind(now).fetch_one(&self.pool).await?;
-        let mut brief = self.build_brief(cutoff, None).await?;
-        brief.generated_at = now;
-        if persist {
-            if brief.items.is_empty() {
-                return Ok(None);
-            }
-            let id = Uuid::new_v4();
-            sqlx::query(r#"INSERT INTO daily_briefs(id,local_date,status,generated_at,published_at,rule_version,window_start,window_end,sections)
-                VALUES($1,$2,'published',$3,$3,$4,$5,$6,$7)"#)
-                .bind(id).bind(date).bind(now).bind(reader::DAILY_SELECTION_RULE)
-                .bind(brief.window_start).bind(cutoff)
-                .bind(serde_json::to_value(&brief.sections)?).execute(&mut *tx).await?;
-            for (index, event) in brief.items.iter().enumerate() {
-                sqlx::query(r#"INSERT INTO daily_brief_items(brief_id,event_id,rank,section,selection_reason,snapshot)
-                    VALUES($1,$2,$3,$4,$5,$6)"#).bind(id).bind(event.id).bind((index+1) as i32)
-                    .bind(&event.primary_topic).bind(&event.score.explanation).bind(serde_json::to_value(event)?)
-                    .execute(&mut *tx).await?;
-            }
-            brief.is_snapshot = true;
+        self.edition_at(date, cutoff, persist).await
+    }
+
+    async fn catch_up_brief(&self, date: NaiveDate, persist: bool) -> Result<Option<DailyBrief>> {
+        if let Some(brief) = self.snapshot(date).await? {
+            return Ok(Some(brief));
         }
-        tx.commit().await?;
-        if persist {
-            self.snapshot(date).await
-        } else {
-            Ok(Some(brief))
+        let today = reader::local_date(Utc::now());
+        if date >= today || date < today - chrono::Duration::days(crate::edition::CATCH_UP_DAYS) {
+            return Ok(None);
+        }
+        let cutoff: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT window_end FROM morning_runs WHERE local_date=$1 AND owner_user_id=scoutnews_actor()
+              AND finished_at IS NULL AND status IN('summarizing','partial')",
+        )
+        .bind(date)
+        .fetch_optional(&self.pool)
+        .await?;
+        match cutoff {
+            Some(cutoff) => self.edition_at(date, cutoff, persist).await,
+            None => Ok(None),
         }
     }
 

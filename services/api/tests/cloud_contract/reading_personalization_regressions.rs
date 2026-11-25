@@ -4,7 +4,9 @@ use chrono::{DateTime, Duration, Utc};
 const SETTINGS: &str = "/api/v1/me/reading-personalization";
 const SIGNALS: &str = "/api/v1/events/reading-signals";
 
-pub(super) async fn protected_fingerprints(pool: &PgPool) -> anyhow::Result<Vec<String>> {
+pub(super) async fn protected_fingerprints(
+    pool: &PgPool,
+) -> anyhow::Result<Vec<(&'static str, String)>> {
     let mut fingerprints = Vec::new();
     for table in [
         "app_users",
@@ -20,9 +22,9 @@ pub(super) async fn protected_fingerprints(pool: &PgPool) -> anyhow::Result<Vec<
         "events",
         "content_items",
     ] {
-        fingerprints.push(sqlx::query_scalar(&format!(
+        fingerprints.push((table, sqlx::query_scalar(&format!(
             "SELECT md5(COALESCE(string_agg(to_jsonb(t)::text,E'\\n' ORDER BY to_jsonb(t)::text),'')) FROM {table} t"
-        )).fetch_one(pool).await?);
+        )).fetch_one(pool).await?));
     }
     Ok(fingerprints)
 }

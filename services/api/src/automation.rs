@@ -16,14 +16,18 @@ pub struct ProcessingSettings {
     pub daily_limit: i64,
 }
 
-pub const CLOUD_MODEL: &str = "gpt-5.6-terra";
+/// The only cloud summary model (owner-approved after Copilot withdrew
+/// gpt-5.6-terra on 2026-11-17); there is never an automatic fallback.
+pub const CLOUD_MODEL: &str = "gpt-6.1-terra";
 pub const CLOUD_REASONING_EFFORT: &str = "low";
+/// How often a cloud queue blocked by its model or account re-probes Copilot.
+const REPROBE_INTERVAL: chrono::Duration = chrono::Duration::minutes(30);
 
 impl Default for ProcessingSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            model: "gpt-5.6-terra".into(),
+            model: CLOUD_MODEL.into(),
             daily_limit: 20,
         }
     }
@@ -361,7 +365,10 @@ async fn tick(state: &AppState) -> Result<()> {
     store.recover_expired().await?;
     let settings = store.settings().await?;
     let usage = store.usage(settings.daily_limit).await?;
-    if blocked_reason(state, &settings, usage.used).await.is_some() {
+    if let Some(reason) = blocked_reason(state, &settings, usage.used).await {
+        if state.auth.cloud() && matches!(reason.as_str(), "model" | "account") {
+            reprobe_when_due(state).await;
+        }
         return Ok(());
     }
     let Some(job) = store.claim(&settings.model).await? else {
@@ -413,6 +420,27 @@ async fn tick(state: &AppState) -> Result<()> {
     Ok(())
 }
 
+/// A transient gateway or capability failure removes the model until the next
+/// probe. Re-probe on a slow cadence so the queue resumes without a restart;
+/// the probe never selects a different model.
+async fn reprobe_when_due(state: &AppState) {
+    let probed_at = state.provider.read().await.probed_at;
+    if !reprobe_due(probed_at, Utc::now()) {
+        return;
+    }
+    // A running generation owns the gateway; probe on a later tick instead.
+    let Ok(_generation) = state.generation_lock.try_lock() else {
+        return;
+    };
+    if app::restore_copilot(state).await.is_err() {
+        tracing::warn!("Copilot re-probe failed; automatic summaries stay paused");
+    }
+}
+
+fn reprobe_due(probed_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+    probed_at.is_none_or(|at| now - at >= REPROBE_INTERVAL)
+}
+
 pub fn spawn(state: AppState) {
     tokio::spawn(async move {
         let mut timer = tokio::time::interval(Duration::from_secs(8));
@@ -432,7 +460,7 @@ mod tests {
     #[test]
     fn terra_is_default_and_budget_is_bounded() {
         let mut settings = ProcessingSettings::default();
-        assert_eq!(settings.model, "gpt-5.6-terra");
+        assert_eq!(settings.model, "gpt-6.1-terra");
         assert_eq!(settings.daily_limit, 20);
         settings.validate().unwrap();
         settings.daily_limit = 0;
@@ -444,6 +472,14 @@ mod tests {
         settings.daily_limit = 20;
         settings.model = "auto".into();
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn blocked_cloud_queue_reprobes_on_a_slow_cadence() {
+        let now = Utc::now();
+        assert!(reprobe_due(None, now));
+        assert!(!reprobe_due(Some(now - chrono::Duration::minutes(29)), now));
+        assert!(reprobe_due(Some(now - REPROBE_INTERVAL), now));
     }
 
     #[test]

@@ -12,7 +12,7 @@ test("summary queue backfills real events and exposes Terra without accessing mo
   const response = await request.get(`${api}/api/v1/processing`);
   expect(response.ok()).toBeTruthy();
   const processing = await response.json();
-  expect(processing.settings).toEqual({ enabled: true, model: "gpt-5.6-terra", dailyLimit: 20 });
+  expect(processing.settings).toEqual({ enabled: true, model: "gpt-6.1-terra", dailyLimit: 20 });
   expect(processing.blockedReason).toBe("isolated");
   expect(processing.feedCount).toBeGreaterThan(0);
   expect(processing.counts.pending).toBe(processing.feedCount);
@@ -57,7 +57,7 @@ test("summary queue recovers interrupted leases without calling local Copilot", 
 });
 
 test("summary queue settings persist and quota recovery uses the required expiring attempt", async ({ request }) => {
-  const settings = { enabled: false, model: "gpt-5.6-terra", dailyLimit: 2 };
+  const settings = { enabled: false, model: "gpt-6.1-terra", dailyLimit: 2 };
   expect((await request.put(`${api}/api/v1/processing/settings`, { data: { ...settings, dailyLimit: 0 } })).status()).toBe(400);
   expect((await request.put(`${api}/api/v1/processing/settings`, { data: { ...settings, dailyLimit: 5001 } })).status()).toBe(400);
   const raised = await request.put(`${api}/api/v1/processing/settings`, { data: { ...settings, dailyLimit: 5000 } });

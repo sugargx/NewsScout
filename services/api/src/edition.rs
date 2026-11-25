@@ -53,6 +53,10 @@ impl ReaderSettings {
 #[derive(Clone)]
 pub struct EditionStore {
     pool: ScopedDb,
+    /// The scheduler's own connection for the aggregate queue signal. Through a
+    /// reader's row security every job needs a visibility check, which took over
+    /// 30 seconds on the throttled server and was retried on every tick.
+    queue: ScopedDb,
     readiness: Arc<Mutex<ReadinessPacing>>,
 }
 
@@ -240,8 +244,10 @@ fn ready_for_snapshot(
 
 impl EditionStore {
     pub fn new(pool: impl Into<ScopedDb>) -> Self {
+        let pool = pool.into();
         Self {
-            pool: pool.into(),
+            queue: pool.clone(),
+            pool,
             readiness: Default::default(),
         }
     }
@@ -250,6 +256,7 @@ impl EditionStore {
     pub fn scoped(&self, pool: ScopedDb) -> Self {
         Self {
             pool,
+            queue: self.queue.clone(),
             readiness: self.readiness.clone(),
         }
     }
@@ -375,7 +382,14 @@ impl EditionStore {
             if !candidate {
                 return Ok(());
             }
-            let progress = self.queue_progress().await?;
+            let progress = match self.queue_progress().await {
+                Ok(progress) => progress,
+                Err(error) => {
+                    // A failed check still takes its slot, so a slow database is not retried each tick.
+                    self.pacing().record(key, QueueProgress::default(), now);
+                    return Err(error);
+                }
+            };
             let mut pacing = self.pacing();
             if !pacing.due(&key, &progress, run.started_at, current, now) {
                 return Ok(());
@@ -402,9 +416,10 @@ impl EditionStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Only a count and a timestamp leave this query; no reader content.
     async fn queue_progress(&self) -> Result<QueueProgress> {
         let row = sqlx::query("SELECT count(*) AS jobs,max(updated_at) AS touched FROM summary_jobs")
-            .fetch_one(&self.pool)
+            .fetch_one(&self.queue)
             .await?;
         Ok(QueueProgress {
             jobs: row.try_get("jobs")?,
@@ -1579,6 +1594,38 @@ mod tests {
             store.today(today).await?.unwrap().message.as_deref(),
             Some("paced")
         );
+        // Readers share the scheduler's queue signal instead of reading every job
+        // through their row security: another reader's private job still counts.
+        let private = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO events(id,canonical_title,summary,importance,event_type,first_seen_at,updated_at,
+                summary_kind,content_version,owner_user_id)
+             VALUES($1,'Private queue fixture','Private queue fixture','','blog',now(),now(),'feed',1,$2)",
+        )
+        .bind(private)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO summary_jobs(event_id,content_version,status,next_attempt_at)
+             VALUES($1,1,'pending',now()) ON CONFLICT(event_id) DO NOTHING",
+        )
+        .bind(private)
+        .execute(&pool)
+        .await?;
+        let reader = ScopedDb::from(pool.clone()).reader("queue-signal-reader");
+        let all: i64 = sqlx::query_scalar("SELECT count(*) FROM summary_jobs")
+            .fetch_one(&pool)
+            .await?;
+        let visible: i64 = sqlx::query_scalar("SELECT count(*) FROM summary_jobs")
+            .fetch_one(&reader)
+            .await?;
+        assert!(visible < all, "the fixture must be invisible to the reader");
+        assert_eq!(store.scoped(reader).queue_progress().await?.jobs, all);
+        sqlx::query("DELETE FROM events WHERE id=$1")
+            .bind(private)
+            .execute(&pool)
+            .await?;
         sqlx::query("DELETE FROM morning_runs WHERE local_date=$1")
             .bind(today)
             .execute(&pool)
